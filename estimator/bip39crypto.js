@@ -39,8 +39,8 @@ const H512_0 = [
   0x6a09e667f3bcc908n,0xbb67ae8584caa73bn,0x3c6ef372fe94f82bn,0xa54ff53a5f1d36f1n,
   0x510e527fade682d1n,0x9b05688c2b3e6c1fn,0x1f83d9abfb41bd6bn,0x5be0cd19137e2179n];
 
-// SHA-512 of a Uint8Array -> Uint8Array(64).
-function sha512(bytes) {
+// SHA-512 of a Uint8Array -> Uint8Array(64). BigInt REFERENCE (slow, gated-against).
+function _sha512Big(bytes) {
   const l = bytes.length;
   const bitLen = BigInt(l) * 8n;
   // pad: 0x80, zeros to 112 mod 128, then 16-byte big-endian length
@@ -80,6 +80,97 @@ function sha512(bytes) {
     out[i*8 + j] = Number((H[i] >> BigInt(8 * (7 - j))) & 0xffn);
   return out;
 }
+
+/* --------------- fast SHA-512 (Uint32 hi/lo; gated vs BigInt) ------------ *
+ * Constants are DERIVED from the gated BigInt K512/H512_0 above (no retyping).
+ * ~1-2 orders of magnitude faster than the BigInt reference; byte-exact to it.  */
+const _KH = Uint32Array.from(K512, k => Number((k >> 32n) & 0xffffffffn));
+const _KL = Uint32Array.from(K512, k => Number(k & 0xffffffffn));
+const _IH = Uint32Array.from(H512_0, k => Number((k >> 32n) & 0xffffffffn));
+const _ILo = Uint32Array.from(H512_0, k => Number(k & 0xffffffffn));
+const _WH = new Uint32Array(80), _WL = new Uint32Array(80);
+
+function sha512(bytes) {
+  const l = bytes.length;
+  const padLen = ((112 - (l + 1) % 128) + 128) % 128;
+  const total = l + 1 + padLen + 16;
+  const m = new Uint8Array(total);
+  m.set(bytes); m[l] = 0x80;
+  const bl = BigInt(l) * 8n;
+  for (let i = 0; i < 16; i++) m[total - 1 - i] = Number((bl >> BigInt(8 * i)) & 0xffn);
+  let h0h=_IH[0],h0l=_ILo[0], h1h=_IH[1],h1l=_ILo[1], h2h=_IH[2],h2l=_ILo[2], h3h=_IH[3],h3l=_ILo[3],
+      h4h=_IH[4],h4l=_ILo[4], h5h=_IH[5],h5l=_ILo[5], h6h=_IH[6],h6l=_ILo[6], h7h=_IH[7],h7l=_ILo[7];
+  const WH=_WH, WL=_WL;
+  for (let off = 0; off < total; off += 128) {
+    for (let i = 0; i < 16; i++) {
+      const j = off + i*8;
+      WH[i] = (m[j]<<24)|(m[j+1]<<16)|(m[j+2]<<8)|m[j+3];
+      WL[i] = (m[j+4]<<24)|(m[j+5]<<16)|(m[j+6]<<8)|m[j+7];
+    }
+    for (let i = 16; i < 80; i++) {
+      const x1h=WH[i-15], x1l=WL[i-15];
+      // sigma0 = rotr(1)^rotr(8)^shr(7)
+      const s0h = ((x1h>>>1)|(x1l<<31)) ^ ((x1h>>>8)|(x1l<<24)) ^ (x1h>>>7);
+      const s0l = ((x1l>>>1)|(x1h<<31)) ^ ((x1l>>>8)|(x1h<<24)) ^ ((x1l>>>7)|(x1h<<25));
+      const x2h=WH[i-2], x2l=WL[i-2];
+      // sigma1 = rotr(19)^rotr(61)^shr(6)   (61 -> m=29 cross form)
+      const s1h = ((x2h>>>19)|(x2l<<13)) ^ ((x2l>>>29)|(x2h<<3)) ^ (x2h>>>6);
+      const s1l = ((x2l>>>19)|(x2h<<13)) ^ ((x2h>>>29)|(x2l<<3)) ^ ((x2l>>>6)|(x2h<<26));
+      // W[i] = W[i-16] + s0 + W[i-7] + s1   (64-bit add via lo carry)
+      const a16h=WH[i-16],a16l=WL[i-16], a7h=WH[i-7],a7l=WL[i-7];
+      let lo = (a16l>>>0)+(s0l>>>0); let hi = (a16h+s0h+(lo>=0x100000000?1:0))>>>0; lo>>>=0;
+      let lo2 = lo+(a7l>>>0); hi = (hi+a7h+(lo2>=0x100000000?1:0))>>>0; lo2>>>=0;
+      let lo3 = lo2+(s1l>>>0); hi = (hi+s1h+(lo3>=0x100000000?1:0))>>>0; lo3>>>=0;
+      WH[i]=hi; WL[i]=lo3>>>0;
+    }
+    let ah=h0h,al=h0l, bh=h1h,bl=h1l, ch=h2h,cl=h2l, dh=h3h,dl=h3l,
+        eh=h4h,el=h4l, fh=h5h,fl=h5l, gh=h6h,gl=h6l, hh=h7h,hl=h7l;
+    for (let i = 0; i < 80; i++) {
+      // S1 = rotr(e,14)^rotr(e,18)^rotr(e,41)   (41 -> m=9)
+      const S1h = ((eh>>>14)|(el<<18)) ^ ((eh>>>18)|(el<<14)) ^ ((el>>>9)|(eh<<23));
+      const S1l = ((el>>>14)|(eh<<18)) ^ ((el>>>18)|(eh<<14)) ^ ((eh>>>9)|(el<<23));
+      const chh = (eh & fh) ^ (~eh & gh);
+      const chl = (el & fl) ^ (~el & gl);
+      // S0 = rotr(a,28)^rotr(a,34)^rotr(a,39)   (34 -> m=2, 39 -> m=7)
+      const S0h = ((ah>>>28)|(al<<4)) ^ ((al>>>2)|(ah<<30)) ^ ((al>>>7)|(ah<<25));
+      const S0l = ((al>>>28)|(ah<<4)) ^ ((ah>>>2)|(al<<30)) ^ ((ah>>>7)|(al<<25));
+      const majh = (ah & bh) ^ (ah & ch) ^ (bh & ch);
+      const majl = (al & bl) ^ (al & cl) ^ (bl & cl);
+      // t1 = h + S1 + ch + K[i] + W[i]
+      let lo=(hl>>>0)+(S1l>>>0); let hi=(hh+S1h+(lo>=0x100000000?1:0))>>>0; lo>>>=0;
+      lo=lo+(chl>>>0); hi=(hi+chh+(lo>=0x100000000?1:0))>>>0; lo>>>=0;
+      lo=lo+(_KL[i]>>>0); hi=(hi+_KH[i]+(lo>=0x100000000?1:0))>>>0; lo>>>=0;
+      lo=lo+(WL[i]>>>0); hi=(hi+WH[i]+(lo>=0x100000000?1:0))>>>0; lo>>>=0;
+      const t1h=hi, t1l=lo>>>0;
+      // t2 = S0 + maj
+      let lo2=(S0l>>>0)+(majl>>>0); let hi2=(S0h+majh+(lo2>=0x100000000?1:0))>>>0; lo2>>>=0;
+      const t2h=hi2, t2l=lo2>>>0;
+      hh=gh;hl=gl; gh=fh;gl=fl; fh=eh;fl=el;
+      // e = d + t1
+      let elo=(dl>>>0)+(t1l>>>0); eh=(dh+t1h+(elo>=0x100000000?1:0))>>>0; el=elo>>>0;
+      dh=ch;dl=cl; ch=bh;cl=bl; bh=ah;bl=al;
+      // a = t1 + t2
+      let alo=(t1l>>>0)+(t2l>>>0); ah=(t1h+t2h+(alo>=0x100000000?1:0))>>>0; al=alo>>>0;
+    }
+    let lo;
+    lo=(h0l>>>0)+(al>>>0); h0h=(h0h+ah+(lo>=0x100000000?1:0))>>>0; h0l=lo>>>0;
+    lo=(h1l>>>0)+(bl>>>0); h1h=(h1h+bh+(lo>=0x100000000?1:0))>>>0; h1l=lo>>>0;
+    lo=(h2l>>>0)+(cl>>>0); h2h=(h2h+ch+(lo>=0x100000000?1:0))>>>0; h2l=lo>>>0;
+    lo=(h3l>>>0)+(dl>>>0); h3h=(h3h+dh+(lo>=0x100000000?1:0))>>>0; h3l=lo>>>0;
+    lo=(h4l>>>0)+(el>>>0); h4h=(h4h+eh+(lo>=0x100000000?1:0))>>>0; h4l=lo>>>0;
+    lo=(h5l>>>0)+(fl>>>0); h5h=(h5h+fh+(lo>=0x100000000?1:0))>>>0; h5l=lo>>>0;
+    lo=(h6l>>>0)+(gl>>>0); h6h=(h6h+gh+(lo>=0x100000000?1:0))>>>0; h6l=lo>>>0;
+    lo=(h7l>>>0)+(hl>>>0); h7h=(h7h+hh+(lo>=0x100000000?1:0))>>>0; h7l=lo>>>0;
+  }
+  const out = new Uint8Array(64);
+  const put = (h,l,o)=>{ out[o]=(h>>>24)&255;out[o+1]=(h>>>16)&255;out[o+2]=(h>>>8)&255;out[o+3]=h&255;
+                         out[o+4]=(l>>>24)&255;out[o+5]=(l>>>16)&255;out[o+6]=(l>>>8)&255;out[o+7]=l&255; };
+  put(h0h,h0l,0);put(h1h,h1l,8);put(h2h,h2l,16);put(h3h,h3l,24);
+  put(h4h,h4l,32);put(h5h,h5l,40);put(h6h,h6l,48);put(h7h,h7l,56);
+  return out;
+}
+// The BigInt reference is kept (renamed) so the fast one can be gated against it.
+function sha512Big(bytes) { return _sha512Big(bytes); }
 
 /* ------------------------------- HMAC/PBKDF2 ---------------------------- */
 function hmacSha512(key, msg) {           // key,msg: Uint8Array -> Uint8Array(64)
@@ -187,10 +278,12 @@ function fromHex(h){ const o=new Uint8Array(h.length/2); for(let i=0;i<o.length;
 function eq(a,b){ if(a.length!==b.length) return false; for(let i=0;i<a.length;i++) if(a[i]!==b[i]) return false; return true; }
 
 const _exports = {
-  sha512, hmacSha512, pbkdf2Sha512, mnemonicToSeed,
+  sha512, sha512Big, hmacSha512, pbkdf2Sha512, mnemonicToSeed,
   seedToMaster, ckdHardened, deriveHardenedPath, accountNode, SECP_N, ser256,
   b58decode, b58encode, b58checkDecode, b58checkEncode, decodeXpub,
   toHex, fromHex, concat, eq, utf8, nfkd,
+  // SHA-512 K/H0 as hi/lo u32 tables (for the WGSL kernel; same gated constants).
+  gpuK: { hi: _KH, lo: _KL }, gpuH0: { hi: _IH, lo: _ILo },
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = _exports;
 if (typeof window !== 'undefined') window.BIP39Crypto = _exports;
