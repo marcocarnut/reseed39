@@ -221,7 +221,7 @@ let RXE, VALIDATOR;
 const registered = new Map();
 let liveSets = [];
 let debounce;
-let calibration = null;      // set by the in-browser benchmark (CPU/JS)
+let calCpu = null, calGpu = null;   // measured rates per backend (in-browser benchmark)
 let cracking = false;        // in-browser crack in progress
 let LANG = 'en';
 let t = EstI18N.makeT('en');
@@ -441,17 +441,26 @@ function schedule(){ clearTimeout(debounce); debounce=setTimeout(recompute,300);
 // Feeds input.calibration so the ETA flips from "assumed" to measured.
 async function runBenchmark(){
   const btn=$('#benchBtn'), info=$('#benchInfo');
+  const gpu = segVal('#backendSeg','data-b')==='gpu';
   btn.disabled=true; info.textContent=t('benchRunning');
   await new Promise(r=>setTimeout(r,30));           // let the label paint
-  const C=window.BIP39Crypto;
-  const mn='legal winner thank year wave sausage worth useful legal winner thank yellow';
-  for(let i=0;i<4;i++) C.accountNode(C.mnemonicToSeed(mn,'w'+i),84);   // warm JIT
-  const t0=performance.now(); let n=0;
-  do { for(let k=0;k<8;k++){ C.accountNode(C.mnemonicToSeed(mn,'c'+n),84); n++; } }
-  while(performance.now()-t0<1200);
-  const rate=n/((performance.now()-t0)/1000);
-  calibration={ source:t('benchDone'), cpu:{ kdfPerCore: rate } };
-  info.textContent=`${fmtBig(Math.round(rate))} cand/s/core`;
+  try {
+    if (gpu && window.GpuCrack && navigator.gpu) {
+      const rate = await window.GpuCrack.benchmark(8192);
+      calGpu = { source:(LANG==='pt'?'medido neste navegador (WebGPU)':'measured on this browser (WebGPU)'), gpu:{ kdf: rate } };
+      info.textContent = `${fmtBig(Math.round(rate))} seeds/s (GPU)`;
+    } else {
+      const C=window.BIP39Crypto;
+      const mn='legal winner thank year wave sausage worth useful legal winner thank yellow';
+      for(let i=0;i<4;i++) C.accountNode(C.mnemonicToSeed(mn,'w'+i),84);   // warm JIT
+      const t0=performance.now(); let n=0;
+      do { for(let k=0;k<8;k++){ C.accountNode(C.mnemonicToSeed(mn,'c'+n),84); n++; } }
+      while(performance.now()-t0<1200);
+      const rate=n/((performance.now()-t0)/1000);
+      calCpu = { source:t('benchDone'), cpu:{ kdfPerCore: rate } };
+      info.textContent = `${fmtBig(Math.round(rate))} cand/s/core`;
+    }
+  } catch(e){ info.textContent='benchmark failed: '+e.message; }
   btn.disabled=false; recompute();
 }
 
@@ -530,7 +539,7 @@ function recompute(){
     mnemonicPattern: currentMnemonicPattern(mode),
     targetType: target, backend,
     cores: parseInt($('#cores').value,10)||1,
-    calibration: (backend==='cpu') ? calibration : null,
+    calibration: (backend==='gpu') ? calGpu : calCpu,
     path:{ purposes: purposes.length?purposes:['bip84'],
            accounts:parseInt($('#accts').value,10)||1,
            change:parseInt($('#change').value,10)||1,
