@@ -172,6 +172,70 @@ function sha512(bytes) {
 // The BigInt reference is kept (renamed) so the fast one can be gated against it.
 function sha512Big(bytes) { return _sha512Big(bytes); }
 
+/* --------- HMAC midstates (for the GPU: fixed key -> precompute ipad/opad) --- *
+ * Compress ONE 128-byte block into a SHA-512 state (BigInt; host-side, run twice
+ * per crack -- perf irrelevant). hmacMidstates(key) returns the SHA-512 state
+ * after absorbing the ipad/opad blocks, as hi/lo u32 tables for the WGSL kernel,
+ * so each per-lane HMAC is a single from-state block. Gated: GPU HMAC using these
+ * must equal hmacSha512 (the full, already-gated reference).                     */
+function _sha512CompressBig(H, block /* Uint8Array(128) */) {
+  const W = new Array(80);
+  for (let i = 0; i < 16; i++) { let w = 0n; for (let j = 0; j < 8; j++) w = (w << 8n) | BigInt(block[i*8+j]); W[i] = w; }
+  for (let i = 16; i < 80; i++) {
+    const s0 = rotr(W[i-15],1n) ^ rotr(W[i-15],8n) ^ shr(W[i-15],7n);
+    const s1 = rotr(W[i-2],19n) ^ rotr(W[i-2],61n) ^ shr(W[i-2],6n);
+    W[i] = (W[i-16] + s0 + W[i-7] + s1) & M64;
+  }
+  let [a,b,c,d,e,f,g,h] = H;
+  for (let i = 0; i < 80; i++) {
+    const S1 = rotr(e,14n)^rotr(e,18n)^rotr(e,41n);
+    const ch = (e & f) ^ ((e ^ M64) & g);
+    const t1 = (h + S1 + ch + K512[i] + W[i]) & M64;
+    const S0 = rotr(a,28n)^rotr(a,34n)^rotr(a,39n);
+    const maj = (a & b) ^ (a & c) ^ (b & c);
+    const t2 = (S0 + maj) & M64;
+    h=g; g=f; f=e; e=(d+t1)&M64; d=c; c=b; b=a; a=(t1+t2)&M64;
+  }
+  return [(H[0]+a)&M64,(H[1]+b)&M64,(H[2]+c)&M64,(H[3]+d)&M64,(H[4]+e)&M64,(H[5]+f)&M64,(H[6]+g)&M64,(H[7]+h)&M64];
+}
+function _stateToU32(state8) {   // -> Uint32Array(16), hi,lo interleaved
+  const o = new Uint32Array(16);
+  for (let i = 0; i < 8; i++) { o[i*2] = Number((state8[i] >> 32n) & 0xffffffffn); o[i*2+1] = Number(state8[i] & 0xffffffffn); }
+  return o;
+}
+function hmacMidstates(key /* Uint8Array */) {
+  let k = key; if (k.length > 128) k = sha512(k);
+  const kp = new Uint8Array(128); kp.set(k);
+  const ip = new Uint8Array(128), op = new Uint8Array(128);
+  for (let i = 0; i < 128; i++) { ip[i] = kp[i] ^ 0x36; op[i] = kp[i] ^ 0x5c; }
+  return { ipad: _stateToU32(_sha512CompressBig(H512_0, ip)),
+           opad: _stateToU32(_sha512CompressBig(H512_0, op)) };
+}
+function _u32ToState(u32){ const s=[]; for(let i=0;i<8;i++) s.push((BigInt(u32[i*2])<<32n)|BigInt(u32[i*2+1])); return s; }
+// Continue SHA-512 from `stateU32` (hi/lo) absorbing ONE more block whose data is
+// `msg[0..msgLen)` (msgLen<=111), given `prior` bytes already hashed. Returns the
+// 64-byte digest. This is exactly what the WGSL kernel does per HMAC half.
+function sha512FromState1blk(stateU32, msg, msgLen, prior){
+  const blk=new Uint8Array(128);
+  for(let i=0;i<msgLen;i++) blk[i]=msg[i];
+  blk[msgLen]=0x80;
+  const bl=BigInt(prior+msgLen)*8n;
+  for(let i=0;i<16;i++) blk[127-i]=Number((bl>>BigInt(8*i))&0xffn);
+  const st=_sha512CompressBig(_u32ToState(stateU32), blk);
+  const out=new Uint8Array(64);
+  for(let i=0;i<8;i++) for(let j=0;j<8;j++) out[i*8+j]=Number((st[i]>>BigInt(8*(7-j)))&0xffn);
+  return out;
+}
+// HMAC + PBKDF2 via precomputed midstates (the GPU decomposition; salt+4<=111).
+function hmacViaMid(mid, msg){ return sha512FromState1blk(mid.opad, sha512FromState1blk(mid.ipad, msg, msg.length, 128), 64, 128); }
+function pbkdf2ViaMid(mid, salt){
+  let u = sha512FromState1blk(mid.ipad, concat(salt, Uint8Array.of(0,0,0,1)), salt.length+4, 128);
+  u = sha512FromState1blk(mid.opad, u, 64, 128);
+  const t = u.slice();
+  for (let i=1;i<2048;i++){ u=sha512FromState1blk(mid.ipad,u,64,128); u=sha512FromState1blk(mid.opad,u,64,128); for(let j=0;j<64;j++) t[j]^=u[j]; }
+  return t;
+}
+
 /* ------------------------------- HMAC/PBKDF2 ---------------------------- */
 function hmacSha512(key, msg) {           // key,msg: Uint8Array -> Uint8Array(64)
   const B = 128;
@@ -284,6 +348,8 @@ const _exports = {
   toHex, fromHex, concat, eq, utf8, nfkd,
   // SHA-512 K/H0 as hi/lo u32 tables (for the WGSL kernel; same gated constants).
   gpuK: { hi: _KH, lo: _KL }, gpuH0: { hi: _IH, lo: _ILo },
+  // GPU HMAC midstate decomposition (host precompute + node gate).
+  hmacMidstates, sha512FromState1blk, hmacViaMid, pbkdf2ViaMid,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = _exports;
 if (typeof window !== 'undefined') window.BIP39Crypto = _exports;
