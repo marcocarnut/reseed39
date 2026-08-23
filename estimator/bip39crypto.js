@@ -335,6 +335,219 @@ function decodeXpub(str){
            childNumber: bytesToBig(p.slice(9,13)), chainCode: p.slice(13,45), key: p.slice(45,78) };
 }
 
+/* ============================ secp256k1 (JS) ============================= *
+ * Needed for the ADDRESS-target crack (the xpub path is EC-free; addresses
+ * aren't). Field arithmetic mod P; Jacobian point ops (one modular inverse per
+ * scalar mult, at the end); compressed 33-byte pubkey. Pure BigInt -- perf is a
+ * few thousand mults/s, fine for the browser "small problems" the tool targets.
+ * Gated: privToPub(vector priv) == the BIP32 vector-1 master pubkey.           */
+const SECP_P  = 0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2fn;
+const SECP_GX = 0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798n;
+const SECP_GY = 0x483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8n;
+const _P = SECP_P;
+function _mod(a,m){ const r=a%m; return r<0n?r+m:r; }
+function _modinv(a,m){                          // extended Euclid, a^-1 mod m
+  a=_mod(a,m); let [old_r,r]=[a,m], [old_s,s]=[1n,0n];
+  while (r!==0n){ const q=old_r/r; [old_r,r]=[r,old_r-q*r]; [old_s,s]=[s,old_s-q*s]; }
+  return _mod(old_s,m);
+}
+// Jacobian point {X,Y,Z}; the point at infinity is Z==0.
+const _INF = { X:0n, Y:1n, Z:0n };
+function _jDouble(p){
+  if (p.Z===0n || p.Y===0n) return _INF;
+  const Y2=_mod(p.Y*p.Y,_P);
+  const S=_mod(4n*p.X*Y2,_P);
+  const M=_mod(3n*p.X*p.X,_P);              // a==0 for secp256k1
+  const X3=_mod(M*M-2n*S,_P);
+  const Y3=_mod(M*(S-X3)-8n*Y2*Y2,_P);
+  const Z3=_mod(2n*p.Y*p.Z,_P);
+  return {X:X3,Y:Y3,Z:Z3};
+}
+function _jAdd(p,q){
+  if (p.Z===0n) return q; if (q.Z===0n) return p;
+  const Z1Z1=_mod(p.Z*p.Z,_P), Z2Z2=_mod(q.Z*q.Z,_P);
+  const U1=_mod(p.X*Z2Z2,_P), U2=_mod(q.X*Z1Z1,_P);
+  const S1=_mod(p.Y*q.Z*Z2Z2,_P), S2=_mod(q.Y*p.Z*Z1Z1,_P);
+  if (U1===U2){ return (S1===S2) ? _jDouble(p) : _INF; }
+  const H=_mod(U2-U1,_P), R=_mod(S2-S1,_P);
+  const HH=_mod(H*H,_P), HHH=_mod(H*HH,_P), V=_mod(U1*HH,_P);
+  const X3=_mod(R*R-HHH-2n*V,_P);
+  const Y3=_mod(R*(V-X3)-S1*HHH,_P);
+  const Z3=_mod(p.Z*q.Z*H,_P);
+  return {X:X3,Y:Y3,Z:Z3};
+}
+function _jToAffine(p){
+  if (p.Z===0n) return null;                // infinity
+  const zi=_modinv(p.Z,_P), zi2=_mod(zi*zi,_P), zi3=_mod(zi2*zi,_P);
+  return { x:_mod(p.X*zi2,_P), y:_mod(p.Y*zi3,_P) };
+}
+function _scalarMult(k, ax, ay){             // k * (ax,ay) affine -> affine {x,y} or null
+  k=_mod(k,SECP_N); if (k===0n) return null;
+  let R=_INF; let Q={X:ax,Y:ay,Z:1n};
+  while (k>0n){ if (k&1n) R=_jAdd(R,Q); Q=_jDouble(Q); k>>=1n; }
+  return _jToAffine(R);
+}
+function pointFromPriv(k){ return _scalarMult(k, SECP_GX, SECP_GY); }   // affine {x,y}
+function serPoint(pt){                       // affine -> 33-byte compressed
+  const o=new Uint8Array(33); o[0]=(pt.y&1n)===0n?0x02:0x03;
+  const xb=ser256(pt.x); o.set(xb,1); return o;
+}
+function privToPub(k){ return serPoint(pointFromPriv(k)); }            // 33-byte compressed
+// lift_x per BIP340: x -> the even-y point on the curve (or null if not on curve).
+function liftX(x){
+  x=_mod(x,_P);
+  const c=_mod(x*x%_P*x + 7n,_P);
+  const y=_modpow(c,(_P+1n)/4n,_P);
+  if (_mod(y*y,_P)!==c) return null;
+  return { x, y: (y&1n)===0n ? y : _P-y };
+}
+function _modpow(b,e,m){ b=_mod(b,m); let r=1n; while(e>0n){ if(e&1n) r=_mod(r*b,m); b=_mod(b*b,m); e>>=1n; } return r; }
+
+/* ---- non-hardened CKDpriv (needs the parent PUBKEY = one scalar mult) ---- */
+function ckdNormal(par, index){
+  if ((index>>>0) >= HARD) throw new Error('ckdNormal: index must be non-hardened (<2^31)');
+  const pub = privToPub(par.k);
+  const I = hmacSha512(par.c, concat(pub, ser32(index>>>0)));
+  const IL = bytesToBig(I.slice(0,32));
+  const k = (IL + par.k) % SECP_N;
+  return { k, c: I.slice(32,64) };
+}
+// Derive to a receiving/change address key: m/purpose'/coin'/account'/change/index.
+function addressNode(seed, purpose, account=0, coin=0, change=0, index=0){
+  let node = deriveHardenedPath(seed, [purpose, coin, account]);
+  node = ckdNormal(node, change);
+  node = ckdNormal(node, index);
+  return node;
+}
+
+/* ------------------------------- RIPEMD-160 ----------------------------- */
+function ripemd160(msg){
+  const rol=(x,n)=>((x<<n)|(x>>>(32-n)))>>>0;
+  const rl=[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15, 7,4,13,1,10,6,15,3,12,0,9,5,2,14,11,8,
+            3,10,14,4,9,15,8,1,2,7,0,6,13,11,5,12, 1,9,11,10,0,8,12,4,13,3,7,15,14,5,6,2,
+            4,0,5,9,7,12,2,10,14,1,3,8,11,6,15,13];
+  const rr=[5,14,7,0,9,2,11,4,13,6,15,8,1,10,3,12, 6,11,3,7,0,13,5,10,14,15,8,12,4,9,1,2,
+            15,5,1,3,7,14,6,9,11,8,12,2,10,0,4,13, 8,6,4,1,3,11,15,0,5,12,2,13,9,7,10,14,
+            12,15,10,4,1,5,8,7,6,2,13,14,0,3,9,11];
+  const sl=[11,14,15,12,5,8,7,9,11,13,14,15,6,7,9,8, 7,6,8,13,11,9,7,15,7,12,15,9,11,7,13,12,
+            11,13,6,7,14,9,13,15,14,8,13,6,5,12,7,5, 11,12,14,15,14,15,9,8,9,14,5,6,8,6,5,12,
+            9,15,5,11,6,8,13,12,5,12,13,14,11,8,5,6];
+  const sr=[8,9,9,11,13,15,15,5,7,7,8,11,14,14,12,6, 9,13,15,7,12,8,9,11,7,7,12,7,6,15,13,11,
+            9,7,15,11,8,6,6,14,12,13,5,14,13,13,7,5, 15,5,8,11,14,14,6,14,6,9,12,9,12,5,15,8,
+            8,5,12,9,12,5,14,6,8,13,6,5,15,13,11,11];
+  const KL=[0x00000000,0x5a827999,0x6ed9eba1,0x8f1bbcdc,0xa953fd4e];
+  const KR=[0x50a28be6,0x5c4dd124,0x6d703ef3,0x7a6d76e9,0x00000000];
+  const f=(j,x,y,z)=> j<16?(x^y^z): j<32?((x&y)|(~x&z)): j<48?((x|~y)^z): j<64?((x&z)|(y&~z)):(x^(y|~z));
+  const l=msg.length;
+  const withOne=l+1; const k=(56-(withOne%64)+64)%64;
+  const total=l+1+k+8; const m=new Uint8Array(total); m.set(msg); m[l]=0x80;
+  const bl=l*8; m[total-8]=bl&255; m[total-7]=(bl>>>8)&255; m[total-6]=(bl>>>16)&255; m[total-5]=(bl>>>24)&255;
+  let h0=0x67452301,h1=0xefcdab89,h2=0x98badcfe,h3=0x10325476,h4=0xc3d2e1f0;
+  const X=new Int32Array(16);
+  for (let off=0; off<total; off+=64){
+    for (let i=0;i<16;i++){ const j=off+i*4; X[i]=(m[j]|(m[j+1]<<8)|(m[j+2]<<16)|(m[j+3]<<24)); }
+    let al=h0,bl2=h1,cl=h2,dl=h3,el=h4, ar=h0,br=h1,cr=h2,dr=h3,er=h4;
+    for (let j=0;j<80;j++){
+      const rnd=j>>4;
+      let t=(al + f(j,bl2,cl,dl) + X[rl[j]] + KL[rnd])|0; t=(rol(t>>>0, sl[j]) + el)|0;
+      al=el; el=dl; dl=rol(cl>>>0,10); cl=bl2; bl2=t;
+      let u=(ar + f(79-j,br,cr,dr) + X[rr[j]] + KR[rnd])|0; u=(rol(u>>>0, sr[j]) + er)|0;
+      ar=er; er=dr; dr=rol(cr>>>0,10); cr=br; br=u;
+    }
+    const t=(h1+cl+dr)|0; h1=(h2+dl+er)|0; h2=(h3+el+ar)|0; h3=(h4+al+br)|0; h4=(h0+bl2+cr)|0; h0=t;
+  }
+  const o=new Uint8Array(20); const put=(h,p)=>{ o[p]=h&255;o[p+1]=(h>>>8)&255;o[p+2]=(h>>>16)&255;o[p+3]=(h>>>24)&255; };
+  put(h0,0);put(h1,4);put(h2,8);put(h3,12);put(h4,16); return o;
+}
+function hash160(b){ return ripemd160(_sha256(b)); }
+
+/* ---------------------------- bech32 / bech32m -------------------------- */
+const _BECH='qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+function _polymod(values){
+  const GEN=[0x3b6a57b2,0x26508e6d,0x1ea119fa,0x3d4233dd,0x2a1462b3];
+  let chk=1;
+  for (const v of values){ const b=chk>>>25; chk=((chk&0x1ffffff)<<5)^v; for(let i=0;i<5;i++) if((b>>i)&1) chk^=GEN[i]; }
+  return chk>>>0;
+}
+function _hrpExpand(hrp){ const o=[]; for(let i=0;i<hrp.length;i++) o.push(hrp.charCodeAt(i)>>5); o.push(0); for(let i=0;i<hrp.length;i++) o.push(hrp.charCodeAt(i)&31); return o; }
+function _convertBits(data, from, to, pad){
+  let acc=0,bits=0; const out=[]; const maxv=(1<<to)-1;
+  for (const value of data){ acc=(acc<<from)|value; bits+=from; while(bits>=to){ bits-=to; out.push((acc>>bits)&maxv); } }
+  if (pad){ if (bits) out.push((acc<<(to-bits))&maxv); }
+  else if (bits>=from || ((acc<<(to-bits))&maxv)) return null;
+  return out;
+}
+function bech32Encode(hrp, data, spec){                 // spec: 'bech32'|'bech32m'
+  const CONST = spec==='bech32m' ? 0x2bc830a3 : 1;
+  const values=_hrpExpand(hrp).concat(data);
+  const polymod=_polymod(values.concat([0,0,0,0,0,0]))^CONST;
+  const chk=[]; for(let i=0;i<6;i++) chk.push((polymod>>(5*(5-i)))&31);
+  let s=hrp+'1'; for (const d of data.concat(chk)) s+=_BECH[d]; return s;
+}
+function bech32Decode(str){                              // -> {hrp, data(5-bit[]), spec} or null
+  const lower=str.toLowerCase();
+  if (str!==lower && str!==str.toUpperCase()) return null;
+  const s=lower; const pos=s.lastIndexOf('1');
+  if (pos<1 || pos+7>s.length) return null;
+  const hrp=s.slice(0,pos); const data=[];
+  for (let i=pos+1;i<s.length;i++){ const d=_BECH.indexOf(s[i]); if(d<0) return null; data.push(d); }
+  const values=_hrpExpand(hrp).concat(data);
+  const pm=_polymod(values);
+  const spec = pm===1 ? 'bech32' : pm===0x2bc830a3 ? 'bech32m' : null;
+  if (!spec) return null;
+  return { hrp, data: data.slice(0,-6), spec };
+}
+// Encode a segwit address (witver 0 -> bech32, >=1 -> bech32m).
+function segwitEncode(hrp, witver, program){
+  const spec = witver===0 ? 'bech32':'bech32m';
+  return bech32Encode(hrp, [witver].concat(_convertBits(Array.from(program),8,5,true)), spec);
+}
+
+/* --------------- address decode + per-purpose program build ------------- *
+ * A "target" is {type, program}: p2pkh/p2sh -> 20-byte HASH160; p2wpkh ->
+ * 20-byte HASH160 (witv0); p2tr -> 32-byte x-only tweaked key (witv1).       */
+function decodeAddress(str){
+  const low=str.toLowerCase();
+  if (low.startsWith('bc1') || low.startsWith('tb1') || low.startsWith('bcrt1')){
+    const d=bech32Decode(str); if(!d) throw new Error('bad bech32 address');
+    const witver=d.data[0]; const prog=_convertBits(d.data.slice(1),5,8,false);
+    if (!prog) throw new Error('bad witness program');
+    const program=Uint8Array.from(prog);
+    if (witver===0 && program.length===20){ if(d.spec!=='bech32') throw new Error('v0 must be bech32'); return {type:'p2wpkh', program, hrp:d.hrp}; }
+    if (witver===1 && program.length===32){ if(d.spec!=='bech32m') throw new Error('v1 must be bech32m'); return {type:'p2tr', program, hrp:d.hrp}; }
+    throw new Error('unsupported witness v'+witver+' len '+program.length);
+  }
+  const p=b58checkDecode(str);
+  if (p.length!==21) throw new Error('bad base58 address length');
+  if (p[0]===0x00) return {type:'p2pkh', program:p.slice(1)};
+  if (p[0]===0x05) return {type:'p2sh',  program:p.slice(1)};
+  throw new Error('unknown base58 address version 0x'+p[0].toString(16));
+}
+const _TAP_TAG = null;   // computed lazily
+let _tapTweakMid=null;
+function _taggedHash(tag, msg){ const th=_sha256(utf8(tag)); return _sha256(concat(th, th, msg)); }
+// The script type a BIP purpose produces (for matching against a decoded target).
+function purposeType(purpose){ return purpose===44?'p2pkh':purpose===49?'p2sh':purpose===84?'p2wpkh':purpose===86?'p2tr':null; }
+// Build the {type,program} for a derived 33-byte compressed pubkey under a purpose.
+function pubToTarget(pub33, purpose){
+  if (purpose===44) return {type:'p2pkh',  program:hash160(pub33)};
+  if (purpose===84) return {type:'p2wpkh', program:hash160(pub33)};
+  if (purpose===49){ const redeem=concat(Uint8Array.of(0x00,0x14), hash160(pub33)); return {type:'p2sh', program:hash160(redeem)}; }
+  if (purpose===86){                                   // BIP86 taproot
+    const P=liftX(bytesToBig(pub33.slice(1)));
+    const t=_mod(bytesToBig(_taggedHash('TapTweak', pub33.slice(1))), SECP_N);
+    const tG=pointFromPriv(t);
+    const Q=_jToAffine(_jAdd({X:P.x,Y:P.y,Z:1n}, {X:tG.x,Y:tG.y,Z:1n}));
+    return {type:'p2tr', program:ser256(Q.x)};
+  }
+  throw new Error('unsupported purpose '+purpose);
+}
+// Full: seed + path -> {type, program} for comparison to a decoded address.
+function addressTarget(seed, purpose, account, coin, change, index){
+  const node=addressNode(seed, purpose, account, coin, change, index);
+  return pubToTarget(privToPub(node.k), purpose);
+}
+
 /* ------------------------------- helpers -------------------------------- */
 function concat(...arrs){ let n=0; for(const a of arrs) n+=a.length; const o=new Uint8Array(n); let k=0; for(const a of arrs){o.set(a,k);k+=a.length;} return o; }
 function toHex(b){ let s=''; for(let i=0;i<b.length;i++) s+=b[i].toString(16).padStart(2,'0'); return s; }
@@ -350,6 +563,12 @@ const _exports = {
   gpuK: { hi: _KH, lo: _KL }, gpuH0: { hi: _IH, lo: _ILo },
   // GPU HMAC midstate decomposition (host precompute + node gate).
   hmacMidstates, sha512FromState1blk, hmacViaMid, pbkdf2ViaMid,
+  // secp256k1 + address-target crack (the EC path).
+  SECP_P, pointFromPriv, privToPub, serPoint, liftX,
+  ckdNormal, addressNode,
+  ripemd160, hash160,
+  bech32Encode, bech32Decode, segwitEncode,
+  decodeAddress, purposeType, pubToTarget, addressTarget,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = _exports;
 if (typeof window !== 'undefined') window.BIP39Crypto = _exports;

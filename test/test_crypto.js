@@ -56,4 +56,67 @@ console.log(`\n==== crypto: ${pass} passed, ${fail} failed ====`);
 })();
 
 console.log(`\n==== with e2e: ${pass} passed, ${fail} failed ====`);
+
+/* ===================== ADDRESS-TARGET crack crypto ===================== *
+ * secp256k1 + non-hardened derive + HASH160 + bech32/bech32m + all four
+ * address types, gated against known vectors. Cross-checks the whole
+ * seed -> derive -> pubkey -> program -> address pipeline end to end.        */
+console.log('\n---- address-target crypto ----');
+
+// 6) secp256k1: privToPub against BIP32 test vector 1 master pubkey.
+eqh(C.toHex(C.privToPub(m.k)),
+  '0339a36013301597daef41fbe593a02cc513d0b55527ec2df1050e2e8ff49c85c2',
+  'secp256k1 privToPub == BIP32 vector-1 master pubkey');
+
+// 7) RIPEMD-160 known-answer (empty + "abc").
+eqh(C.toHex(C.ripemd160(C.utf8(''))),    '9c1185a5c5e9fc54612808977ee8f548b2258d31', 'RIPEMD-160("")');
+eqh(C.toHex(C.ripemd160(C.utf8('abc'))), '8eb208f7e05d987a9b044a8e98c6b087f15a0bfc', 'RIPEMD-160("abc")');
+
+// 8) bech32/bech32m round-trip via BIP173/BIP350 test vectors.
+eqh(C.bech32Decode('A1LQFN3A')?.spec, 'bech32m', 'bech32m sample decodes');
+eqh(C.segwitEncode('bc', 0, C.fromHex('751e76e8199196d454941c45d1b3a323f1433bd6')),
+  'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4', 'segwit v0 encode (BIP173 vector)');
+
+// 9) THE address vectors: mnemonic "abandon…about", NO passphrase, m/p'/0'/0'/0/0.
+const av='abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+const aseed=C.mnemonicToSeed(av,'');
+const mkAddr=(purpose)=>{ const pub=C.privToPub(C.addressNode(aseed,purpose,0,0,0,0).k); const tg=C.pubToTarget(pub,purpose);
+  if (tg.type==='p2pkh') return C.b58encode(C.concat(Uint8Array.of(0x00),tg.program, sfx(0x00,tg.program)));
+  if (tg.type==='p2sh')  return C.b58encode(C.concat(Uint8Array.of(0x05),tg.program, sfx(0x05,tg.program)));
+  if (tg.type==='p2wpkh')return C.segwitEncode('bc',0,tg.program);
+  if (tg.type==='p2tr')  return C.segwitEncode('bc',1,tg.program); };
+function sfx(ver,prog){ const _sha=require('../estimator/bip39.js').sha256; const p=C.concat(Uint8Array.of(ver),prog); return _sha(_sha(p)).slice(0,4); }
+eqh(mkAddr(84), 'bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu', 'BIP84 m/84\'/0\'/0\'/0/0');
+eqh(mkAddr(86), 'bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr', 'BIP86 m/86\'/0\'/0\'/0/0');
+eqh(mkAddr(44), '1LqBGSKuX5yYUonjxT5qGfpUsXKYYWeabA', 'BIP44 m/44\'/0\'/0\'/0/0');
+eqh(mkAddr(49), '37VucYSaXLCAsxYyAPfbSi9eh4iEcbShgf', 'BIP49 m/49\'/0\'/0\'/0/0');
+
+// 10) decodeAddress -> {type, program} matches what pubToTarget builds.
+for (const [purpose,addr] of [[84,'bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu'],
+                              [86,'bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr'],
+                              [44,'1LqBGSKuX5yYUonjxT5qGfpUsXKYYWeabA'],
+                              [49,'37VucYSaXLCAsxYyAPfbSi9eh4iEcbShgf']]){
+  const d=C.decodeAddress(addr);
+  const built=C.pubToTarget(C.privToPub(C.addressNode(aseed,purpose,0,0,0,0).k), purpose);
+  ok(d.type===built.type && C.eq(d.program, built.program), `decodeAddress == pubToTarget for BIP${purpose} (${d.type})`);
+}
+
+// 11) END-TO-END address-target crack: unknown passphrase, known BIP84 address.
+(function(){
+  const known='legal winner thank year wave sausage worth useful legal winner thank yellow';
+  const realPass='swordfish7';
+  const seedR=C.mnemonicToSeed(known, realPass);
+  const targetAddr=C.segwitEncode('bc',0,C.pubToTarget(C.privToPub(C.addressNode(seedR,84,0,0,0,0).k),84).program);
+  const target=C.decodeAddress(targetAddr);
+  const candidates=['swordfish5','hunter2','swordfish9','swordfish7','Tr3zor'];
+  let found=null;
+  for (const cand of candidates){
+    const s=C.mnemonicToSeed(known, cand);
+    const built=C.pubToTarget(C.privToPub(C.addressNode(s,84,0,0,0,0).k),84);
+    if (built.type===target.type && C.eq(built.program, target.program)){ found=cand; break; }
+  }
+  ok(found===realPass, `e2e address crack: recovered "${realPass}" via P2WPKH program compare — got ${found}`);
+})();
+
+console.log(`\n==== FINAL: ${pass} passed, ${fail} failed ====`);
 process.exit(fail?1:0);
