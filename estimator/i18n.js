@@ -49,6 +49,8 @@ const STRINGS = {
     gap: "address gap",
     gapHint: "gap = how many receive indices to check per account (only when matching an address; ignored for xpub).",
     engine: "Engine (for ETA — assumed rates)", cores: "cores",
+    benchBtn: "⏱ Benchmark this browser", benchRunning: "measuring…",
+    benchDone: "measured on this browser (JS-CPU, 1 core × your cores)",
     // results
     unbounded: "unbounded keyspace", exhaustIn: "exhaust in",
     totalCandidates: "Total candidates", dimPill: "DIM-1 × path plan", unboundedShort: "unbounded",
@@ -96,6 +98,8 @@ const STRINGS = {
     gap: "gap de endereços",
     gapHint: "gap = quantos índices de recebimento checar por conta (só ao casar um endereço; ignorado para xpub).",
     engine: "Motor (para a estimativa — taxas assumidas)", cores: "núcleos",
+    benchBtn: "⏱ Medir este navegador", benchRunning: "medindo…",
+    benchDone: "medido neste navegador (JS-CPU, 1 núcleo × seus núcleos)",
     unbounded: "espaço ilimitado", exhaustIn: "esgota em",
     totalCandidates: "Total de candidatos", dimPill: "DIM-1 × plano de caminhos", unboundedShort: "ilimitado",
     kPassSet: "conjunto da frase-senha", kMnemRaw: "conjunto bruto do mnemônico", kChecksum: "checksum-válidos",

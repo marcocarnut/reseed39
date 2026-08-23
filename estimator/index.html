@@ -170,6 +170,8 @@
       </div>
       <span id="coresWrap" style="margin-left:12px"><label class="f" style="display:inline" data-i18n="cores">cores</label>
         <input id="cores" class="num" type="text" value="8" style="display:inline;width:60px"></span>
+      <div style="margin-top:10px"><button class="act" id="benchBtn" data-i18n="benchBtn" style="margin-top:0">⏱ Benchmark this browser</button>
+        <span class="hint" id="benchInfo" style="margin-left:10px"></span></div>
     </fieldset>
   </div>
 
@@ -196,6 +198,7 @@
 <script src="../estimator/bip39.js"></script>
 <script src="../estimator/model.js"></script>
 <script src="../estimator/wordset.js"></script>
+<script src="../estimator/bip39crypto.js"></script>
 <script src="../estimator/i18n.js"></script>
 <script>
 'use strict';
@@ -205,6 +208,7 @@ let RXE, VALIDATOR;
 const registered = new Map();
 let liveSets = [];
 let debounce;
+let calibration = null;      // set by the in-browser benchmark (CPU/JS)
 let LANG = 'en';
 let t = EstI18N.makeT('en');
 const VERDICT_WORD = { en:{green:'GREEN',yellow:'YELLOW',red:'RED'}, pt:{green:'VERDE',yellow:'AMARELO',red:'VERMELHO'} };
@@ -412,9 +416,29 @@ function wireUI(){
   ['#passPat','#wordsPat','#wordsK','#accts','#gap','#cores'].forEach(s=>$(s).addEventListener('input',schedule));
   $('#change').addEventListener('change',recompute);
   $('#addr').addEventListener('input',()=>{clearTimeout(debounce);debounce=setTimeout(onAddr,250);});
+  $('#benchBtn').onclick=runBenchmark;
   $('#dAdd').onclick=addDict;
 }
 function schedule(){ clearTimeout(debounce); debounce=setTimeout(recompute,300); }
+
+// Measure the REAL per-candidate rate in THIS browser (JS-CPU, 1 core): PBKDF2
+// x2048 + hardened derive, using the same proven crypto the cracker will use.
+// Feeds input.calibration so the ETA flips from "assumed" to measured.
+async function runBenchmark(){
+  const btn=$('#benchBtn'), info=$('#benchInfo');
+  btn.disabled=true; info.textContent=t('benchRunning');
+  await new Promise(r=>setTimeout(r,30));           // let the label paint
+  const C=window.BIP39Crypto;
+  const mn='legal winner thank year wave sausage worth useful legal winner thank yellow';
+  for(let i=0;i<4;i++) C.accountNode(C.mnemonicToSeed(mn,'w'+i),84);   // warm JIT
+  const t0=performance.now(); let n=0;
+  do { for(let k=0;k<8;k++){ C.accountNode(C.mnemonicToSeed(mn,'c'+n),84); n++; } }
+  while(performance.now()-t0<1200);
+  const rate=n/((performance.now()-t0)/1000);
+  calibration={ source:t('benchDone'), cpu:{ kdfPerCore: rate } };
+  info.textContent=`${fmtBig(Math.round(rate))} cand/s/core`;
+  btn.disabled=false; recompute();
+}
 
 // ---------- recompute ----------
 function freeLive(){ liveSets.forEach(s=>{try{s.free()}catch(e){}}); liveSets=[]; }
@@ -441,6 +465,7 @@ function recompute(){
     mnemonicPattern: currentMnemonicPattern(mode),
     targetType: target, backend,
     cores: parseInt($('#cores').value,10)||1,
+    calibration: (backend==='cpu') ? calibration : null,
     path:{ purposes: purposes.length?purposes:['bip84'],
            accounts:parseInt($('#accts').value,10)||1,
            change:parseInt($('#change').value,10)||1,
