@@ -1,0 +1,8 @@
+# Rebuildable wasm-toolchain artifacts (large; regenerate via wasm/build.sh
+# and the gmp step documented in REPORT.md / wasm/build_gmp.sh).
+wasm/build/
+wasm/gmp-wasm/
+node_modules/
+
+# Keep the built core committed for durability across box restarts:
+#   wasm/rxecore.js and wasm/rxecore.wasm are intentionally NOT ignored.
