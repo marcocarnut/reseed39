@@ -1,0 +1,349 @@
+// model.js -- the BIP39 keyspace / effort ESTIMATOR model.
+//
+// This is the ONE place the *new* estimator logic lives (PLAN §9/§14). Every
+// enumeration count and every sample string comes from librxe via the wasm core
+// (THE DRIFT RULE) -- this file never re-implements counting or the bijection.
+// What is genuinely new here (and nowhere else):
+//   * checksum-survival  (exact by enumeration when small, else sampled)
+//   * path-plan multiplier (paths x accounts x change x gap)
+//   * joint-mode product   (checksum-valid words-set  x  passphrase-set)
+//   * ETA from PLAN §9 rate constants  (LABELLED "assumed, pre-calibration")
+//   * green/yellow/red verdict + narrowing-levers text
+//
+// The model is dependency-injected with a loaded rxe core and a BIP39 validator
+// so it is trivially unit-testable in node and identical in the browser.
+//
+//   const rxe = await loadRxeCore();
+//   const validator = makeValidator(englishWords);
+//   const report = estimate({ ... }, { rxe, validator });
+
+'use strict';
+
+/* ======================================================================== *
+ *  PLAN §9 performance constants -- ASSUMED, PRE-CALIBRATION PLACEHOLDERS.  *
+ *  There is no browser/CPU benchmarked here yet; real calibration (browser  *
+ *  JS-CPU + WebGPU, and native `--calibrate`) is a later step with Kiko.    *
+ *  Override the whole block via input.calibration to feed measured rates.   *
+ * ======================================================================== */
+const DEFAULT_RATES = {
+  calibrated: false,           // flips true once a real measurement is supplied
+  source: 'assumed (PLAN §9), pre-calibration',
+  cpu: {
+    kdfPerCore: 3000,          // PBKDF2-HMAC-SHA512(2048) cand/s/core (range ~1-5K)
+    ecMultPerCore: 50000,      // fixed-base k*G mults/s/core (libsecp ~50-70K)
+  },
+  gpu: {
+    kdf: 300000,               // device KDF cand/s (PLAN range 1e5-1e6)
+    ecMult: 100000,            // HOST secp256k1 ceiling for address targets (1e4-1e5)
+  },
+};
+
+// Verdict thresholds on time-to-exhaust (the planning number). PLAN §14:
+// green = minutes/hours, yellow = days/weeks, red = years+.
+const GREEN_MAX_SEC = 24 * 3600;             // <= 1 day  -> green
+const YELLOW_MAX_SEC = 365 * 24 * 3600;      // <= 1 year -> yellow, else red
+
+// EC mults per address derivation for an *address* target (PLAN §2.4:
+// change + index + address = 3 fixed-base mults; taproot's +1 is ignored here).
+const MULTS_PER_ADDRESS = 3;
+
+/* ----------------------------- formatting ------------------------------- */
+
+// Human-readable count for a (possibly huge) BigInt or number.
+function humanCount(n) {
+  const b = typeof n === 'bigint' ? n : BigInt(Math.round(Number(n)));
+  if (b < 0n) return String(b);
+  const s = b.toString();
+  if (s.length <= 6) return s.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  // scientific-ish: d.ddde+NN
+  const exp = s.length - 1;
+  const mant = s[0] + '.' + s.slice(1, 4);
+  return `${mant}e${exp}`;
+}
+
+function humanTime(sec) {
+  if (!isFinite(sec)) return 'unbounded';
+  if (sec < 1) return '<1 s';
+  const units = [
+    ['year', 365 * 24 * 3600],
+    ['day', 24 * 3600],
+    ['hour', 3600],
+    ['minute', 60],
+    ['second', 1],
+  ];
+  for (const [name, span] of units) {
+    if (sec >= span) {
+      const v = sec / span;
+      const val = v >= 100 ? Math.round(v) : Math.round(v * 10) / 10;
+      return `${val} ${name}${val === 1 ? '' : 's'}`;
+    }
+  }
+  return `${Math.round(sec)} seconds`;
+}
+
+/* --------------------------- checksum survival -------------------------- */
+// How many members of a mnemonic pattern are checksum-valid BIP39 mnemonics.
+// Exact when the raw set is small enough to walk; sampled otherwise. The result
+// always says WHICH method and the fraction it found (BRIEF P2 requirement).
+//
+//   set        : a parsed RxeSet (from rxe.parse) for the mnemonic pattern
+//   validator  : { isValid(mnemonicString), theoreticalFraction(W) }
+//   opts.exactThreshold : walk-and-count if raw cardinality <= this (default 2e5)
+//   opts.sampleSize     : random samples when not exact (default 20000)
+function checksumSurvival(set, validator, opts = {}) {
+  const exactThreshold = BigInt(opts.exactThreshold != null ? opts.exactThreshold : 200000);
+  const sampleSize = opts.sampleSize != null ? opts.sampleSize : 20000;
+
+  const raw = set.cardinality(); // BigInt, or null if infinite
+  if (raw === null) {
+    return { infinite: true, method: 'none', raw: null, validCount: null,
+             fraction: null, wordCount: null, theoreticalFraction: null };
+  }
+
+  // Word count (for the theoretical 2^-(W/3) cross-check) from the first member.
+  let wordCount = null;
+  const first = set.unrank(0n);
+  if (first !== null) wordCount = first.trim().split(/\s+/).length;
+  const theoreticalFraction =
+    wordCount != null ? validator.theoreticalFraction(wordCount) : null;
+
+  if (raw <= exactThreshold) {
+    // EXACT: enumerate every member, count survivors.
+    let valid = 0n;
+    for (let i = 0n; i < raw; i++) {
+      const m = set.unrank(i);
+      if (m !== null && validator.isValid(m)) valid++;
+    }
+    const fraction = raw === 0n ? 0 : Number(valid) / Number(raw);
+    return { infinite: false, method: 'exact', raw, validCount: valid,
+             fraction, wordCount, theoreticalFraction };
+  }
+
+  // SAMPLED: draw random indices, validate, extrapolate.
+  const rawNum = Number(raw);
+  let survivors = 0;
+  const seen = new Set();
+  let draws = 0;
+  const target = Math.min(sampleSize, rawNum);
+  // guard against pathological dup-heavy draws on tiny-but-over-threshold sets
+  let guard = target * 20;
+  while (seen.size < target && guard-- > 0) {
+    const i = BigInt(Math.floor(Math.random() * rawNum));
+    if (seen.has(i.toString())) continue;
+    seen.add(i.toString());
+    draws++;
+    const m = set.unrank(i);
+    if (m !== null && validator.isValid(m)) survivors++;
+  }
+  const fraction = draws === 0 ? 0 : survivors / draws;
+  // extrapolated valid count, kept exact-ratio in BigInt for magnitude
+  const validCount = draws === 0 ? 0n : (raw * BigInt(survivors)) / BigInt(draws);
+  return { infinite: false, method: 'sampled', raw, validCount, fraction,
+           sampleSize: draws, survivors, wordCount, theoreticalFraction };
+}
+
+/* --------------------------- path multiplier ---------------------------- */
+// paths x accounts x change x gap. For an xpub target the fan-out collapses:
+// you compare the account node's chain code directly (PLAN §3/§6), so change
+// and gap do NOT multiply -- only purposes x accounts.
+function pathMultiplier(path = {}, targetType = 'address') {
+  const purposes = Array.isArray(path.purposes) ? path.purposes.length
+                 : (path.purposes != null ? Number(path.purposes) : 1);
+  const accounts = path.accounts != null ? Number(path.accounts) : 1;
+  const change = path.change != null ? Number(path.change) : 1;
+  const gap = path.gap != null ? Number(path.gap) : 1;
+
+  const p = Math.max(1, purposes);
+  const a = Math.max(1, accounts);
+  if (targetType === 'xpub') {
+    return { value: p * a, purposes: p, accounts: a, change: 1, gap: 1,
+             collapsed: true };
+  }
+  const c = Math.max(1, change);
+  const g = Math.max(1, gap);
+  return { value: p * a * c * g, purposes: p, accounts: a, change: c, gap: g,
+           collapsed: false };
+}
+
+/* ------------------------------ the model ------------------------------- */
+// input:
+//   passphrasePattern : string | null      (the positional passphrase regex)
+//   mnemonicKnown     : bool               (true => passphrase mode; mnemonic fixed)
+//   mnemonicPattern   : string | null      (a SHAPE over [:bip39-*:]/{{ }}/alts)
+//   targetType        : 'address' | 'xpub'
+//   path              : { purposes:[...]|n, accounts, change, gap }
+//   backend           : 'cpu' | 'gpu'
+//   cores             : int (cpu only, default 1)
+//   calibration       : optional full/partial RATES override (sets calibrated)
+//   exactThreshold, sampleSize : checksum-survival knobs
+// deps: { rxe (loaded core), validator (BIP39) }
+function estimate(input, deps) {
+  const { rxe, validator } = deps;
+  const rates = mergeRates(input.calibration);
+  const targetType = input.targetType === 'xpub' ? 'xpub' : 'address';
+  const backend = input.backend === 'gpu' ? 'gpu' : 'cpu';
+  const cores = Math.max(1, Number(input.cores || 1));
+
+  // ---- mode inference (PLAN §11 table) ----
+  const hasPass = !!(input.passphrasePattern && String(input.passphrasePattern).length);
+  const hasWordsPattern = !!(input.mnemonicPattern && String(input.mnemonicPattern).length);
+  let mode;
+  if (input.mnemonicKnown && hasPass) mode = 'passphrase';
+  else if (hasWordsPattern && hasPass) mode = 'joint';
+  else if (hasWordsPattern && !hasPass) mode = 'words';
+  else if (input.mnemonicKnown && !hasPass) mode = 'passphrase'; // empty passphrase, degenerate
+  else if (hasPass) mode = 'passphrase';                          // implicit known mnemonic
+  else mode = 'unknown';
+
+  const notes = [];
+  const warnings = [];
+
+  // ---- DIM 1: passphrase set ----
+  let passSet = null, passCard = 1n, passInfinite = false;
+  if (hasPass) {
+    passSet = rxe.parse(String(input.passphrasePattern));
+    if (passSet.isInfinite()) { passInfinite = true; passCard = null; }
+    else passCard = passSet.cardinality();
+  }
+
+  // ---- DIM 1: mnemonic set + checksum survival ----
+  let wordsSet = null, survival = null, validMnemonicCount = 1n;
+  if (hasWordsPattern) {
+    wordsSet = rxe.parse(String(input.mnemonicPattern));
+    survival = checksumSurvival(wordsSet, validator, {
+      exactThreshold: input.exactThreshold, sampleSize: input.sampleSize,
+    });
+    if (survival.infinite) {
+      warnings.push('mnemonic pattern is unbounded/infinite -- bound it (no * or {n,} tails).');
+      validMnemonicCount = null;
+    } else {
+      validMnemonicCount = survival.validCount;
+      notes.push(
+        `checksum-survival: ${survival.method}, ${(survival.fraction * 100).toPrecision(3)}%` +
+        (survival.method === 'sampled' ? ` (sampled ${survival.sampleSize} of ${humanCount(survival.raw)})`
+                                       : ` (exact over ${humanCount(survival.raw)})`) +
+        (survival.theoreticalFraction != null
+          ? `; full-entropy theory = ${(survival.theoreticalFraction * 100).toPrecision(3)}%` : ''));
+    }
+  } else if (mode === 'passphrase') {
+    notes.push('passphrase mode: mnemonic is fixed & already checksum-valid -- checksum filter is a no-op here (PLAN §7).');
+  }
+
+  // ---- compose DIM 1 total (seeds = KDF evaluations) ----
+  let dim1 = null; // BigInt seeds, or null if unbounded/unknown
+  if (mode === 'passphrase') dim1 = passInfinite ? null : passCard;
+  else if (mode === 'words') dim1 = validMnemonicCount;
+  else if (mode === 'joint') {
+    if (passInfinite || validMnemonicCount === null) dim1 = null;
+    else dim1 = validMnemonicCount * passCard; // the explicit product (PLAN §7.1)
+    // PLAN §7.1: always make the product explicit, whatever the verdict.
+    notes.push(
+      'JOINT mode: keyspace is a PRODUCT (checksum-valid words ' +
+      `${dim1 === null ? '' : humanCount(validMnemonicCount) + ' x passphrase ' +
+        humanCount(passCard) + ' = ' + humanCount(dim1)}` +
+      ') -- it explodes fast; tighten either side to multiply it down.');
+  }
+
+  // ---- path-plan multiplier (DIM 2) ----
+  const pm = pathMultiplier(input.path, targetType);
+  if (pm.collapsed)
+    notes.push('xpub target: path fan-out collapses to purposes x accounts (chain-code compare, no change/gap sweep -- PLAN §3/§6).');
+
+  // ---- total candidates = DIM1 x path multiplier ----
+  const totalCandidates = dim1 === null ? null : dim1 * BigInt(pm.value);
+  const unbounded = dim1 === null;
+
+  // ---- ETA (labelled pre-calibration) ----
+  let eta = null;
+  if (!unbounded) {
+    const seeds = Number(dim1);
+    const kdfRate = backend === 'gpu' ? rates.gpu.kdf : rates.cpu.kdfPerCore * cores;
+    const seedSec = seeds / kdfRate;
+    let ecSec = 0;
+    if (targetType === 'address') {
+      const derivations = Number(totalCandidates);
+      const ecRate = backend === 'gpu' ? rates.gpu.ecMult : rates.cpu.ecMultPerCore * cores;
+      ecSec = (derivations * MULTS_PER_ADDRESS) / ecRate;
+    }
+    const exhaustSec = seedSec + ecSec;
+    eta = {
+      calibrated: rates.calibrated,
+      rateSource: rates.source,
+      backend, cores: backend === 'cpu' ? cores : undefined,
+      kdfRate, seedSeconds: seedSec, ecSeconds: ecSec,
+      exhaustSeconds: exhaustSec,
+      expectedHitSeconds: exhaustSec / 2, // ~half if the guess is in the set
+      timeToExhaust: humanTime(exhaustSec),
+      expectedTimeToHit: humanTime(exhaustSec / 2),
+      note: targetType === 'xpub'
+        ? 'xpub target: no EC in the hot loop (KDF-bound).'
+        : 'address target: includes host secp256k1 fan-out (EC-bound on GPU).',
+    };
+  }
+
+  // ---- verdict ----
+  let verdict;
+  if (unbounded) verdict = 'red';
+  else if (eta.exhaustSeconds <= GREEN_MAX_SEC) verdict = 'green';
+  else if (eta.exhaustSeconds <= YELLOW_MAX_SEC) verdict = 'yellow';
+  else verdict = 'red';
+
+  // ---- narrowing levers (PLAN §14) ----
+  const levers = [];
+  if (verdict !== 'green') {
+    if (targetType === 'address')
+      levers.push('Provide an account xpub -- removes secp256k1 from the hot loop entirely (PLAN §3).');
+    levers.push('Tighten a pattern segment (fewer alternatives / shorter quantifier).');
+    if (targetType === 'address' && (pm.gap > 1 || pm.change > 1))
+      levers.push('Lower --gap / drop change=1 -- shrinks the path multiplier directly.');
+    if (mode === 'words' || mode === 'joint')
+      levers.push('Remember one more mnemonic word -- divides the words-space by ~2048.');
+    if (mode === 'joint')
+      levers.push('This is a PRODUCT keyspace (words x passphrase) -- tightening either side multiplies down.');
+    if (pm.purposes > 1)
+      levers.push('Narrow --paths to the one script type your address implies (1..->44, 3..->49, bc1q->84, bc1p->86).');
+  }
+
+  return {
+    mode, targetType, backend, unbounded,
+    passphrase: hasPass
+      ? { pattern: String(input.passphrasePattern), infinite: passInfinite,
+          cardinality: passInfinite ? null : passCard,
+          cardinalityHuman: passInfinite ? 'unbounded' : humanCount(passCard) }
+      : null,
+    mnemonic: hasWordsPattern
+      ? { pattern: String(input.mnemonicPattern), survival }
+      : (mode === 'passphrase' ? { fixed: true } : null),
+    validMnemonicCount,
+    pathPlan: pm,
+    dim1,
+    dim1Human: dim1 === null ? 'unbounded' : humanCount(dim1),
+    totalCandidates,
+    totalCandidatesHuman: totalCandidates === null ? 'unbounded' : humanCount(totalCandidates),
+    eta,
+    verdict,
+    narrowingLevers: levers,
+    notes,
+    warnings,
+    rates,
+    // cleanup helper for callers that parsed via this model
+    _sets: { passSet, wordsSet },
+  };
+}
+
+// Merge a (partial) calibration override onto the assumed defaults.
+function mergeRates(cal) {
+  const r = JSON.parse(JSON.stringify(DEFAULT_RATES));
+  if (!cal) return r;
+  r.calibrated = true;
+  r.source = cal.source || 'calibrated (measured)';
+  if (cal.cpu) Object.assign(r.cpu, cal.cpu);
+  if (cal.gpu) Object.assign(r.gpu, cal.gpu);
+  return r;
+}
+
+module.exports = {
+  estimate, checksumSurvival, pathMultiplier,
+  humanCount, humanTime, mergeRates,
+  DEFAULT_RATES, GREEN_MAX_SEC, YELLOW_MAX_SEC, MULTS_PER_ADDRESS,
+};
