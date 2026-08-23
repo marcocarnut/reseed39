@@ -173,6 +173,18 @@
       <div style="margin-top:10px"><button class="act" id="benchBtn" data-i18n="benchBtn" style="margin-top:0">⏱ Benchmark this browser</button>
         <span class="hint" id="benchInfo" style="margin-left:10px"></span></div>
     </fieldset>
+
+    <fieldset id="crackBox" style="display:none;border-color:var(--accent)">
+      <legend data-i18n="crackTitle">Crack in your browser (xpub)</legend>
+      <label class="f" data-i18n="crackMnLabel">Your 12/24-word mnemonic — stays in this browser</label>
+      <textarea id="crackMn" rows="2" placeholder="abandon abandon abandon … about"></textarea>
+      <div style="margin-top:10px">
+        <button class="act" id="crackBtn" data-i18n="crackBtn">🔓 Crack here</button>
+        <span class="hint" id="crackMsg" style="margin-left:10px"></span>
+      </div>
+      <div class="hint" id="crackProg" style="margin-top:8px"></div>
+      <div id="crackRes" style="margin-top:8px"></div>
+    </fieldset>
   </div>
 
   <div class="pane results" id="results"></div>
@@ -210,6 +222,7 @@ const registered = new Map();
 let liveSets = [];
 let debounce;
 let calibration = null;      // set by the in-browser benchmark (CPU/JS)
+let cracking = false;        // in-browser crack in progress
 let LANG = 'en';
 let t = EstI18N.makeT('en');
 const VERDICT_WORD = { en:{green:'GREEN',yellow:'YELLOW',red:'RED'}, pt:{green:'VERDE',yellow:'AMARELO',red:'VERMELHO'} };
@@ -418,6 +431,7 @@ function wireUI(){
   $('#change').addEventListener('change',recompute);
   $('#addr').addEventListener('input',()=>{clearTimeout(debounce);debounce=setTimeout(onAddr,250);});
   $('#benchBtn').onclick=runBenchmark;
+  $('#crackBtn').onclick=onCrack;
   $('#dAdd').onclick=addDict;
 }
 function schedule(){ clearTimeout(debounce); debounce=setTimeout(recompute,300); }
@@ -439,6 +453,56 @@ async function runBenchmark(){
   calibration={ source:t('benchDone'), cpu:{ kdfPerCore: rate } };
   info.textContent=`${fmtBig(Math.round(rate))} cand/s/core`;
   btn.disabled=false; recompute();
+}
+
+// ---------- in-browser crack (xpub target, known mnemonic) ----------
+async function onCrack(){
+  const btn=$('#crackBtn'), msg=$('#crackMsg'), prog=$('#crackProg'), res=$('#crackRes');
+  if(cracking){ cracking=false; return; }          // Stop toggles the flag; the loop checks it
+  const C=window.BIP39Crypto;
+  const mn=$('#crackMn').value.trim().replace(/\s+/g,' ');
+  if(!mn){ msg.textContent=t('crackNeedMn'); return; }
+  let tcc; try{ tcc=C.decodeXpub($('#addr').value.trim()).chainCode; }
+  catch(e){ msg.textContent=t('crackNeedXpub'); return; }
+  let set; try{ set=RXE.parse($('#passPat').value.trim()); }
+  catch(e){ msg.textContent='pattern: '+e.message; return; }
+  if(set.isInfinite()){ set.free(); res.innerHTML='<span class="warnmsg">'+esc(t('crackRedNote'))+'</span>'; return; }
+  const card=set.cardinality(), CAP=200000000n;
+  if(card>CAP){ set.free(); res.innerHTML='<span class="warnmsg">'+esc(t('crackRedNote'))+'</span>'; return; }
+  const total=Number(card);
+  const pmap={bip44:44,bip49:49,bip84:84,bip86:86};
+  const checked=$$('#purposes input').filter(c=>c.checked).map(c=>c.dataset.p);
+  const nacct=Math.max(1,parseInt($('#accts').value,10)||1);
+  const plan=[]; let electrum=false;
+  checked.forEach(p=>{ if(p==='electrum'){electrum=true;return;} if(pmap[p]!==undefined) for(let a=0;a<nacct;a++) plan.push({purpose:pmap[p],account:a,coin:0}); });
+  if(!plan.length){ set.free(); msg.textContent = electrum ? t('crackElectrumNote') : 'select a BIP44/49/84/86 path'; return; }
+  cracking=true; btn.textContent=t('crackStop'); msg.textContent=t('crackRunning'); res.innerHTML=''; prog.textContent='';
+  const gpu = segVal('#backendSeg','data-b')==='gpu' && window.GpuCrack && navigator.gpu;
+  const args={ mnemonic:mn, targetChainCode:tcc, plan, total, unrank:i=>set.unrank(BigInt(i)), batchSize:4096,
+    onProgress:(done,tot,rate)=>{ prog.textContent=`${fmtBig(done)} / ${fmtBig(tot)} · ${fmtBig(Math.round(rate))} ${t('crackTried')}/s`; },
+    isCancelled:()=>!cracking };
+  try{
+    const r = gpu ? await window.GpuCrack.crackXpub(args) : await cpuCrack(args);
+    if(r.stopped) res.innerHTML='<span class="note">'+t('crackStopped')+'</span>';
+    else if(r.found!=null){
+      const pth=`m/${r.path.purpose}'/${r.path.coin}'/${r.path.account}'`;
+      res.innerHTML=`<div class="verdict green" style="margin:0"><span class="dot"></span>${t('crackFound')} <b>${esc(r.found)}</b></div>`
+                   +`<div class="note">${t('crackVia')} ${esc(pth)}, index ${fmtBig(r.index)}</div>`;
+    } else res.innerHTML='<span class="warnmsg">'+t('crackNotFound')+'</span>';
+  }catch(e){ res.innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
+  finally{ cracking=false; btn.textContent=t('crackBtn'); msg.textContent=''; try{set.free()}catch(e){} }
+}
+// single-thread JS-CPU fallback (small sets / no WebGPU)
+async function cpuCrack(a){
+  const C=window.BIP39Crypto, t0=performance.now();
+  for(let start=0;start<a.total;start+=512){
+    if(a.isCancelled()) return {stopped:true};
+    const n=Math.min(512,a.total-start);
+    for(let i=0;i<n;i++){ const pass=a.unrank(start+i); const seed=C.mnemonicToSeed(a.mnemonic,pass);
+      for(const pp of a.plan){ if(C.eq(C.accountNode(seed,pp.purpose,pp.account,pp.coin).c,a.targetChainCode)) return {found:pass,path:pp,index:start+i}; } }
+    a.onProgress(start+n,a.total,(start+n)/((performance.now()-t0)/1000)); await new Promise(r=>setTimeout(r,0));
+  }
+  return {found:null};
 }
 
 // ---------- recompute ----------
@@ -478,6 +542,10 @@ function recompute(){
   catch(e){ $('#results').innerHTML='<div class="card"><h3>parse error</h3><div class="err">'+esc(e.message)+'</div></div>'; return; }
   render(r, input);
   liveSets = [r._sets.passSet, r._sets.wordsSet].filter(Boolean);
+  updateCrackVis(mode, target);
+}
+function updateCrackVis(mode, target){
+  $('#crackBox').style.display = (mode==='passphrase' && target==='xpub') ? '' : 'none';
 }
 
 // ---------- render ----------
