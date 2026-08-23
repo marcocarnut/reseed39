@@ -1,0 +1,126 @@
+// i18n.js -- en/pt string tables + the spoken-number scales for the estimator.
+// Mirrors jsrxe's web/i18n.js approach (SCALES, DECSEP, spoken-* strings reused
+// verbatim from there). Missing keys fall back to English. NEW estimator UI keys
+// are added here; PT is a first pass -- a native review by Kiko is welcome.
+'use strict';
+
+const SCALES = {
+  en: ["", "thousand", "million", "billion", "trillion", "quadrillion",
+       "quintillion", "sextillion", "septillion", "octillion", "nonillion",
+       "decillion", "undecillion", "duodecillion", "tredecillion",
+       "quattuordecillion", "quindecillion", "sexdecillion", "septendecillion",
+       "octodecillion", "novemdecillion", "vigintillion", "unvigintillion",
+       "duovigintillion", "trevigintillion", "quattuorvigintillion",
+       "quinvigintillion", "sexvigintillion", "septenvigintillion",
+       "octovigintillion", "novemvigintillion", "trigintillion"],
+  pt: ["", "mil", "milhão", "bilhão", "trilhão", "quatrilhão", "quintilhão",
+       "sextilhão", "setilhão", "octilhão", "nonilhão", "decilhão",
+       "undecilhão", "duodecilhão", "tredecilhão", "quatuordecilhão",
+       "quindecilhão", "sexdecilhão", "setendecilhão", "octodecilhão",
+       "novendecilhão", "vigintilhão", "unvigintilhão", "duovigintilhão",
+       "trevigintilhão", "quatuorvigintilhão", "quinvigintilhão",
+       "sexvigintilhão", "setenvigintilhão", "octovigintilhão",
+       "novenvigintilhão", "trigintilhão"]
+};
+const DECSEP = { en: ".", pt: "," };   // locale for toLocaleString grouping: en-US / pt-BR
+
+const STRINGS = {
+  en: {
+    tagline: "Cracking hard is alright, but smart is better.",
+    warnbar: "handles NO secrets — only pattern <b>shapes</b>, and a <b>public</b> address/xpub. ETA is <b>pre-calibration</b>.",
+    tabEst: "Estimator", tabDict: "Dictionaries",
+    booting: "loading librxe→wasm core…",
+    commonCases: "Common cases", searchShape: "Search shape",
+    whatSearch: "What are you searching for?",
+    mPass: "Passphrase", mWords: "Words", mJoint: "Both (joint)",
+    passLabel: "Passphrase pattern (rxe regex) — the “25th word” you half-remember",
+    mnemonic: "Mnemonic",
+    wmPattern: "Pattern (regex)", wmAny: "Known words, any order",
+    wordsHint: "Real BIP39 words + <code>[:bip39-en:]</code> at unknown spots, or <code>{{ }}</code> to reorder.",
+    anyLabel: "Type/paste the known words (space, comma, or newline separated). Use <b>k of N</b> if only some positions are unknown-order.",
+    chooseK: "choose k", anyHint: "blank = all words, permuted (n! orderings). The tool builds the separated <code>{{ }}</code> expression for you.",
+    target: "Target",
+    addrLabel: "Paste your full address or account xpub / ypub / zpub (public — stays in your browser)",
+    tAddress: "Address", tXpub: "xpub",
+    noteXpub: "xpub: chain-code compare, no elliptic-curve work in the hot loop — the lean case.",
+    noteAddr: "address: needs a secp256k1 derivation per candidate; an account xpub is much leaner.",
+    derivPaths: "Derivation paths (DIM-2)",
+    accounts: "accounts", chains: "chains", chRecv: "receive only", chBoth: "receive + change",
+    gap: "address gap",
+    gapHint: "gap = how many receive indices to check per account (only when matching an address; ignored for xpub).",
+    engine: "Engine (for ETA — assumed rates)", cores: "cores",
+    // results
+    unbounded: "unbounded keyspace", exhaustIn: "exhaust in",
+    totalCandidates: "Total candidates", dimPill: "DIM-1 × path plan", unboundedShort: "unbounded",
+    kPassSet: "passphrase set", kMnemRaw: "mnemonic raw set", kChecksum: "checksum-valid",
+    kDim1: "DIM-1 product", kPathMult: "path multiplier", collapsed: "xpub-collapsed",
+    etaTitle: "ETA", etaAssumed: "assumed — pre-calibration", etaCalibrated: "calibrated",
+    etaExhaust: "time-to-exhaust (plan)", etaHit: "expected-to-hit (~½)", etaRate: "rate assumed",
+    notes: "Notes", levers: "Narrowing levers",
+    dryRun: "Dry-run sample", viaUnrank: "via librxe unrank",
+    firstN: "first", randomN: "random", nothingSample: "nothing to sample.",
+    sampleUnbounded: "set is unbounded — bound the pattern to sample it.",
+    jointSample: "(joint: each valid mnemonic above is swept against the full passphrase set)",
+    detected: "detected", unrecognized: "unrecognized prefix — set the target & derivation manually",
+    xpubAmbiguous: "(bare xpub is ambiguous — Ledger/descriptors use xpub for every type, so the others are left available)",
+    // spoken
+    spokenExactly: "exactly", spokenBitLess: "a bit less than", spokenBitMore: "a bit more than",
+    spokenDigitsPre: "a number with", spokenDigitsPost: "digits", spokenAbout: "about",
+    // dictionaries
+    dictTitle: "Custom dictionaries",
+    dictIntro: "Register a wordlist as <code>name</code>, then reference it in any pattern as <code>[:name:]</code> (e.g. pet names, old passwords). The official BIP39 English list is pre-registered as <code>[:bip39-en:]</code>. Dictionaries live only in this browser session.",
+    dictName: "Dictionary name (letters/digits/dash)", dictWords: "Words — one per line",
+    dictAdd: "Register dictionary", dictRegistered: "Registered", dictWordsN: "words",
+  },
+  pt: {
+    tagline: "Cracking hard is alright, but smart is better.",
+    warnbar: "NÃO lida com segredos — apenas <b>formatos</b> de padrão e um endereço/xpub <b>público</b>. A estimativa de tempo é <b>pré-calibração</b>.",
+    tabEst: "Estimador", tabDict: "Dicionários",
+    booting: "carregando o núcleo librxe→wasm…",
+    commonCases: "Casos comuns", searchShape: "Formato da busca",
+    whatSearch: "O que você está procurando?",
+    mPass: "Frase-senha", mWords: "Palavras", mJoint: "Ambos (conjunto)",
+    passLabel: "Padrão da frase-senha (regex rxe) — a “25ª palavra” que você lembra em parte",
+    mnemonic: "Mnemônico",
+    wmPattern: "Padrão (regex)", wmAny: "Palavras conhecidas, ordem desconhecida",
+    wordsHint: "Palavras BIP39 reais + <code>[:bip39-en:]</code> nas posições incertas, ou <code>{{ }}</code> para reordenar.",
+    anyLabel: "Digite/cole as palavras conhecidas (separadas por espaço, vírgula ou quebra de linha). Use <b>k de N</b> se apenas algumas posições têm ordem desconhecida.",
+    chooseK: "escolher k", anyHint: "vazio = todas as palavras, permutadas (n! ordenações). A ferramenta monta a expressão <code>{{ }}</code> separada para você.",
+    target: "Alvo",
+    addrLabel: "Cole seu endereço completo ou a xpub / ypub / zpub da conta (público — fica no seu navegador)",
+    tAddress: "Endereço", tXpub: "xpub",
+    noteXpub: "xpub: comparação de chain-code, sem curva elíptica no laço quente — o caso leve.",
+    noteAddr: "endereço: exige uma derivação secp256k1 por candidato; uma xpub de conta é bem mais leve.",
+    derivPaths: "Caminhos de derivação (DIM-2)",
+    accounts: "contas", chains: "cadeias", chRecv: "só recebimento", chBoth: "recebimento + troco",
+    gap: "gap de endereços",
+    gapHint: "gap = quantos índices de recebimento checar por conta (só ao casar um endereço; ignorado para xpub).",
+    engine: "Motor (para a estimativa — taxas assumidas)", cores: "núcleos",
+    unbounded: "espaço ilimitado", exhaustIn: "esgota em",
+    totalCandidates: "Total de candidatos", dimPill: "DIM-1 × plano de caminhos", unboundedShort: "ilimitado",
+    kPassSet: "conjunto da frase-senha", kMnemRaw: "conjunto bruto do mnemônico", kChecksum: "checksum-válidos",
+    kDim1: "produto DIM-1", kPathMult: "multiplicador de caminhos", collapsed: "colapsado p/ xpub",
+    etaTitle: "Tempo estimado", etaAssumed: "assumido — pré-calibração", etaCalibrated: "calibrado",
+    etaExhaust: "tempo p/ esgotar (planejamento)", etaHit: "esperado p/ achar (~½)", etaRate: "taxa assumida",
+    notes: "Notas", levers: "Alavancas p/ estreitar",
+    dryRun: "Amostra (dry-run)", viaUnrank: "via unrank do librxe",
+    firstN: "primeiros", randomN: "aleatórios", nothingSample: "nada para amostrar.",
+    sampleUnbounded: "o conjunto é ilimitado — limite o padrão para amostrá-lo.",
+    jointSample: "(conjunto: cada mnemônico válido acima é varrido contra todo o conjunto da frase-senha)",
+    detected: "detectado", unrecognized: "prefixo não reconhecido — defina o alvo e a derivação manualmente",
+    xpubAmbiguous: "(uma xpub pura é ambígua — Ledger/descriptors usam xpub para todos os tipos, então os demais ficam disponíveis)",
+    spokenExactly: "exatamente", spokenBitLess: "pouco menos que", spokenBitMore: "pouco mais que",
+    spokenDigitsPre: "um número de", spokenDigitsPost: "algarismos", spokenAbout: "cerca de",
+    dictTitle: "Dicionários personalizados",
+    dictIntro: "Registre uma lista como <code>nome</code>, depois use-a em qualquer padrão como <code>[:nome:]</code> (ex.: nomes de bichos, senhas antigas). A lista BIP39 oficial em inglês já vem registrada como <code>[:bip39-en:]</code>. Os dicionários vivem apenas nesta sessão do navegador.",
+    dictName: "Nome do dicionário (letras/dígitos/traço)", dictWords: "Palavras — uma por linha",
+    dictAdd: "Registrar dicionário", dictRegistered: "Registrados", dictWordsN: "palavras",
+  },
+};
+
+function makeT(lang){ const tab = STRINGS[lang] || STRINGS.en;
+  return (k) => (k in tab ? tab[k] : (STRINGS.en[k] !== undefined ? STRINGS.en[k] : k)); }
+
+const _i18nExports = { STRINGS, SCALES, DECSEP, makeT, LANGS: ['en','pt'] };
+if (typeof module !== 'undefined' && module.exports) module.exports = _i18nExports;
+if (typeof window !== 'undefined') window.EstI18N = _i18nExports;

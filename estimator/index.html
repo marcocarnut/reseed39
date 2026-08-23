@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>bip39rxcrack — keyspace / effort estimator</title>
 <link rel="icon" href="data:,">
-
 <style>
   :root{
     --bg:#0f1420; --panel:#171e2e; --panel2:#1e2740; --edge:#2b3654;
@@ -18,6 +17,9 @@
   header h1{font-size:17px;margin:0;font-weight:650}
   header .motto{color:var(--dim);font-style:italic;font-size:12.5px}
   header .warn{margin-left:auto;color:var(--yellow);font-size:12px;max-width:340px;text-align:right}
+  .langSeg{display:inline-flex;border:1px solid var(--edge);border-radius:6px;overflow:hidden;margin-left:10px}
+  .langSeg button{background:#0c1120;color:var(--dim);border:0;padding:3px 9px;cursor:pointer;font-size:11.5px}
+  .langSeg button.on{background:var(--accent);color:#04102a;font-weight:600}
   .tabs{display:flex;gap:2px;padding:0 18px;border-bottom:1px solid var(--edge);background:var(--panel)}
   .tab{padding:9px 16px;cursor:pointer;color:var(--dim);border-bottom:2px solid transparent;user-select:none}
   .tab.active{color:var(--ink);border-bottom-color:var(--accent)}
@@ -43,11 +45,9 @@
   .seg{display:inline-flex;border:1px solid var(--edge);border-radius:7px;overflow:hidden;flex-wrap:wrap}
   .seg button{background:#0c1120;color:var(--dim);border:0;padding:6px 12px;cursor:pointer;font-size:12.5px}
   .seg button.on{background:var(--accent);color:#04102a;font-weight:600}
-  .chk{display:inline-flex;align-items:center;gap:5px;margin-right:12px;color:var(--ink);font-size:12.5px}
   .num{width:70px}
   fieldset{border:1px solid var(--edge);border-radius:9px;margin:14px 0 0;padding:12px}
   legend{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.07em;padding:0 6px}
-  /* derivation checkbox list */
   .derivlist{max-height:200px;overflow:auto;border:1px solid var(--edge);border-radius:8px;padding:4px;background:#0c1120}
   .derivrow{display:flex;align-items:baseline;gap:8px;padding:6px 7px;border-radius:6px;cursor:pointer}
   .derivrow:hover{background:var(--panel2)}
@@ -55,7 +55,6 @@
   .derivrow code{color:var(--accent);font-size:11.5px;font-family:var(--mono)}
   .derivrow .apps{color:var(--dim);font-size:11px;margin-left:auto;text-align:right;max-width:46%}
   .hint{color:var(--dim);font-size:11.5px;margin:4px 0 0}
-  /* results */
   .verdict{display:flex;align-items:center;gap:10px;font-size:15px;font-weight:650;padding:11px 13px;border-radius:9px;margin-bottom:14px}
   .verdict .dot{width:13px;height:13px;border-radius:50%}
   .verdict.green{background:rgba(46,193,107,.13);color:var(--green)} .verdict.green .dot{background:var(--green)}
@@ -85,90 +84,91 @@
 <body>
 <header>
   <h1>bip39rxcrack <span class="muted" style="font-weight:400">effort estimator</span></h1>
-  <span class="motto">Cracking hard is alright, but smart is better.</span>
-  <span class="warn">handles NO secrets — only pattern <b>shapes</b>, and a <b>public</b> address/xpub. ETA is <b>pre-calibration</b>.</span>
+  <span class="motto" data-i18n="tagline">Cracking hard is alright, but smart is better.</span>
+  <span class="warn" data-i18n-html="warnbar"></span>
+  <span class="langSeg" id="langSeg"><button data-l="en" class="on">EN</button><button data-l="pt">PT</button></span>
 </header>
 
 <div class="tabs">
-  <div class="tab active" data-view="est">Estimator</div>
-  <div class="tab" data-view="dict">Dictionaries</div>
+  <div class="tab active" data-view="est" data-i18n="tabEst">Estimator</div>
+  <div class="tab" data-view="dict" data-i18n="tabDict">Dictionaries</div>
 </div>
 
-<div id="booting">loading librxe→wasm core…</div>
+<div id="booting" data-i18n="booting">loading librxe→wasm core…</div>
 
 <!-- ESTIMATOR VIEW -->
 <div class="view" id="view-est">
  <div class="cols">
   <div class="pane presets">
-    <h2>Common cases</h2>
+    <h2 data-i18n="commonCases">Common cases</h2>
     <div id="presets"></div>
   </div>
 
   <div class="pane form">
-    <h2>Search shape</h2>
+    <h2 data-i18n="searchShape">Search shape</h2>
 
-    <label class="f">What are you searching for?</label>
+    <label class="f" data-i18n="whatSearch">What are you searching for?</label>
     <div class="seg" id="modeSeg">
-      <button data-mode="passphrase" class="on">Passphrase</button>
-      <button data-mode="words">Words</button>
-      <button data-mode="joint">Both (joint)</button>
+      <button data-mode="passphrase" class="on" data-i18n="mPass">Passphrase</button>
+      <button data-mode="words" data-i18n="mWords">Words</button>
+      <button data-mode="joint" data-i18n="mJoint">Both (joint)</button>
     </div>
 
     <div id="passBox">
-      <label class="f">Passphrase pattern (rxe regex) — the “25th word” you half-remember</label>
+      <label class="f" data-i18n="passLabel">Passphrase pattern</label>
       <textarea id="passPat" rows="2">Correct(horse|Horse)?[0-9]{0,2}</textarea>
     </div>
 
     <div id="wordsBox" style="display:none">
-      <label class="f">Mnemonic</label>
+      <label class="f" data-i18n="mnemonic">Mnemonic</label>
       <div class="seg" id="wordsModeSeg">
-        <button data-wm="pattern" class="on">Pattern (regex)</button>
-        <button data-wm="anyorder">Known words, any order</button>
+        <button data-wm="pattern" class="on" data-i18n="wmPattern">Pattern (regex)</button>
+        <button data-wm="anyorder" data-i18n="wmAny">Known words, any order</button>
       </div>
-      <textarea id="wordsPat" rows="3" placeholder="legal winner thank … [:bip39-en:]  — or a regex over words">legal winner thank year wave sausage worth useful legal winner thank [:bip39-en:]</textarea>
-      <div class="hint" id="wordsHint">Real BIP39 words + <code>[:bip39-en:]</code> at unknown spots, or <code>{{ }}</code> to reorder.</div>
+      <textarea id="wordsPat" rows="3">legal winner thank year wave sausage worth useful legal winner thank [:bip39-en:]</textarea>
+      <div class="hint" id="wordsHint" data-i18n-html="wordsHint"></div>
       <div id="anyorderOpts" style="display:none">
-        <label class="f">Type/paste the known words (space, comma, or newline separated). Use <b>k of N</b> if only some positions are unknown-order.</label>
+        <label class="f" data-i18n-html="anyLabel"></label>
         <div class="row">
-          <div style="flex:0 0 120px"><label class="f">choose k</label><input id="wordsK" class="num" type="text" placeholder="all"></div>
-          <div class="hint" style="align-self:end">blank = all words, permuted (n! orderings). The tool builds the separated <code>{{ }}</code> expression for you.</div>
+          <div style="flex:0 0 120px"><label class="f" data-i18n="chooseK">choose k</label><input id="wordsK" class="num" type="text" placeholder="all"></div>
+          <div class="hint" style="align-self:end" data-i18n-html="anyHint"></div>
         </div>
       </div>
     </div>
 
     <fieldset>
-      <legend>Target</legend>
-      <label class="f">Paste your full address or account xpub / ypub / zpub (public — stays in your browser)</label>
+      <legend data-i18n="target">Target</legend>
+      <label class="f" data-i18n="addrLabel">Paste your full address or xpub</label>
       <input id="addr" type="text" placeholder="bc1q… / 1… / 3… / bc1p… / xpub… / ypub… / zpub…">
       <div class="hint" id="addrInfo"></div>
       <div class="row" style="margin-top:8px;align-items:center">
         <div style="flex:0 0 auto"><div class="seg" id="targetSeg">
-          <button data-t="address" class="on">Address</button>
-          <button data-t="xpub">xpub</button>
+          <button data-t="address" class="on" data-i18n="tAddress">Address</button>
+          <button data-t="xpub" data-i18n="tXpub">xpub</button>
         </div></div>
         <div class="note" id="targetNote" style="flex:1"></div>
       </div>
     </fieldset>
 
     <fieldset>
-      <legend>Derivation paths (DIM-2)</legend>
+      <legend data-i18n="derivPaths">Derivation paths (DIM-2)</legend>
       <div class="derivlist" id="purposes"></div>
       <div class="row" style="margin-top:8px">
-        <div><label class="f">accounts</label><input id="accts" class="num" type="text" value="1"></div>
-        <div id="changeWrap"><label class="f">chains</label>
-          <select id="change"><option value="1">receive only</option><option value="2">receive + change</option></select></div>
-        <div id="gapWrap"><label class="f">address gap</label><input id="gap" class="num" type="text" value="1"></div>
+        <div><label class="f" data-i18n="accounts">accounts</label><input id="accts" class="num" type="text" value="1"></div>
+        <div id="changeWrap"><label class="f" data-i18n="chains">chains</label>
+          <select id="change"><option value="1" data-i18n="chRecv">receive only</option><option value="2" data-i18n="chBoth">receive + change</option></select></div>
+        <div id="gapWrap"><label class="f" data-i18n="gap">address gap</label><input id="gap" class="num" type="text" value="1"></div>
       </div>
-      <div class="hint" id="gapHint">gap = how many receive indices to check per account (only when matching an address; ignored for xpub).</div>
+      <div class="hint" id="gapHint" data-i18n="gapHint"></div>
     </fieldset>
 
     <fieldset>
-      <legend>Engine (for ETA — assumed rates)</legend>
+      <legend data-i18n="engine">Engine</legend>
       <div class="seg" id="backendSeg">
         <button data-b="cpu" class="on">CPU</button>
         <button data-b="gpu">GPU</button>
       </div>
-      <span id="coresWrap" style="margin-left:12px"><label class="f" style="display:inline">cores</label>
+      <span id="coresWrap" style="margin-left:12px"><label class="f" style="display:inline" data-i18n="cores">cores</label>
         <input id="cores" class="num" type="text" value="8" style="display:inline;width:60px"></span>
     </fieldset>
   </div>
@@ -180,25 +180,23 @@
 <!-- DICTIONARIES VIEW -->
 <div class="view" id="view-dict">
   <div class="pane" style="max-width:720px">
-    <h2>Custom dictionaries</h2>
-    <p class="note">Register a wordlist as <code>name</code>, then reference it in any pattern as
-      <code>[:name:]</code> (e.g. pet names, old passwords). The official BIP39 English list is
-      pre-registered as <code>[:bip39-en:]</code>. Dictionaries live only in this browser session.</p>
-    <label class="f">Dictionary name (letters/digits/dash)</label>
+    <h2 data-i18n="dictTitle">Custom dictionaries</h2>
+    <p class="note" data-i18n-html="dictIntro"></p>
+    <label class="f" data-i18n="dictName">Dictionary name</label>
     <input id="dName" type="text" value="mywords" style="max-width:260px">
-    <label class="f">Words — one per line</label>
+    <label class="f" data-i18n="dictWords">Words — one per line</label>
     <textarea id="dWords" rows="7" placeholder="hunter2&#10;fluffy&#10;summer2019"></textarea>
-    <button class="act" id="dAdd">Register dictionary</button>
+    <button class="act" id="dAdd" data-i18n="dictAdd">Register dictionary</button>
     <div class="dictlist" id="dictList"></div>
   </div>
 </div>
 
-<!-- load the SAME librxe->wasm core + the ONE shared model (no forked logic) -->
 <script src="../wasm/rxecore.js"></script>
 <script src="../wasm/rxecore_api.js"></script>
 <script src="../estimator/bip39.js"></script>
 <script src="../estimator/model.js"></script>
 <script src="../estimator/wordset.js"></script>
+<script src="../estimator/i18n.js"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -207,9 +205,11 @@ let RXE, VALIDATOR;
 const registered = new Map();
 let liveSets = [];
 let debounce;
-let LANG = 'en';   // pt/en toggle lands in batch 1b
+let LANG = 'en';
+let t = EstI18N.makeT('en');
+const VERDICT_WORD = { en:{green:'GREEN',yellow:'YELLOW',red:'RED'}, pt:{green:'VERDE',yellow:'AMARELO',red:'VERMELHO'} };
 
-// ---- derivation catalogue (name / path template / typical apps) ----
+// ---- derivation catalogue (language-neutral) ----
 const DERIVS = [
   { p:'bip44', name:'BIP44', path:"m/44'/0'/a'/c/i", apps:'Ledger, Trezor, Coinomi, Exodus, Mycelium' },
   { p:'bip49', name:'BIP49', path:"m/49'/0'/a'/c/i", apps:'Ledger, Trezor, Coinomi, BlueWallet' },
@@ -218,28 +218,17 @@ const DERIVS = [
   { p:'electrum', name:'Electrum', path:"m/0'/{0,1}/i", apps:'Electrum (legacy & segwit)' },
 ];
 
-// ---- number formatting (mirrors jsrxe: toLocaleString grouping + spoken tooltip) ----
-const SCALES = {
-  en: ["", "thousand", "million", "billion", "trillion", "quadrillion",
-       "quintillion", "sextillion", "septillion", "octillion", "nonillion",
-       "decillion", "undecillion", "duodecillion", "tredecillion",
-       "quattuordecillion", "quindecillion", "sexdecillion", "septendecillion",
-       "octodecillion", "novemdecillion", "vigintillion", "unvigintillion",
-       "duovigintillion", "trevigintillion", "quattuorvigintillion",
-       "quinvigintillion", "sexvigintillion", "septenvigintillion",
-       "octovigintillion", "novemvigintillion", "trigintillion"],
-};
+// ---- number formatting (mirrors jsrxe) ----
 function fmtBig(b){
   const v = (typeof b === 'bigint') ? b : BigInt(Math.round(Number(b)||0));
   return v.toLocaleString(LANG === 'pt' ? 'pt-BR' : 'en-US');
 }
-// Say a big count the way a person would, straight off the decimal string.
 function spoken(s){
   if (s == null) return '';
   const d = s.length, g = Math.floor((d - 1) / 3);
   if (g < 1) return '';
-  const table = SCALES[LANG] || SCALES.en;
-  if (g >= table.length) return `a number with ${fmtBig(BigInt(d))} digits`;
+  const table = EstI18N.SCALES[LANG] || EstI18N.SCALES.en;
+  if (g >= table.length) return `${t('spokenDigitsPre')} ${fmtBig(BigInt(d))} ${t('spokenDigitsPost')}`;
   const intLen = d - 3 * g;
   const head = s.slice(0, Math.min(d, intLen + 4));
   const mant = Number(head) / Math.pow(10, head.length - intLen);
@@ -248,10 +237,41 @@ function spoken(s){
              :               Math.round(mant * 10) / 10;
   const spokenValue = BigInt(Math.round(nice * 10)) * (10n ** BigInt(3 * g - 1));
   const actual = BigInt(s);
-  const lead = actual === spokenValue ? 'exactly' : actual < spokenValue ? 'about' : 'about';
-  const word = table[g];
-  const mantStr = Number.isInteger(nice) ? String(nice) : String(nice);
+  const lead = actual === spokenValue ? t('spokenExactly')
+             : actual <  spokenValue  ? t('spokenBitLess')
+             :                          t('spokenBitMore');
+  let word = table[g];
+  if (LANG === 'pt' && nice >= 2 && word.endsWith('ão')) word = word.slice(0, -2) + 'ões';
+  const mantStr = Number.isInteger(nice) ? String(nice) : String(nice).replace('.', LANG==='pt'?',':'.');
   return `${lead} ${mantStr} ${word}`;
+}
+
+// Post-localize model.js humanTime() output (its unit words are English). Keeps
+// the tested model untouched; a deeper pass could key the model's prose too.
+function localizeTime(s){
+  if(LANG!=='pt'||!s) return s;
+  return s.replace(/\bseconds?\b/g,m=>m==='second'?'segundo':'segundos')
+          .replace(/\bminutes?\b/g,m=>m==='minute'?'minuto':'minutos')
+          .replace(/\bhours?\b/g,m=>m==='hour'?'hora':'horas')
+          .replace(/\bdays?\b/g,m=>m==='day'?'dia':'dias')
+          .replace(/\byears?\b/g,m=>m==='year'?'ano':'anos')
+          .replace(/\bunbounded\b/g,'ilimitado')
+          .replace(/(\d)\.(\d)/g,'$1,$2');
+}
+
+// ---------- i18n apply ----------
+function applyLang(){
+  document.documentElement.lang = LANG;
+  $$('[data-i18n]').forEach(el=>{ el.textContent = t(el.getAttribute('data-i18n')); });
+  $$('[data-i18n-html]').forEach(el=>{ el.innerHTML = t(el.getAttribute('data-i18n-html')); });
+  $$('[data-i18n-ph]').forEach(el=>{ el.placeholder = t(el.getAttribute('data-i18n-ph')); });
+  buildPresets();
+  renderDictList();
+}
+function setLang(l){
+  LANG = l; t = EstI18N.makeT(l);
+  setSeg('#langSeg','data-l',l);
+  applyLang(); recompute();
 }
 
 // ---------- boot ----------
@@ -265,18 +285,18 @@ function spoken(s){
     VALIDATOR = BIP39.makeValidator(englishWords);
     $('#booting').style.display='none';
     $('#view-est').classList.add('active');
-    buildDerivs(); buildPresets(); renderDictList(); wireUI(); applyTargetVis(); recompute();
+    buildDerivs(); wireUI(); applyLang(); applyTargetVis(); recompute();
   }catch(e){
     $('#booting').innerHTML = '<span class="err">failed to load wasm core: '+e.message+'</span>';
   }
 })();
 
 // ---------- tabs ----------
-$$('.tab').forEach(t=>t.onclick=()=>{
+$$('.tab').forEach(tab=>tab.onclick=()=>{
   $$('.tab').forEach(x=>x.classList.remove('active'));
   $$('.view').forEach(x=>x.classList.remove('active'));
-  t.classList.add('active');
-  $('#view-'+t.dataset.view).classList.add('active');
+  tab.classList.add('active');
+  $('#view-'+tab.dataset.view).classList.add('active');
 });
 
 // ---------- derivation list ----------
@@ -287,33 +307,40 @@ function buildDerivs(){
   $$('#purposes input').forEach(c=>c.onchange=recompute);
 }
 
-// ---------- presets ----------
+// ---------- presets (bilingual) ----------
 const PRESETS = [
-  { title:'Passphrase: prefix + case + digits', sub:'known 12-word mnemonic, address (BIP84)',
+  { title:{en:'Passphrase: prefix + case + digits',pt:'Frase-senha: prefixo + caixa + dígitos'},
+    sub:{en:'known 12-word mnemonic, address (BIP84)',pt:'mnemônico de 12 conhecido, endereço (BIP84)'},
     mode:'passphrase', pass:'Correct(horse|Horse)?[0-9]{0,2}', target:'address', purposes:['bip84'], gap:'1' },
-  { title:'Passphrase: word + optional year', sub:'address target, wider gap',
+  { title:{en:'Passphrase: word + optional year',pt:'Frase-senha: palavra + ano opcional'},
+    sub:{en:'address target, wider gap',pt:'alvo endereço, gap maior'},
     mode:'passphrase', pass:'[Tt]rezor(2019|2020|2021)?', target:'address', purposes:['bip84'], gap:'3' },
-  { title:'12-word: one missing word', sub:'dictionary at last position, xpub (BIP44)',
+  { title:{en:'12-word: one missing word',pt:'12 palavras: uma faltando'},
+    sub:{en:'dictionary at last position, xpub (BIP44)',pt:'dicionário na última posição, xpub (BIP44)'},
     mode:'words', wordsMode:'pattern', words:'legal winner thank year wave sausage worth useful legal winner thank [:bip39-en:]',
     target:'xpub', purposes:['bip44'] },
-  { title:'12-word: two missing words', sub:'sampled checksum survival, xpub (BIP84)',
+  { title:{en:'12-word: two missing words',pt:'12 palavras: duas faltando'},
+    sub:{en:'sampled checksum survival, xpub (BIP84)',pt:'sobrevivência de checksum amostrada, xpub (BIP84)'},
     mode:'words', wordsMode:'pattern', words:'legal winner thank year wave sausage worth useful legal winner [:bip39-en:] [:bip39-en:]',
     target:'xpub', purposes:['bip84'] },
-  { title:'Words: known set, unknown order', sub:'12 words permuted + checksum, xpub',
+  { title:{en:'Words: known set, unknown order',pt:'Palavras: conjunto conhecido, ordem desconhecida'},
+    sub:{en:'12 words permuted + checksum, xpub',pt:'12 palavras permutadas + checksum, xpub'},
     mode:'words', wordsMode:'anyorder',
     words:'legal winner thank year wave sausage worth useful abandon ability able about',
     target:'xpub', purposes:['bip84'] },
-  { title:'Electrum-style path', sub:'BIP39 seed used with Electrum paths',
+  { title:{en:'Electrum-style path',pt:'Caminho estilo Electrum'},
+    sub:{en:'BIP39 seed used with Electrum paths',pt:'seed BIP39 usada com caminhos do Electrum'},
     mode:'passphrase', pass:'[Tt]rezor[0-9]{0,2}', target:'address', purposes:['electrum'], gap:'5' },
-  { title:'Joint (longshot): words × passphrase', sub:'product keyspace, xpub',
+  { title:{en:'Joint (longshot): words × passphrase',pt:'Conjunto (tiro longo): palavras × frase-senha'},
+    sub:{en:'product keyspace, xpub',pt:'espaço produto, xpub'},
     mode:'joint', wordsMode:'pattern', words:'legal winner thank year wave sausage worth useful legal winner thank [:bip39-en:]',
     pass:'[a-z]{1,3}', target:'xpub', purposes:['bip84'] },
 ];
 function buildPresets(){
-  const host = $('#presets');
+  const host = $('#presets'); host.innerHTML='';
   PRESETS.forEach(p=>{
     const b=document.createElement('button'); b.className='preset';
-    b.innerHTML=`<b>${p.title}</b><span>${p.sub}</span>`;
+    b.innerHTML=`<b>${esc(p.title[LANG]||p.title.en)}</b><span>${esc(p.sub[LANG]||p.sub.en)}</span>`;
     b.onclick=()=>applyPreset(p);
     host.appendChild(b);
   });
@@ -366,19 +393,17 @@ function detectTarget(addr){
 function onAddr(){
   const det = detectTarget($('#addr').value);
   const info = $('#addrInfo');
-  if(!det){
-    info.textContent = $('#addr').value.trim() ? 'unrecognized prefix — set the target & derivation manually' : '';
-    recompute(); return;
-  }
+  if(!det){ info.textContent = $('#addr').value.trim() ? t('unrecognized') : ''; recompute(); return; }
   setSeg('#targetSeg','data-t',det.type);
   if(det.hard) $$('#purposes input').forEach(c=>c.checked=(c.dataset.p===det.p));
   else { const b=$(`#purposes input[data-p="${det.p}"]`); if(b) b.checked=true; }
   const nm = DERIVS.find(d=>d.p===det.p);
-  info.textContent = `detected ${det.type==='xpub'?'xpub':'address'} → ${nm?nm.name:det.p}`
-    + (det.hard ? '' : ' (bare xpub is ambiguous — Ledger/descriptors use xpub for every type, so the others are left available)');
+  info.textContent = `${t('detected')} ${det.type==='xpub'?'xpub':t('tAddress').toLowerCase()} → ${nm?nm.name:det.p}`
+    + (det.hard ? '' : ' '+t('xpubAmbiguous'));
   applyTargetVis(); recompute();
 }
 function wireUI(){
+  $$('#langSeg button').forEach(b=>b.onclick=()=>setLang(b.dataset.l));
   $$('#modeSeg button').forEach(b=>b.onclick=()=>{setMode(b.dataset.mode);recompute();});
   $$('#wordsModeSeg button').forEach(b=>b.onclick=()=>{setWordsMode(b.dataset.wm);recompute();});
   $$('#targetSeg button').forEach(b=>b.onclick=()=>{setSeg('#targetSeg','data-t',b.dataset.t);applyTargetVis();recompute();});
@@ -408,9 +433,7 @@ function recompute(){
   const mode = segVal('#modeSeg','data-mode');
   const target = segVal('#targetSeg','data-t');
   const backend = segVal('#backendSeg','data-b');
-  $('#targetNote').textContent = target==='xpub'
-    ? 'xpub: chain-code compare, no elliptic-curve work in the hot loop — the lean case.'
-    : 'address: needs a secp256k1 derivation per candidate; an account xpub is much leaner.';
+  $('#targetNote').textContent = target==='xpub' ? t('noteXpub') : t('noteAddr');
   const purposes = $$('#purposes input').filter(c=>c.checked).map(c=>c.dataset.p);
   const input = {
     passphrasePattern: (mode==='passphrase'||mode==='joint') ? $('#passPat').value.trim() : null,
@@ -432,66 +455,64 @@ function recompute(){
 }
 
 // ---------- render ----------
-const HT = BIP39Estimator.humanTime;
-function bigVal(b){ if(b===null||b===undefined) return '∞ unbounded'; const s=(typeof b==='bigint'?b:BigInt(b)).toString(); return `<span title="${esc(spoken(s))}">${fmtBig(b)}</span>`; }
+function bigVal(b){ if(b===null||b===undefined) return '∞ '+t('unboundedShort'); const s=(typeof b==='bigint'?b:BigInt(b)).toString(); return `<span title="${esc(spoken(s))}">${fmtBig(b)}</span>`; }
 function render(r, input){
   const v = r.verdict;
-  html_reset();
-  let html = `<div class="verdict ${v}"><span class="dot"></span>${v.toUpperCase()} — ${r.unbounded?'unbounded keyspace':(r.eta?('exhaust in '+r.eta.timeToExhaust):'')}</div>`;
+  const vw = (VERDICT_WORD[LANG]||VERDICT_WORD.en)[v];
+  let html = `<div class="verdict ${v}"><span class="dot"></span>${vw} — ${r.unbounded?t('unbounded'):(r.eta?(t('exhaustIn')+' '+localizeTime(r.eta.timeToExhaust)):'')}</div>`;
 
   const totalStr = r.totalCandidates===null ? null : r.totalCandidates.toString();
-  html += `<div class="card"><h3>Total candidates <span class="pill">DIM-1 × path plan</span></h3>
-    <div class="big"${totalStr?` title="${esc(spoken(totalStr))}"`:''}>${r.unbounded?'unbounded':fmtBig(r.totalCandidates)}</div>`;
+  html += `<div class="card"><h3>${t('totalCandidates')} <span class="pill">${t('dimPill')}</span></h3>
+    <div class="big"${totalStr?` title="${esc(spoken(totalStr))}"`:''}>${r.unbounded?t('unboundedShort'):fmtBig(r.totalCandidates)}</div>`;
   const kv=[];
-  if(r.passphrase) kv.push(['passphrase set', r.passphrase.infinite?'∞ unbounded':bigVal(r.passphrase.cardinality)]);
+  if(r.passphrase) kv.push([t('kPassSet'), r.passphrase.infinite?('∞ '+t('unboundedShort')):bigVal(r.passphrase.cardinality)]);
   if(r.mnemonic&&r.mnemonic.survival){
     const s=r.mnemonic.survival;
-    if(s.infinite) kv.push(['mnemonic set','∞ unbounded']);
+    if(s.infinite) kv.push([t('kMnemRaw'),'∞ '+t('unboundedShort')]);
     else{
-      kv.push(['mnemonic raw set',bigVal(s.raw)]);
-      kv.push([`checksum-valid (${s.method})`, bigVal(s.validCount)+`  (${(s.fraction*100).toPrecision(3)}%)`]);
+      kv.push([t('kMnemRaw'),bigVal(s.raw)]);
+      kv.push([`${t('kChecksum')} (${s.method})`, bigVal(s.validCount)+`  (${(s.fraction*100).toPrecision(3)}%)`]);
     }
   }
-  if(r.mode==='joint'&&!r.unbounded) kv.push(['DIM-1 product', bigVal(r.dim1)]);
-  kv.push(['path multiplier', '×'+r.pathPlan.value+(r.pathPlan.collapsed?' (xpub-collapsed)':'')]);
+  if(r.mode==='joint'&&!r.unbounded) kv.push([t('kDim1'), bigVal(r.dim1)]);
+  kv.push([t('kPathMult'), '×'+r.pathPlan.value+(r.pathPlan.collapsed?' ('+t('collapsed')+')':'')]);
   html += '<div class="kv">'+kv.map(([k,val])=>`<div class="k">${k}</div><div class="v">${val}</div>`).join('')+'</div></div>';
 
   if(r.eta){
-    html += `<div class="card"><h3>ETA <span class="pill">${r.eta.calibrated?'calibrated':'assumed — pre-calibration'}</span></h3>
+    html += `<div class="card"><h3>${t('etaTitle')} <span class="pill">${r.eta.calibrated?t('etaCalibrated'):t('etaAssumed')}</span></h3>
       <div class="kv">
-        <div class="k">time-to-exhaust (plan)</div><div class="v">${r.eta.timeToExhaust}</div>
-        <div class="k">expected-to-hit (~½)</div><div class="v">${r.eta.expectedTimeToHit}</div>
-        <div class="k">rate assumed</div><div class="v">${fmtBig(Math.round(r.eta.kdfRate))}/s KDF${input.backend==='cpu'?' ('+input.cores+' cores)':''}</div>
+        <div class="k">${t('etaExhaust')}</div><div class="v">${localizeTime(r.eta.timeToExhaust)}</div>
+        <div class="k">${t('etaHit')}</div><div class="v">${localizeTime(r.eta.expectedTimeToHit)}</div>
+        <div class="k">${t('etaRate')}</div><div class="v">${fmtBig(Math.round(r.eta.kdfRate))}/s KDF${input.backend==='cpu'?' ('+input.cores+' '+t('cores')+')':''}</div>
       </div>
-      <div class="note">${esc(r.eta.note)} Rates: ${esc(r.eta.rateSource)}.</div></div>`;
+      <div class="note">${esc(r.eta.note)} ${esc(r.eta.rateSource)}.</div></div>`;
   }
 
   if(r.warnings.length) html+=`<div class="card">${r.warnings.map(w=>`<div class="warnmsg">⚠ ${esc(w)}</div>`).join('')}</div>`;
-  if(r.notes.length) html+=`<div class="card"><h3>Notes</h3>${r.notes.map(n=>`<div class="note">• ${esc(n)}</div>`).join('')}</div>`;
+  if(r.notes.length) html+=`<div class="card"><h3>${t('notes')}</h3>${r.notes.map(n=>`<div class="note">• ${esc(n)}</div>`).join('')}</div>`;
   if(r.narrowingLevers.length)
-    html+=`<div class="card"><h3>Narrowing levers</h3><ul class="levers">${r.narrowingLevers.map(l=>`<li>${esc(l)}</li>`).join('')}</ul></div>`;
+    html+=`<div class="card"><h3>${t('levers')}</h3><ul class="levers">${r.narrowingLevers.map(l=>`<li>${esc(l)}</li>`).join('')}</ul></div>`;
 
-  html+=`<div class="card sample"><h3>Dry-run sample <span class="pill">via librxe unrank</span></h3>${sampleHTML(r)}</div>`;
+  html+=`<div class="card sample"><h3>${t('dryRun')} <span class="pill">${t('viaUnrank')}</span></h3>${sampleHTML(r)}</div>`;
   $('#results').innerHTML=html;
 }
-function html_reset(){}
 
 function sampleHTML(r){
   const mode=r.mode;
   const set = (mode==='words')?r._sets.wordsSet : r._sets.passSet || r._sets.wordsSet;
-  if(!set) return '<div class="note">nothing to sample.</div>';
-  if(set.isInfinite()) return '<div class="note">set is unbounded — bound the pattern to sample it.</div>';
-  const N=set.cardinality(); if(N===null) return '<div class="note">unbounded.</div>';
+  if(!set) return '<div class="note">'+t('nothingSample')+'</div>';
+  if(set.isInfinite()) return '<div class="note">'+t('sampleUnbounded')+'</div>';
+  const N=set.cardinality(); if(N===null) return '<div class="note">'+t('unboundedShort')+'.</div>';
   const showWords = (mode==='words'||mode==='joint');
   const n=6; const out=[];
   const cap = N<BigInt(n)?Number(N):n;
-  out.push('<div class="note">first '+cap+':</div>');
+  out.push('<div class="note">'+t('firstN')+' '+cap+':</div>');
   for(let i=0;i<cap;i++){ out.push(line(set,BigInt(i),showWords)); }
   if(N>BigInt(n)){
-    out.push('<div class="note" style="margin-top:6px">random '+n+':</div>');
+    out.push('<div class="note" style="margin-top:6px">'+t('randomN')+' '+n+':</div>');
     for(let k=0;k<n;k++){ const i=BigInt(Math.floor(Math.random()*Number(N))); out.push(line(set,i,showWords)); }
   }
-  if(mode==='joint') out.push('<div class="note" style="margin-top:6px">(joint: each valid mnemonic above is swept against the full passphrase set)</div>');
+  if(mode==='joint') out.push('<div class="note" style="margin-top:6px">'+t('jointSample')+'</div>');
   return out.join('');
 }
 function line(set,i,checkValid){
@@ -512,10 +533,10 @@ function addDict(){
   catch(e){ alert('register failed: '+e.message); }
 }
 function renderDictList(){
-  const host=$('#dictList'); host.innerHTML='<h2 style="margin-top:18px">Registered</h2>';
+  const host=$('#dictList'); if(!host) return; host.innerHTML='<h2 style="margin-top:18px">'+t('dictRegistered')+'</h2>';
   for(const [n,c] of registered){
     const d=document.createElement('div'); d.className='d';
-    d.innerHTML=`<span>[:${esc(n)}:]</span><span class="muted">${c} words</span>`;
+    d.innerHTML=`<span>[:${esc(n)}:]</span><span class="muted">${c} ${t('dictWordsN')}</span>`;
     host.appendChild(d);
   }
 }
