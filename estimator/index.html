@@ -175,7 +175,7 @@
     </fieldset>
 
     <fieldset id="crackBox" style="display:none;border-color:var(--accent)">
-      <legend data-i18n="crackTitle">Crack in your browser (xpub)</legend>
+      <legend data-i18n="crackTitle">Crack in your browser</legend>
       <label class="f" data-i18n="crackMnLabel">Your 12/24-word mnemonic — stays in this browser</label>
       <textarea id="crackMn" rows="2" placeholder="abandon abandon abandon … about"></textarea>
       <div style="margin-top:10px">
@@ -464,15 +464,19 @@ async function runBenchmark(){
   btn.disabled=false; recompute();
 }
 
-// ---------- in-browser crack (xpub target, known mnemonic) ----------
+// ---------- in-browser crack (xpub OR address target, known mnemonic) ------
 async function onCrack(){
   const btn=$('#crackBtn'), msg=$('#crackMsg'), prog=$('#crackProg'), res=$('#crackRes');
   if(cracking){ cracking=false; return; }          // Stop toggles the flag; the loop checks it
   const C=window.BIP39Crypto;
+  const target = segVal('#targetSeg','data-t');
   const mn=$('#crackMn').value.trim().replace(/\s+/g,' ');
   if(!mn){ msg.textContent=t('crackNeedMn'); return; }
-  let tcc; try{ tcc=C.decodeXpub($('#addr').value.trim()).chainCode; }
-  catch(e){ msg.textContent=t('crackNeedXpub'); return; }
+  const addr=$('#addr').value.trim();
+  // decode the target: xpub -> 32-byte chain code (EC-free); address -> {type,program} (needs EC)
+  let tcc=null, taddr=null;
+  if(target==='xpub'){ try{ tcc=C.decodeXpub(addr).chainCode; }catch(e){ msg.textContent=t('crackNeedXpub'); return; } }
+  else { try{ taddr=C.decodeAddress(addr); }catch(e){ msg.textContent=t('crackNeedAddr'); return; } }
   let set; try{ set=RXE.parse($('#passPat').value.trim()); }
   catch(e){ msg.textContent='pattern: '+e.message; return; }
   if(set.isInfinite()){ set.free(); res.innerHTML='<span class="warnmsg">'+esc(t('crackRedNote'))+'</span>'; return; }
@@ -485,23 +489,38 @@ async function onCrack(){
   const plan=[]; let electrum=false;
   checked.forEach(p=>{ if(p==='electrum'){electrum=true;return;} if(pmap[p]!==undefined) for(let a=0;a<nacct;a++) plan.push({purpose:pmap[p],account:a,coin:0}); });
   if(!plan.length){ set.free(); msg.textContent = electrum ? t('crackElectrumNote') : 'select a BIP44/49/84/86 path'; return; }
+  if(target==='address' && !plan.some(pp=>C.purposeType(pp.purpose)===taddr.type)){
+    set.free(); msg.textContent=t('crackTypeMismatch').replace('%t',taddr.type); return;
+  }
   cracking=true; btn.textContent=t('crackStop'); msg.textContent=t('crackRunning'); res.innerHTML=''; prog.textContent='';
   const gpu = segVal('#backendSeg','data-b')==='gpu' && window.GpuCrack && navigator.gpu;
-  const args={ mnemonic:mn, targetChainCode:tcc, plan, total, unrank:i=>set.unrank(BigInt(i)), batchSize:4096,
+  const nchange=Math.max(1,parseInt($('#change').value,10)||1);
+  const changes=nchange>=2?[0,1]:[0];
+  const gapN=Math.max(1,parseInt($('#gap').value,10)||1);
+  const common={ mnemonic:mn, plan, total, unrank:i=>set.unrank(BigInt(i)),
     onProgress:(done,tot,rate)=>{ prog.textContent=`${fmtBig(done)} / ${fmtBig(tot)} · ${fmtBig(Math.round(rate))} ${t('crackTried')}/s`; },
     isCancelled:()=>!cracking };
   try{
-    const r = gpu ? await window.GpuCrack.crackXpub(args) : await cpuCrack(args);
+    let r;
+    if(target==='xpub'){
+      const args={...common, targetChainCode:tcc, batchSize:4096};
+      r = gpu ? await window.GpuCrack.crackXpub(args) : await cpuCrack(args);
+    } else {
+      const args={...common, target:taddr, changes, gap:gapN, batchSize:2048};
+      r = gpu ? await window.GpuCrack.crackAddress(args) : await cpuCrackAddress(args);
+    }
     if(r.stopped) res.innerHTML='<span class="note">'+t('crackStopped')+'</span>';
     else if(r.found!=null){
-      const pth=`m/${r.path.purpose}'/${r.path.coin}'/${r.path.account}'`;
+      const pth = target==='xpub'
+        ? `m/${r.path.purpose}'/${r.path.coin}'/${r.path.account}'`
+        : `m/${r.path.purpose}'/${r.path.coin}'/${r.path.account}'/${r.path.change}/${r.path.index}`;
       res.innerHTML=`<div class="verdict green" style="margin:0"><span class="dot"></span>${t('crackFound')} <b>${esc(r.found)}</b></div>`
                    +`<div class="note">${t('crackVia')} ${esc(pth)}, index ${fmtBig(r.index)}</div>`;
     } else res.innerHTML='<span class="warnmsg">'+t('crackNotFound')+'</span>';
   }catch(e){ res.innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
   finally{ cracking=false; btn.textContent=t('crackBtn'); msg.textContent=''; try{set.free()}catch(e){} }
 }
-// single-thread JS-CPU fallback (small sets / no WebGPU)
+// single-thread JS-CPU fallback (small sets / no WebGPU) -- xpub target, EC-free.
 async function cpuCrack(a){
   const C=window.BIP39Crypto, t0=performance.now();
   for(let start=0;start<a.total;start+=512){
@@ -509,6 +528,24 @@ async function cpuCrack(a){
     const n=Math.min(512,a.total-start);
     for(let i=0;i<n;i++){ const pass=a.unrank(start+i); const seed=C.mnemonicToSeed(a.mnemonic,pass);
       for(const pp of a.plan){ if(C.eq(C.accountNode(seed,pp.purpose,pp.account,pp.coin).c,a.targetChainCode)) return {found:pass,path:pp,index:start+i}; } }
+    a.onProgress(start+n,a.total,(start+n)/((performance.now()-t0)/1000)); await new Promise(r=>setTimeout(r,0));
+  }
+  return {found:null};
+}
+// JS-CPU fallback for the ADDRESS target (adds the secp256k1 derive per candidate).
+async function cpuCrackAddress(a){
+  const C=window.BIP39Crypto, t0=performance.now();
+  const plan=a.plan.filter(pp=>C.purposeType(pp.purpose)===a.target.type);
+  const changes=(a.changes&&a.changes.length)?a.changes:[0]; const gap=Math.max(1,a.gap||1);
+  for(let start=0;start<a.total;start+=128){
+    if(a.isCancelled()) return {stopped:true};
+    const n=Math.min(128,a.total-start);
+    for(let i=0;i<n;i++){ const pass=a.unrank(start+i); const seed=C.mnemonicToSeed(a.mnemonic,pass);
+      for(const pp of plan){ const acct=C.deriveHardenedPath(seed,[pp.purpose,pp.coin||0,pp.account||0]);
+        for(const ch of changes){ const chNode=C.ckdNormal(acct,ch);
+          for(let idx=0;idx<gap;idx++){ const node=C.ckdNormal(chNode,idx);
+            const tg=C.pubToTarget(C.privToPub(node.k),pp.purpose);
+            if(tg.type===a.target.type&&C.eq(tg.program,a.target.program)) return {found:pass,path:{...pp,change:ch,index:idx},index:start+i}; } } } }
     a.onProgress(start+n,a.total,(start+n)/((performance.now()-t0)/1000)); await new Promise(r=>setTimeout(r,0));
   }
   return {found:null};
@@ -554,7 +591,7 @@ function recompute(){
   updateCrackVis(mode, target);
 }
 function updateCrackVis(mode, target){
-  $('#crackBox').style.display = (mode==='passphrase' && target==='xpub') ? '' : 'none';
+  $('#crackBox').style.display = (mode==='passphrase' && (target==='xpub'||target==='address')) ? '' : 'none';
 }
 
 // ---------- render ----------

@@ -108,5 +108,49 @@ async function crackXpub(opts){
   return { found:null, done };
 }
 
-window.GpuCrack = { initGpu, gpuSeeds, benchmark, crackXpub, MAXSALT };
+// Crack an ADDRESS passphrase. Unlike the xpub path this needs elliptic curve:
+// the GPU still computes the seed (the bottleneck), but the host derives to
+// m/purpose'/coin'/account'/change/index, takes the PUBKEY, builds the script
+// program, and compares to the decoded target. opts: { mnemonic,
+// target:{type,program}, plan:[{purpose,account,coin}], changes:[0|1...],
+// gap, total, unrank, batchSize, onProgress, isCancelled }.
+async function crackAddress(opts){
+  const g = await initGpu();
+  const C = window.BIP39Crypto;
+  const mid = C.hmacMidstates(C.utf8(C.nfkd(opts.mnemonic)));
+  // Only derivations whose script type matches the target address are worth testing.
+  const plan = (opts.plan||[]).filter(pp => C.purposeType(pp.purpose) === opts.target.type);
+  if (!plan.length) return { found:null, done:0, mismatch:opts.target.type };
+  const changes = (opts.changes && opts.changes.length) ? opts.changes : [0];
+  const gap = Math.max(1, opts.gap||1);
+  const total = opts.total, B = opts.batchSize||2048;
+  const t0 = performance.now(); let done=0;
+  for (let start=0; start<total; start+=B){
+    if (opts.isCancelled && opts.isCancelled()) return { stopped:true, done };
+    const n = Math.min(B, total-start);
+    const passes = new Array(n); for (let i=0;i<n;i++) passes[i]=opts.unrank(start+i);
+    const seeds = await gpuSeeds(g, mid, opts.mnemonic, passes);
+    for (let i=0;i<n;i++){
+      const seed = seeds.subarray(i*64,i*64+64);
+      for (const pp of plan){
+        const acct = C.deriveHardenedPath(seed, [pp.purpose, pp.coin||0, pp.account||0]);
+        for (const ch of changes){
+          const chNode = C.ckdNormal(acct, ch);          // one derive per (candidate,purpose,change)
+          for (let idx=0; idx<gap; idx++){
+            const node = C.ckdNormal(chNode, idx);
+            const tg = C.pubToTarget(C.privToPub(node.k), pp.purpose);
+            if (tg.type===opts.target.type && C.eq(tg.program, opts.target.program))
+              return { found: passes[i], path:{...pp, change:ch, index:idx}, index:start+i, done:done+i+1 };
+          }
+        }
+      }
+    }
+    done += n;
+    if (opts.onProgress) opts.onProgress(done, total, done/((performance.now()-t0)/1000));
+    await new Promise(r=>setTimeout(r,0));
+  }
+  return { found:null, done };
+}
+
+window.GpuCrack = { initGpu, gpuSeeds, benchmark, crackXpub, crackAddress, MAXSALT };
 })();
