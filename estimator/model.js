@@ -342,8 +342,10 @@ function mergeRates(cal) {
   return r;
 }
 
-module.exports = {
+const _modelExports = {
   estimate, checksumSurvival, pathMultiplier,
   humanCount, humanTime, mergeRates,
   DEFAULT_RATES, GREEN_MAX_SEC, YELLOW_MAX_SEC, MULTS_PER_ADDRESS,
 };
+if (typeof module !== 'undefined' && module.exports) module.exports = _modelExports;
+if (typeof window !== 'undefined') window.BIP39Estimator = _modelExports;

@@ -109,4 +109,6 @@ function makeValidator(words) {
     theoreticalFraction: (W) => VALID_WORD_COUNTS.has(W) ? Math.pow(2, -(W/3)) : null };
 }
 
-module.exports = { sha256, makeValidator, VALID_WORD_COUNTS };
+const _bip39Exports = { sha256, makeValidator, VALID_WORD_COUNTS };
+if (typeof module !== 'undefined' && module.exports) module.exports = _bip39Exports;
+if (typeof window !== 'undefined') window.BIP39 = _bip39Exports;

@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>bip39rxcrack — keyspace / effort estimator</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#171e2e; --panel2:#1e2740; --edge:#2b3654;
+    --ink:#e6ecfb; --dim:#93a0bf; --accent:#5b9dff; --mono:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;
+    --green:#2ec16b; --yellow:#e6b800; --red:#ef5350;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  header{padding:12px 18px;border-bottom:1px solid var(--edge);display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  header h1{font-size:17px;margin:0;font-weight:650}
+  header .motto{color:var(--dim);font-style:italic;font-size:12.5px}
+  header .warn{margin-left:auto;color:var(--yellow);font-size:12px}
+  .tabs{display:flex;gap:2px;padding:0 18px;border-bottom:1px solid var(--edge);background:var(--panel)}
+  .tab{padding:9px 16px;cursor:pointer;color:var(--dim);border-bottom:2px solid transparent;user-select:none}
+  .tab.active{color:var(--ink);border-bottom-color:var(--accent)}
+  .view{display:none}
+  .view.active{display:block}
+  /* estimator layout */
+  .cols{display:grid;grid-template-columns:230px minmax(320px,1fr) minmax(320px,1.1fr);gap:0;min-height:calc(100vh - 96px)}
+  .pane{padding:16px 18px;overflow:auto}
+  .pane.presets{border-right:1px solid var(--edge);background:var(--panel)}
+  .pane.form{border-right:1px solid var(--edge)}
+  .pane.results{background:var(--panel)}
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);margin:0 0 10px}
+  .preset{display:block;width:100%;text-align:left;background:var(--panel2);border:1px solid var(--edge);color:var(--ink);
+          border-radius:8px;padding:9px 11px;margin-bottom:8px;cursor:pointer}
+  .preset:hover{border-color:var(--accent)}
+  .preset b{display:block;font-size:13px}
+  .preset span{display:block;color:var(--dim);font-size:11.5px;margin-top:2px}
+  label.f{display:block;margin:12px 0 4px;color:var(--dim);font-size:12px}
+  input[type=text],textarea,select{width:100%;background:#0c1120;border:1px solid var(--edge);color:var(--ink);
+          border-radius:7px;padding:8px 10px;font-family:var(--mono);font-size:13px}
+  textarea{resize:vertical}
+  .row{display:flex;gap:10px;flex-wrap:wrap}
+  .row>div{flex:1;min-width:90px}
+  .seg{display:inline-flex;border:1px solid var(--edge);border-radius:7px;overflow:hidden}
+  .seg button{background:#0c1120;color:var(--dim);border:0;padding:6px 12px;cursor:pointer;font-size:12.5px}
+  .seg button.on{background:var(--accent);color:#04102a;font-weight:600}
+  .chk{display:inline-flex;align-items:center;gap:5px;margin-right:12px;color:var(--ink);font-size:12.5px}
+  .num{width:70px}
+  fieldset{border:1px solid var(--edge);border-radius:9px;margin:14px 0 0;padding:12px}
+  legend{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.07em;padding:0 6px}
+  /* results */
+  .verdict{display:flex;align-items:center;gap:10px;font-size:15px;font-weight:650;padding:11px 13px;border-radius:9px;margin-bottom:14px}
+  .verdict .dot{width:13px;height:13px;border-radius:50%}
+  .verdict.green{background:rgba(46,193,107,.13);color:var(--green)} .verdict.green .dot{background:var(--green)}
+  .verdict.yellow{background:rgba(230,184,0,.13);color:var(--yellow)} .verdict.yellow .dot{background:var(--yellow)}
+  .verdict.red{background:rgba(239,83,80,.13);color:var(--red)} .verdict.red .dot{background:var(--red)}
+  .big{font-size:26px;font-weight:700;font-family:var(--mono)}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:10px 0}
+  .kv .k{color:var(--dim)} .kv .v{font-family:var(--mono);text-align:right}
+  .card{background:var(--panel2);border:1px solid var(--edge);border-radius:9px;padding:12px 13px;margin-bottom:12px}
+  .card h3{margin:0 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim)}
+  .levers li{margin:3px 0;color:var(--ink)}
+  .note{color:var(--dim);font-size:12px;margin:4px 0}
+  .warnmsg{color:var(--yellow);font-size:12.5px;margin:4px 0}
+  .err{color:var(--red);font-family:var(--mono);font-size:12.5px;white-space:pre-wrap}
+  .sample code{display:block;font-family:var(--mono);font-size:12px;color:#cdd7f2;padding:1px 0;white-space:pre-wrap;word-break:break-all}
+  .sample code.bad{color:#7d8aa8;text-decoration:line-through}
+  .sample code .ix{color:var(--dim)}
+  .pill{display:inline-block;font-size:10.5px;padding:1px 7px;border-radius:20px;background:var(--panel2);border:1px solid var(--edge);color:var(--dim);margin-left:6px}
+  .dictlist{margin-top:14px}
+  .dictlist .d{display:flex;justify-content:space-between;background:var(--panel2);border:1px solid var(--edge);border-radius:7px;padding:7px 10px;margin-bottom:6px;font-family:var(--mono);font-size:12.5px}
+  .muted{color:var(--dim)}
+  button.act{background:var(--accent);color:#04102a;border:0;border-radius:7px;padding:8px 14px;font-weight:600;cursor:pointer;margin-top:10px}
+  a{color:var(--accent)}
+  #booting{padding:30px 18px;color:var(--dim)}
+</style>
+</head>
+<body>
+<header>
+  <h1>bip39rxcrack <span class="muted" style="font-weight:400">effort estimator</span></h1>
+  <span class="motto">Cracking hard is alright, but smart is better.</span>
+  <span class="warn">handles NO secrets — only pattern <b>shapes</b> + target <b>type</b>. ETA is <b>pre-calibration</b>.</span>
+</header>
+
+<div class="tabs">
+  <div class="tab active" data-view="est">Estimator</div>
+  <div class="tab" data-view="dict">Dictionaries</div>
+</div>
+
+<div id="booting">loading librxe→wasm core…</div>
+
+<!-- ESTIMATOR VIEW -->
+<div class="view" id="view-est">
+ <div class="cols">
+  <div class="pane presets">
+    <h2>Common cases</h2>
+    <div id="presets"></div>
+  </div>
+
+  <div class="pane form">
+    <h2>Search shape</h2>
+
+    <label class="f">What are you searching for?</label>
+    <div class="seg" id="modeSeg">
+      <button data-mode="passphrase" class="on">Passphrase</button>
+      <button data-mode="words">Words</button>
+      <button data-mode="joint">Both (joint)</button>
+    </div>
+
+    <div id="passBox">
+      <label class="f">Passphrase pattern (rxe regex) — the “25th word” you half-remember</label>
+      <input id="passPat" type="text" value="Correct(horse|Horse)?[0-9]{0,2}">
+    </div>
+
+    <div id="wordsBox" style="display:none">
+      <label class="f">Mnemonic pattern — real BIP39 words + <code>[:bip39-en:]</code> at unknown spots, or <code>{{ }}</code> to reorder</label>
+      <input id="wordsPat" type="text" value="legal winner thank year wave sausage worth useful legal winner thank [:bip39-en:]">
+    </div>
+
+    <fieldset>
+      <legend>Target</legend>
+      <div class="seg" id="targetSeg">
+        <button data-t="address" class="on">Address</button>
+        <button data-t="xpub">xpub</button>
+      </div>
+      <div class="note" id="targetNote"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Derivation plan (DIM-2)</legend>
+      <div id="purposes">
+        <span class="chk"><input type="checkbox" data-p="bip44"> 44 (1…)</span>
+        <span class="chk"><input type="checkbox" data-p="bip49"> 49 (3…)</span>
+        <span class="chk"><input type="checkbox" data-p="bip84" checked> 84 (bc1q…)</span>
+        <span class="chk"><input type="checkbox" data-p="bip86"> 86 (bc1p…)</span>
+        <span class="chk"><input type="checkbox" data-p="electrum"> electrum</span>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <div><label class="f">accounts</label><input id="accts" class="num" type="text" value="1"></div>
+        <div><label class="f">change (1 or 2)</label><input id="change" class="num" type="text" value="1"></div>
+        <div><label class="f">gap</label><input id="gap" class="num" type="text" value="1"></div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Engine (for ETA — assumed rates)</legend>
+      <div class="seg" id="backendSeg">
+        <button data-b="cpu" class="on">CPU</button>
+        <button data-b="gpu">GPU</button>
+      </div>
+      <span id="coresWrap" style="margin-left:12px"><label class="f" style="display:inline">cores</label>
+        <input id="cores" class="num" type="text" value="8" style="display:inline;width:60px"></span>
+    </fieldset>
+  </div>
+
+  <div class="pane results" id="results"></div>
+ </div>
+</div>
+
+<!-- DICTIONARIES VIEW -->
+<div class="view" id="view-dict">
+  <div class="pane" style="max-width:720px">
+    <h2>Custom dictionaries</h2>
+    <p class="note">Register a wordlist as <code>name</code>, then reference it in any pattern as
+      <code>[:name:]</code> (e.g. pet names, old passwords). The official BIP39 English list is
+      pre-registered as <code>[:bip39-en:]</code>. Dictionaries live only in this browser session.</p>
+    <label class="f">Dictionary name (letters/digits/dash)</label>
+    <input id="dName" type="text" value="mywords" style="max-width:260px">
+    <label class="f">Words — one per line</label>
+    <textarea id="dWords" rows="7" placeholder="hunter2&#10;fluffy&#10;summer2019"></textarea>
+    <button class="act" id="dAdd">Register dictionary</button>
+    <div class="dictlist" id="dictList"></div>
+  </div>
+</div>
+
+<!-- load the SAME librxe->wasm core + the ONE shared model (no forked logic) -->
+<script src="../wasm/rxecore.js"></script>
+<script src="../wasm/rxecore_api.js"></script>
+<script src="../estimator/bip39.js"></script>
+<script src="../estimator/model.js"></script>
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+let RXE, VALIDATOR;
+const registered = new Map();      // name -> word count
+let liveSets = [];                 // wasm sets to free on next recompute
+let debounce;
+
+// ---------- boot ----------
+(async function boot(){
+  try{
+    const txt = await (await fetch('../data/english.txt')).text();
+    const englishWords = txt.trim().split(/\r?\n/);
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p } });
+    RXE.registerDict('bip39-en', englishWords);
+    registered.set('bip39-en', englishWords.length);
+    VALIDATOR = BIP39.makeValidator(englishWords);
+    $('#booting').style.display='none';
+    $('#view-est').classList.add('active');
+    buildPresets(); renderDictList(); wireUI(); recompute();
+  }catch(e){
+    $('#booting').innerHTML = '<span class="err">failed to load wasm core: '+e.message+'</span>';
+  }
+})();
+
+// ---------- tabs ----------
+$$('.tab').forEach(t=>t.onclick=()=>{
+  $$('.tab').forEach(x=>x.classList.remove('active'));
+  $$('.view').forEach(x=>x.classList.remove('active'));
+  t.classList.add('active');
+  $('#view-'+t.dataset.view).classList.add('active');
+});
+
+// ---------- presets ----------
+const PRESETS = [
+  { title:'Passphrase: prefix + case + digits', sub:'known 12-word mnemonic, address (BIP84)',
+    mode:'passphrase', pass:'Correct(horse|Horse)?[0-9]{0,2}', target:'address', purposes:['bip84'], gap:'1' },
+  { title:'Passphrase: word + optional year', sub:'address target, wider gap',
+    mode:'passphrase', pass:'[Tt]rezor(2019|2020|2021)?', target:'address', purposes:['bip84'], gap:'3' },
+  { title:'12-word: one missing word', sub:'dictionary at last position, xpub (BIP44)',
+    mode:'words', words:'legal winner thank year wave sausage worth useful legal winner thank [:bip39-en:]',
+    target:'xpub', purposes:['bip44'] },
+  { title:'12-word: two missing words', sub:'sampled checksum survival, xpub (BIP84)',
+    mode:'words', words:'legal winner thank year wave sausage worth useful legal winner [:bip39-en:] [:bip39-en:]',
+    target:'xpub', purposes:['bip84'] },
+  { title:'24-word: one missing word', sub:'checksum 1/256, xpub (BIP49)',
+    mode:'words', words:'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon [:bip39-en:]',
+    target:'xpub', purposes:['bip49'] },
+  { title:'Words: known set, unknown order', sub:'{{ }} permutation + checksum, xpub',
+    mode:'words', words:'(legal|winner|thank|year|wave|sausage|worth|useful|abandon|ability|able|about){{12!}}',
+    target:'xpub', purposes:['bip84'] },
+  { title:'Electrum-style path', sub:'BIP39 seed used with Electrum paths (§5)',
+    mode:'passphrase', pass:'[Tt]rezor[0-9]{0,2}', target:'address', purposes:['electrum'], gap:'5' },
+  { title:'Joint (longshot): words × passphrase', sub:'product keyspace, xpub',
+    mode:'joint', words:'legal winner thank year wave sausage worth useful legal winner thank [:bip39-en:]',
+    pass:'[a-z]{1,3}', target:'xpub', purposes:['bip84'] },
+];
+function buildPresets(){
+  const host = $('#presets');
+  PRESETS.forEach(p=>{
+    const b=document.createElement('button'); b.className='preset';
+    b.innerHTML=`<b>${p.title}</b><span>${p.sub}</span>`;
+    b.onclick=()=>applyPreset(p);
+    host.appendChild(b);
+  });
+}
+function applyPreset(p){
+  setMode(p.mode);
+  if(p.pass!=null) $('#passPat').value=p.pass;
+  if(p.words!=null) $('#wordsPat').value=p.words;
+  setSeg('#targetSeg','data-t',p.target||'address');
+  $$('#purposes input').forEach(c=>c.checked=(p.purposes||['bip84']).includes(c.dataset.p));
+  $('#accts').value=p.accounts||'1';
+  $('#change').value=p.change||'1';
+  $('#gap').value=p.gap||'1';
+  recompute();
+}
+
+// ---------- UI wiring ----------
+function setSeg(sel,attr,val){ $$(sel+' button').forEach(b=>b.classList.toggle('on',b.getAttribute(attr)===val)); }
+function segVal(sel,attr){ const b=$(sel+' button.on'); return b?b.getAttribute(attr):null; }
+function setMode(m){
+  setSeg('#modeSeg','data-mode',m);
+  $('#passBox').style.display=(m==='passphrase'||m==='joint')?'':'none';
+  $('#wordsBox').style.display=(m==='words'||m==='joint')?'':'none';
+}
+function wireUI(){
+  $$('#modeSeg button').forEach(b=>b.onclick=()=>{setMode(b.dataset.mode);recompute();});
+  $$('#targetSeg button').forEach(b=>b.onclick=()=>{setSeg('#targetSeg','data-t',b.dataset.t);recompute();});
+  $$('#backendSeg button').forEach(b=>b.onclick=()=>{setSeg('#backendSeg','data-b',b.dataset.b);
+    $('#coresWrap').style.display=b.dataset.b==='cpu'?'':'none';recompute();});
+  ['#passPat','#wordsPat','#accts','#change','#gap','#cores'].forEach(s=>$(s).addEventListener('input',schedule));
+  $$('#purposes input').forEach(c=>c.onchange=recompute);
+  $('#dAdd').onclick=addDict;
+}
+function schedule(){ clearTimeout(debounce); debounce=setTimeout(recompute,300); }
+
+// ---------- recompute ----------
+function freeLive(){ liveSets.forEach(s=>{try{s.free()}catch(e){}}); liveSets=[]; }
+function recompute(){
+  freeLive();
+  const mode = segVal('#modeSeg','data-mode');
+  const target = segVal('#targetSeg','data-t');
+  const backend = segVal('#backendSeg','data-b');
+  $('#targetNote').textContent = target==='xpub'
+    ? 'xpub: chain-code compare, no EC in the hot loop — the lean case (PLAN §3).'
+    : 'address: needs secp256k1 per candidate; consider getting an xpub to go leaner.';
+  const purposes = $$('#purposes input').filter(c=>c.checked).map(c=>c.dataset.p);
+  const input = {
+    passphrasePattern: (mode==='passphrase'||mode==='joint') ? $('#passPat').value.trim() : null,
+    mnemonicKnown: mode==='passphrase',
+    mnemonicPattern: (mode==='words'||mode==='joint') ? $('#wordsPat').value.trim() : null,
+    targetType: target, backend,
+    cores: parseInt($('#cores').value,10)||1,
+    path:{ purposes: purposes.length?purposes:['bip84'],
+           accounts:parseInt($('#accts').value,10)||1,
+           change:parseInt($('#change').value,10)||1,
+           gap:parseInt($('#gap').value,10)||1 },
+    exactThreshold:50000, sampleSize:5000,
+  };
+  let r;
+  try{ r = BIP39Estimator.estimate(input,{rxe:RXE,validator:VALIDATOR}); }
+  catch(e){ $('#results').innerHTML='<div class="card"><h3>parse error</h3><div class="err">'+e.message+'</div></div>'; return; }
+  render(r, input);
+  // keep sets for sampling, then schedule them for freeing next round
+  const sets = [r._sets.passSet, r._sets.wordsSet].filter(Boolean);
+  liveSets = sets;
+}
+
+// ---------- render ----------
+const H = BIP39Estimator.humanCount, HT = BIP39Estimator.humanTime;
+function render(r, input){
+  const v = r.verdict;
+  let html = `<div class="verdict ${v}"><span class="dot"></span>${v.toUpperCase()} — ${r.unbounded?'unbounded keyspace':(r.eta?('exhaust in '+r.eta.timeToExhaust):'')}</div>`;
+
+  html += `<div class="card"><h3>Total candidates <span class="pill">DIM-1 × path plan</span></h3>
+    <div class="big">${r.totalCandidatesHuman}</div>`;
+  const kv=[];
+  if(r.passphrase) kv.push(['passphrase set', r.passphrase.infinite?'∞ unbounded':H(r.passphrase.cardinality)]);
+  if(r.mnemonic&&r.mnemonic.survival){
+    const s=r.mnemonic.survival;
+    if(s.infinite) kv.push(['mnemonic set','∞ unbounded']);
+    else{
+      kv.push(['mnemonic raw set',H(s.raw)]);
+      kv.push([`checksum-valid (${s.method})`, H(s.validCount)+`  (${(s.fraction*100).toPrecision(3)}%)`]);
+    }
+  }
+  if(r.mode==='joint'&&!r.unbounded) kv.push(['DIM-1 product', H(r.dim1)]);
+  kv.push(['path multiplier', '×'+r.pathPlan.value+(r.pathPlan.collapsed?' (xpub-collapsed)':'')]);
+  html += '<div class="kv">'+kv.map(([k,val])=>`<div class="k">${k}</div><div class="v">${val}</div>`).join('')+'</div></div>';
+
+  // ETA
+  if(r.eta){
+    html += `<div class="card"><h3>ETA <span class="pill">${r.eta.calibrated?'calibrated':'assumed — pre-calibration'}</span></h3>
+      <div class="kv">
+        <div class="k">time-to-exhaust (plan)</div><div class="v">${r.eta.timeToExhaust}</div>
+        <div class="k">expected-to-hit (~½)</div><div class="v">${r.eta.expectedTimeToHit}</div>
+        <div class="k">rate assumed</div><div class="v">${H(Math.round(r.eta.kdfRate))}/s KDF${input.backend==='cpu'?' ('+input.cores+' cores)':''}</div>
+      </div>
+      <div class="note">${r.eta.note} Rates: ${r.eta.rateSource}.</div></div>`;
+  }
+
+  // notes + warnings
+  if(r.warnings.length) html+=`<div class="card">${r.warnings.map(w=>`<div class="warnmsg">⚠ ${w}</div>`).join('')}</div>`;
+  if(r.notes.length) html+=`<div class="card"><h3>Notes</h3>${r.notes.map(n=>`<div class="note">• ${esc(n)}</div>`).join('')}</div>`;
+
+  // narrowing levers
+  if(r.narrowingLevers.length)
+    html+=`<div class="card"><h3>Narrowing levers</h3><ul class="levers">${r.narrowingLevers.map(l=>`<li>${esc(l)}</li>`).join('')}</ul></div>`;
+
+  // dry-run sample
+  html+=`<div class="card sample"><h3>Dry-run sample <span class="pill">via librxe unrank</span></h3>${sampleHTML(r)}</div>`;
+
+  $('#results').innerHTML=html;
+}
+
+function sampleHTML(r){
+  const mode=r.mode;
+  const set = (mode==='words')?r._sets.wordsSet : r._sets.passSet || r._sets.wordsSet;
+  if(!set) return '<div class="note">nothing to sample.</div>';
+  if(set.isInfinite()) return '<div class="note">set is unbounded — bound the pattern to sample it.</div>';
+  const N=set.cardinality(); if(N===null) return '<div class="note">unbounded.</div>';
+  const showWords = (mode==='words'||mode==='joint');
+  const n=6; const out=[];
+  const cap = N<BigInt(n)?Number(N):n;
+  out.push('<div class="note">first '+cap+':</div>');
+  for(let i=0;i<cap;i++){ out.push(line(set,BigInt(i),showWords)); }
+  if(N>BigInt(n)){
+    out.push('<div class="note" style="margin-top:6px">random '+n+':</div>');
+    for(let k=0;k<n;k++){ const i=BigInt(Math.floor(Math.random()*Number(N))); out.push(line(set,i,showWords)); }
+  }
+  if(mode==='joint') out.push('<div class="note" style="margin-top:6px">(joint: each valid mnemonic above is swept against the full passphrase set)</div>');
+  return out.join('');
+}
+function line(set,i,checkValid){
+  const s=set.unrank(i); if(s===null) return '';
+  const bad = checkValid && !VALIDATOR.isValid(s);
+  return `<code class="${bad?'bad':''}"><span class="ix">#${i}</span> ${esc(s)}${checkValid?(bad?' ✗':' ✓'):''}</code>`;
+}
+function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+
+// ---------- dictionaries ----------
+function addDict(){
+  const name=$('#dName').value.trim();
+  if(!/^[A-Za-z0-9_-]+$/.test(name)){ alert('name must be letters/digits/dash'); return; }
+  const words=$('#dWords').value.split(/\r?\n/).map(w=>w.trim()).filter(Boolean);
+  if(!words.length){ alert('add at least one word'); return; }
+  try{ RXE.registerDict(name,words); registered.set(name,words.length); renderDictList(); }
+  catch(e){ alert('register failed: '+e.message); }
+}
+function renderDictList(){
+  const host=$('#dictList'); host.innerHTML='<h2 style="margin-top:18px">Registered</h2>';
+  for(const [n,c] of registered){
+    const d=document.createElement('div'); d.className='d';
+    d.innerHTML=`<span>[:${n}:]</span><span class="muted">${c} words</span>`;
+    host.appendChild(d);
+  }
+}
+</script>
+</body>
+</html>

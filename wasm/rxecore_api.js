@@ -13,13 +13,22 @@
 //   set.unrank(0n);         // 'aaaa'
 //   set.free();
 
-const path = require('path');
+// Works in BOTH node (require) and the browser (rxecore.js loaded via <script>,
+// which defines a global `RxeCore` factory). No node-only imports at top level.
+const _path = (typeof require === 'function') ? require('path') : null;
 
 let _factoryPromise = null;
 
 async function loadRxeCore(opts = {}) {
-  const RxeCore = require(opts.modulePath || path.join(__dirname, 'rxecore.js'));
-  if (!_factoryPromise) _factoryPromise = RxeCore();
+  let factory;
+  if (typeof globalThis !== 'undefined' && typeof globalThis.RxeCore !== 'undefined') {
+    factory = globalThis.RxeCore;                     // browser: <script src=rxecore.js>
+  } else if (typeof require === 'function') {
+    factory = require(opts.modulePath || _path.join(__dirname, 'rxecore.js')); // node
+  } else {
+    throw new Error('rxecore.js not found (load it via <script> before this file)');
+  }
+  if (!_factoryPromise) _factoryPromise = factory(opts.moduleArgs || {});
   const Module = await _factoryPromise;
   return new RxeCoreApi(Module);
 }
@@ -119,4 +128,6 @@ class RxeSet {
   }
 }
 
-module.exports = { loadRxeCore, FLAGS };
+const _rxeApiExports = { loadRxeCore, FLAGS };
+if (typeof module !== 'undefined' && module.exports) module.exports = _rxeApiExports;
+if (typeof window !== 'undefined') window.RxeCoreAPI = _rxeApiExports;

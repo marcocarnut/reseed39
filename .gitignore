@@ -4,5 +4,9 @@ wasm/build/
 wasm/gmp-wasm/
 node_modules/
 
+# Local dev HTTP server runtime (P3 estimator page); details live in REPORT.md.
+server.log
+server.log.info
+
 # Keep the built core committed for durability across box restarts:
 #   wasm/rxecore.js and wasm/rxecore.wasm are intentionally NOT ignored.
