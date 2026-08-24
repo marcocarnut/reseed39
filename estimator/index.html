@@ -79,6 +79,26 @@
   button.act{background:var(--accent);color:#04102a;border:0;border-radius:7px;padding:8px 14px;font-weight:600;cursor:pointer;margin-top:10px}
   a{color:var(--accent)}
   #booting{padding:30px 18px;color:var(--dim)}
+  /* modal dialogs (benchmark, dry-run sample) */
+  .overlay{position:fixed;inset:0;background:rgba(5,8,16,.66);display:none;align-items:center;justify-content:center;z-index:50}
+  .overlay.on{display:flex}
+  .modal{background:var(--panel);border:1px solid var(--edge);border-radius:12px;max-width:560px;width:92%;max-height:82vh;
+         display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+  .modal h3{margin:0;padding:14px 16px;border-bottom:1px solid var(--edge);font-size:14px;display:flex;align-items:center;gap:8px}
+  .modal .body{padding:14px 16px;overflow:auto}
+  .modal .foot{padding:12px 16px;border-top:1px solid var(--edge);display:flex;gap:10px;justify-content:flex-end}
+  .modal .x{margin-left:auto;cursor:pointer;color:var(--dim);font-size:18px;line-height:1;background:none;border:0}
+  button.ghost{background:transparent;border:1px solid var(--edge);color:var(--ink);border-radius:7px;padding:7px 13px;cursor:pointer;font-weight:600}
+  button.ghost:hover{border-color:var(--accent)}
+  button.act:disabled,.seg button:disabled{opacity:.4;cursor:not-allowed}
+  .benchstep{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--edge);font-family:var(--mono);font-size:12.5px}
+  .benchstep:last-child{border-bottom:0}
+  .benchstep .st{color:var(--dim)}
+  .benchcard{background:var(--panel2);border:1px solid var(--edge);border-radius:9px;padding:10px 12px;margin-bottom:12px;font-size:12.5px}
+  .benchcard .row2{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:space-between}
+  .benchcard .gid{font-family:var(--mono);color:var(--accent);font-size:11.5px;word-break:break-word}
+  .cta{background:rgba(91,157,255,.1);border:1px dashed var(--accent);border-radius:9px;padding:14px;margin-bottom:14px;text-align:center}
+  .foundname{font-family:var(--mono);font-size:19px;font-weight:700;word-break:break-word;margin:8px 0;color:var(--ink)}
 </style>
 </head>
 <body>
@@ -167,18 +187,6 @@
       <div class="hint" id="gapHint" data-i18n="gapHint"></div>
     </fieldset>
 
-    <fieldset>
-      <legend data-i18n="engine">Engine</legend>
-      <div class="seg" id="backendSeg">
-        <button data-b="cpu" class="on">CPU</button>
-        <button data-b="gpu">GPU</button>
-      </div>
-      <span id="coresWrap" style="margin-left:12px"><label class="f" style="display:inline" data-i18n="cores">cores</label>
-        <input id="cores" class="num" type="text" value="8" style="display:inline;width:60px"></span>
-      <div style="margin-top:10px"><button class="act" id="benchBtn" data-i18n="benchBtn" style="margin-top:0">⏱ Benchmark this browser</button>
-        <span class="hint" id="benchInfo" style="margin-left:10px"></span></div>
-    </fieldset>
-
     <fieldset id="crackBox" style="display:none;border-color:var(--accent)">
       <legend data-i18n="crackTitle">Crack in your browser</legend>
       <div id="crackMnWrap">
@@ -188,18 +196,27 @@
       <div id="crackPassWrap" style="display:none">
         <label class="f" data-i18n="crackPassLabel">BIP39 passphrase (the 25th word) — leave blank if none</label>
         <input id="crackPass" type="text" placeholder="(usually blank)" style="max-width:320px">
-        <div class="hint" data-i18n="crackWordsHint" style="margin-top:6px">The mnemonic pattern above is the candidate set — CPU only (the varying mnemonic can't reuse the GPU key-schedule).</div>
+        <div class="hint" data-i18n="crackWordsHint" style="margin-top:6px"></div>
       </div>
-      <div style="margin-top:10px">
-        <button class="act" id="crackBtn" data-i18n="crackBtn">🔓 Crack here</button>
-        <span class="hint" id="crackMsg" style="margin-left:10px"></span>
+      <div class="row" style="margin-top:12px;align-items:center;gap:12px">
+        <div class="seg" id="backendSeg" title="engine">
+          <button data-b="cpu">CPU</button>
+          <button data-b="gpu" class="on">GPU</button>
+        </div>
+        <span id="coresWrap"><label class="f" style="display:inline" data-i18n="cores">cores</label>
+          <input id="cores" class="num" type="text" value="8" style="display:inline;width:56px"></span>
+        <button class="act" id="crackBtn" data-i18n="crackBtn" style="margin-top:0">🔓 Crack here</button>
+        <span class="hint" id="crackMsg"></span>
       </div>
       <div class="hint" id="crackProg" style="margin-top:8px"></div>
-      <div id="crackRes" style="margin-top:8px"></div>
+      <div id="crackRes" style="margin-top:10px"></div>
     </fieldset>
   </div>
 
-  <div class="pane results" id="results"></div>
+  <div class="pane results">
+    <div class="benchcard" id="benchCard"></div>
+    <div id="results"></div>
+  </div>
  </div>
 </div>
 
@@ -221,12 +238,12 @@
 <script src="../wasm/rxecore_api.js"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b12"></script>
-<script src="../estimator/model.js?v=b12"></script>
-<script src="../estimator/wordset.js?v=b12"></script>
-<script src="../estimator/bip39crypto.js?v=b12"></script>
-<script src="../estimator/gpucrack.js?v=b12"></script>
-<script src="../estimator/i18n.js?v=b12"></script>
+<script src="../estimator/bip39.js?v=b14"></script>
+<script src="../estimator/model.js?v=b14"></script>
+<script src="../estimator/wordset.js?v=b14"></script>
+<script src="../estimator/bip39crypto.js?v=b14"></script>
+<script src="../estimator/gpucrack.js?v=b14"></script>
+<script src="../estimator/i18n.js?v=b14"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -237,9 +254,49 @@ let liveSets = [];
 let debounce;
 let calCpu = null, calGpu = null;   // measured rates per backend (in-browser benchmark)
 let cracking = false;        // in-browser crack in progress
+let lastR = null;            // last estimate result (for the dry-run modal)
 let LANG = 'en';
 let t = EstI18N.makeT('en');
 const VERDICT_WORD = { en:{green:'GREEN',yellow:'YELLOW',red:'RED'}, pt:{green:'VERDE',yellow:'AMARELO',red:'VERMELHO'} };
+
+// 9-tier feasibility scale (emoji + localized label; color drives styling).
+const TIER = {
+  trivial: {emoji:'😉', color:'green',  en:'TRIVIAL',          pt:'TRIVIAL'},
+  veryEasy:{emoji:'😄', color:'green',  en:'VERY EASY',        pt:'MUITO FÁCIL'},
+  easy:    {emoji:'🙂', color:'green',  en:'EASY',             pt:'FÁCIL'},
+  days:    {emoji:'😐', color:'yellow', en:'A MATTER OF DAYS', pt:'QUESTÃO DE DIAS'},
+  weeks:   {emoji:'🙁', color:'yellow', en:'A MATTER OF WEEKS',pt:'QUESTÃO DE SEMANAS'},
+  months:  {emoji:'😟', color:'yellow', en:'A MATTER OF MONTHS',pt:'QUESTÃO DE MESES'},
+  years:   {emoji:'😧', color:'red',    en:'A MATTER OF YEARS',pt:'QUESTÃO DE ANOS'},
+  decades: {emoji:'😱', color:'red',    en:'DECADES LONG',     pt:'DÉCADAS'},
+  hopeless:{emoji:'💀', color:'red',    en:'HOPELESS',         pt:'SEM ESPERANÇA'},
+};
+function tierLabel(key){ const x=TIER[key]||TIER.hopeless; return x.emoji+' '+(x[LANG]||x.en); }
+// Elapsed / remaining as "1d 2h 3m 4s" (drops leading-zero units).
+function humanElapsed(sec){
+  sec=Math.max(0,Math.round(sec)); if(sec<1) return '<1s';
+  const d=Math.floor(sec/86400); sec-=d*86400;
+  const h=Math.floor(sec/3600); sec-=h*3600;
+  const m=Math.floor(sec/60); const s=sec-m*60;
+  const p=[]; if(d)p.push(d+'d'); if(h||d)p.push(h+'h'); if(m||h||d)p.push(m+'m'); p.push(s+'s');
+  return p.join(' ');
+}
+
+// ---- benchmark state (persisted in localStorage, keyed with the GPU id) ----
+const BENCH_KEY = 'bip39rxcrack.bench.v1';
+let BENCH = null;            // {gpuId, cpuKdf, cpuSweep, gpuKdf|null, ts} or null
+let HAS_GPU = false;         // set at boot
+let CUR_GPU_ID = '';         // detected current adapter id (for a mismatch hint)
+function loadBench(){ try{ const s=localStorage.getItem(BENCH_KEY); BENCH = s?JSON.parse(s):null; }catch(e){ BENCH=null; } }
+function saveBench(){ try{ localStorage.setItem(BENCH_KEY, JSON.stringify(BENCH)); }catch(e){} }
+// Feed the measured rates into the model's calibration slots (best-of for the estimate).
+function applyBench(){
+  if(!BENCH){ calCpu=null; calGpu=null; return; }
+  calCpu = { source:(LANG==='pt'?'medido neste navegador':'measured on this browser'),
+             cpu:{ kdfPerCore:BENCH.cpuKdf, sweepPerCore:BENCH.cpuSweep } };
+  calGpu = BENCH.gpuKdf ? { source:(LANG==='pt'?'medido (WebGPU)':'measured (WebGPU)'),
+             cpu:{ kdfPerCore:BENCH.cpuKdf, sweepPerCore:BENCH.cpuSweep }, gpu:{ kdf:BENCH.gpuKdf } } : null;
+}
 
 // ---- derivation catalogue (language-neutral) ----
 const DERIVS = [
@@ -303,7 +360,7 @@ function applyLang(){
 function setLang(l){
   LANG = l; t = EstI18N.makeT(l);
   setSeg('#langSeg','data-l',l);
-  applyLang(); recompute();
+  applyBench(); applyLang(); renderBenchCard(); recompute();
 }
 
 // ---------- boot ----------
@@ -318,9 +375,13 @@ function setLang(l){
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
     ['bip39en','bip39','en','english'].forEach(a=>{ try{ RXE.registerDict(a, englishWords); }catch(e){} });
     VALIDATOR = BIP39.makeValidator(englishWords);
+    // GPU detection + cached benchmark
+    HAS_GPU = !!navigator.gpu;
+    loadBench(); applyBench();
+    if(HAS_GPU && window.GpuCrack){ try{ CUR_GPU_ID = (await window.GpuCrack.getGpuInfo())||''; }catch(e){} }
     $('#booting').style.display='none';
     $('#view-est').classList.add('active');
-    buildDerivs(); wireUI(); applyLang(); applyTargetVis(); recompute();
+    buildDerivs(); wireUI(); applyBackendAvail(); applyLang(); applyTargetVis(); renderBenchCard(); recompute();
   }catch(e){
     $('#booting').innerHTML = '<span class="err">failed to load wasm core: '+e.message+'</span>';
   }
@@ -437,49 +498,98 @@ function onAddr(){
     + (det.hard ? '' : ' '+t('xpubAmbiguous'));
   applyTargetVis(); recompute();
 }
+// Default the crack engine to GPU when available; disable GPU if not.
+function applyBackendAvail(){
+  const gpuBtn=$('#backendSeg button[data-b="gpu"]');
+  if(!HAS_GPU){ gpuBtn.disabled=true; gpuBtn.title=t('noGpu'); setSeg('#backendSeg','data-b','cpu'); }
+  else { gpuBtn.disabled=false; gpuBtn.title=''; setSeg('#backendSeg','data-b','gpu'); }
+}
 function wireUI(){
   $$('#langSeg button').forEach(b=>b.onclick=()=>setLang(b.dataset.l));
   $$('#modeSeg button').forEach(b=>b.onclick=()=>{setMode(b.dataset.mode);recompute();});
   $$('#wordsModeSeg button').forEach(b=>b.onclick=()=>{setWordsMode(b.dataset.wm);recompute();});
   $$('#targetSeg button').forEach(b=>b.onclick=()=>{setSeg('#targetSeg','data-t',b.dataset.t);applyTargetVis();recompute();});
-  $$('#backendSeg button').forEach(b=>b.onclick=()=>{setSeg('#backendSeg','data-b',b.dataset.b);
-    $('#coresWrap').style.display=b.dataset.b==='cpu'?'':'none';recompute();});
+  $$('#backendSeg button').forEach(b=>b.onclick=()=>{ if(b.disabled) return; setSeg('#backendSeg','data-b',b.dataset.b); });
   ['#passPat','#wordsPat','#wordsK','#accts','#gap','#cores'].forEach(s=>$(s).addEventListener('input',schedule));
   $('#change').addEventListener('change',recompute);
   $('#reqChecksum').addEventListener('change',recompute);
   $('#addr').addEventListener('input',()=>{clearTimeout(debounce);debounce=setTimeout(onAddr,250);});
-  $('#benchBtn').onclick=runBenchmark;
   $('#crackBtn').onclick=onCrack;
   $('#dAdd').onclick=addDict;
+  // modals
+  $('#benchRun').onclick=runBenchAll;
+  $('#benchClose').onclick=$('#benchCancel').onclick=closeBenchModal;
+  $('#sampleClose').onclick=$('#sampleCloseB').onclick=()=>$('#sampleOverlay').classList.remove('on');
+  [$('#benchOverlay'),$('#sampleOverlay')].forEach(o=>o.addEventListener('click',e=>{ if(e.target===o) o.classList.remove('on'); }));
 }
 function schedule(){ clearTimeout(debounce); debounce=setTimeout(recompute,300); }
 
-// Measure the REAL per-candidate rate in THIS browser (JS-CPU, 1 core): PBKDF2
-// x2048 + hardened derive, using the same proven crypto the cracker will use.
-// Feeds input.calibration so the ETA flips from "assumed" to measured.
-async function runBenchmark(){
-  const btn=$('#benchBtn'), info=$('#benchInfo');
-  const gpu = segVal('#backendSeg','data-b')==='gpu';
-  btn.disabled=true; info.textContent=t('benchRunning');
-  await new Promise(r=>setTimeout(r,30));           // let the label paint
-  try {
-    if (gpu && window.GpuCrack && navigator.gpu) {
-      const rate = await window.GpuCrack.benchmark(8192);
-      calGpu = { source:(LANG==='pt'?'medido neste navegador (WebGPU)':'measured on this browser (WebGPU)'), gpu:{ kdf: rate } };
-      info.textContent = `${fmtBig(Math.round(rate))} seeds/s (GPU)`;
-    } else {
-      const C=window.BIP39Crypto;
-      const mn='legal winner thank year wave sausage worth useful legal winner thank yellow';
-      for(let i=0;i<4;i++) C.accountNode(C.mnemonicToSeed(mn,'w'+i),84);   // warm JIT
-      const t0=performance.now(); let n=0;
-      do { for(let k=0;k<8;k++){ C.accountNode(C.mnemonicToSeed(mn,'c'+n),84); n++; } }
-      while(performance.now()-t0<1200);
-      const rate=n/((performance.now()-t0)/1000);
-      calCpu = { source:t('benchDone'), cpu:{ kdfPerCore: rate } };
-      info.textContent = `${fmtBig(Math.round(rate))} cand/s/core`;
+// ---------- benchmark (modal; measures CPU + GPU, persisted) ----------
+// The estimator won't show timings until this has run once -- rates are measured
+// in THIS browser (same crypto the cracker uses), not guessed. Results + the GPU
+// id are cached in localStorage so it isn't needed every visit.
+function benchStepRow(id,label){ return `<div class="benchstep"><span>${label}</span><span class="st" id="bs-${id}">—</span></div>`; }
+function openBenchModal(){
+  const steps=$('#benchSteps');
+  steps.innerHTML = benchStepRow('cpuk',t('benchCpuKdf'))+benchStepRow('cpus',t('benchCpuSweep'))+(HAS_GPU?benchStepRow('gpuk',t('benchGpuKdf')):'');
+  $('#benchOverlay').classList.add('on');
+}
+function closeBenchModal(){ $('#benchOverlay').classList.remove('on'); }
+async function runBenchAll(){
+  const run=$('#benchRun'); run.disabled=true;
+  const set=(id,txt)=>{ const e=$('#bs-'+id); if(e) e.textContent=txt; };
+  const yield_=()=>new Promise(r=>setTimeout(r,30));
+  try{
+    const C=window.BIP39Crypto;
+    // 1) CPU KDF (single core): PBKDF2x2048 + hardened derive
+    set('cpuk','…'); await yield_();
+    const mn='legal winner thank year wave sausage worth useful legal winner thank yellow';
+    for(let i=0;i<4;i++) C.accountNode(C.mnemonicToSeed(mn,'w'+i),84);
+    let t0=performance.now(), n=0;
+    do{ for(let k=0;k<8;k++){ C.accountNode(C.mnemonicToSeed(mn,'c'+n),84); n++; } }while(performance.now()-t0<1200);
+    const cpuKdf=n/((performance.now()-t0)/1000); set('cpuk',fmtBig(Math.round(cpuKdf))+' /s/core');
+    // 2) CPU sweep (unrank + checksum) over a 24-word [:bip39-en:] pattern -- the
+    //    longer, more expensive case, so the ETA leans conservative.
+    set('cpus','…'); await yield_();
+    const sset=RXE.parse('abandon '.repeat(23)+'[:bip39-en:]');
+    const total=Number(sset.cardinality()); let m=0; t0=performance.now();
+    while(performance.now()-t0<900){ for(let k=0;k<256;k++){ const s=sset.unrank(BigInt(m%total)); VALIDATOR.isValid(s); m++; } }
+    sset.free(); const cpuSweep=m/((performance.now()-t0)/1000); set('cpus',fmtBig(Math.round(cpuSweep))+' /s/core');
+    // 3) GPU KDF (words seed kernel)
+    let gpuKdf=null, gpuId=CUR_GPU_ID||null;
+    if(HAS_GPU && window.GpuCrack){
+      set('gpuk','…'); await yield_();
+      try{
+        gpuId = (await window.GpuCrack.getGpuInfo())||gpuId;
+        const words=['abandon','ability','able','zoo','yellow','legal','winner','museum','sausage','worth'];
+        const batch=[]; for(let i=0;i<8192;i++){ let s=''; for(let w=0;w<12;w++) s+=(s?' ':'')+words[(i+w*7)%words.length]; batch.push(s); }
+        await window.GpuCrack.gpuSeedsWords(batch.slice(0,64),'');
+        const g0=performance.now(); await window.GpuCrack.gpuSeedsWords(batch,''); gpuKdf=8192/((performance.now()-g0)/1000);
+        set('gpuk',fmtBig(Math.round(gpuKdf))+' /s');
+      }catch(e){ set('gpuk','failed: '+e.message); }
     }
-  } catch(e){ info.textContent='benchmark failed: '+e.message; }
-  btn.disabled=false; recompute();
+    BENCH={ gpuId, cpuKdf, cpuSweep, gpuKdf, ts:Date.now() };
+    saveBench(); applyBench(); renderBenchCard(); recompute();
+    run.textContent=t('benchDoneBtn');
+    setTimeout(()=>{ closeBenchModal(); run.textContent=t('benchRun'); run.disabled=false; }, 700);
+  }catch(e){ run.disabled=false; run.textContent=t('benchRun'); alert('benchmark failed: '+e.message); }
+}
+// The right-pane card summarising the stored benchmark (or a prompt to run it).
+function renderBenchCard(){
+  const host=$('#benchCard'); if(!host) return;
+  if(!BENCH){
+    host.innerHTML=`<div class="row2"><span>⏱ <b>${t('benchNone')}</b></span>
+      <button class="ghost" id="benchOpen">${t('benchDo')}</button></div>`;
+  } else {
+    const mismatch = HAS_GPU && CUR_GPU_ID && BENCH.gpuId && CUR_GPU_ID!==BENCH.gpuId;
+    host.innerHTML=`<div class="row2">
+      <span>🖥 <b>${t('benchCached')}</b></span>
+      <button class="ghost" id="benchOpen">${t('benchRedo')}</button></div>
+      <div class="gid">${esc(BENCH.gpuId||'CPU only')}</div>
+      <div class="note" style="margin-top:4px">CPU ${fmtBig(Math.round(BENCH.cpuKdf))} /s/core · sweep ${fmtBig(Math.round(BENCH.cpuSweep))} /s/core${BENCH.gpuKdf?` · GPU ${fmtBig(Math.round(BENCH.gpuKdf))} /s`:''}</div>
+      ${mismatch?`<div class="warnmsg" style="margin-top:4px">⚠ ${t('benchMismatch')}</div>`:''}`;
+  }
+  const b=$('#benchOpen'); if(b) b.onclick=openBenchModal;
 }
 
 // ---------- in-browser crack (xpub OR address target, known mnemonic) ------
@@ -533,13 +643,19 @@ async function onCrack(){
   const wTarget = (target==='xpub')
     ? { kind:'xpub', chainCodeHex:C.toHex(tcc) }
     : { kind:'address', addrType:taddr.type, programHex:C.toHex(taddr.program) };
+  const crackStart=performance.now();
+  const engLabel = gpu ? 'GPU' : 'CPU';
   const common={ plan, total, unrank:i=>set.unrank(BigInt(i)),
     onProgress:(done,tot,rate,extra)=>{
       let s=`${fmtBig(done)} / ${fmtBig(tot)} · ${fmtBig(Math.round(rate))} ${t('crackTried')}/s`;
       // the "tried" sweep is cheap; the real cost is the ones actually HASHED --
       // show those (and the worker count) so the timing makes sense.
       if(extra) s+=` · ${fmtBig(extra.seeded)} ${t('crackSeeded')} (${fmtBig(Math.round(extra.seedRate))}/s)`;
-      prog.textContent=s;
+      // second line: % done + ETA to completion.
+      const pct = tot ? (done/tot*100) : 0;
+      const remain = rate>0 ? (tot-done)/rate : Infinity;
+      const line2 = `${pct.toFixed(1)}% · ${t('crackEta')} ${isFinite(remain)?humanElapsed(remain):'—'}`;
+      prog.innerHTML=`<div>${esc(s)}</div><div style="margin-top:2px">${esc(line2)}</div>`;
     },
     isCancelled:()=>!cracking };
   // A CPU path runs multicore via Web Workers, falling back to the single-thread
@@ -570,8 +686,10 @@ async function onCrack(){
         ? `m/${r.path.purpose}'/${r.path.coin}'/${r.path.account}'`
         : `m/${r.path.purpose}'/${r.path.coin}'/${r.path.account}'/${r.path.change}/${r.path.index}`;
       const label = mode==='words' ? t('crackFoundMn') : t('crackFound');
-      res.innerHTML=`<div class="verdict green" style="margin:0"><span class="dot"></span>${label} <b>${esc(r.found)}</b></div>`
-                   +`<div class="note">${t('crackVia')} ${esc(pth)}, index ${fmtBig(r.index)}</div>`;
+      const elapsed = humanElapsed((performance.now()-crackStart)/1000);
+      res.innerHTML=`<div class="verdict green" style="margin:0"><span class="dot"></span>${label}</div>`
+                   +`<div class="foundname">${esc(r.found)}</div>`
+                   +`<div class="note">${t('crackVia')} ${esc(pth)}, index ${fmtBig(r.index)} · ${elapsed} (${engLabel})</div>`;
     } else res.innerHTML='<span class="warnmsg">'+t('crackNotFound')+'</span>';
   }catch(e){ res.innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
   finally{ cracking=false; btn.textContent=t('crackBtn'); msg.textContent=''; try{set.free()}catch(e){} }
@@ -638,7 +756,7 @@ function cpuCrackMT(o){
       const start=k*per, end=Math.min(o.total,(k+1)*per);
       if (start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b12'); }catch(e){ cleanup(); return resolve(o.single()); }
+      let w; try{ w=new Worker('crackworker.js?v=b14'); }catch(e){ cleanup(); return resolve(o.single()); }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if (m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
@@ -706,7 +824,7 @@ function crackWordsHybrid(o){
     for(let k=0;k<nW;k++){
       const start=k*per, end=Math.min(o.total,(k+1)*per); if(start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b12'); }catch(e){ finish({error:'worker spawn failed'}); return; }
+      let w; try{ w=new Worker('crackworker.js?v=b14'); }catch(e){ finish({error:'worker spawn failed'}); return; }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if(m.type==='cand'){ sweptA[m.id]=m.swept; for(const it of m.items) queue.push(it); report(); pump(); }
@@ -770,7 +888,9 @@ function recompute(){
   freeLive();
   const mode = segVal('#modeSeg','data-mode');
   const target = segVal('#targetSeg','data-t');
-  const backend = segVal('#backendSeg','data-b');
+  // The ESTIMATE uses the BEST measured rates (GPU if benchmarked, else CPU) --
+  // the backend SELECTOR only chooses what the actual crack runs on.
+  const backend = calGpu ? 'gpu' : 'cpu';
   $('#targetNote').textContent = target==='xpub' ? t('noteXpub') : t('noteAddr');
   const purposes = $$('#purposes input').filter(c=>c.checked).map(c=>c.dataset.p);
   const input = {
@@ -780,7 +900,7 @@ function recompute(){
     targetType: target, backend,
     requireChecksum: $('#reqChecksum').checked,
     cores: parseInt($('#cores').value,10)||1,
-    calibration: (backend==='gpu') ? calGpu : calCpu,
+    calibration: calGpu || calCpu,
     path:{ purposes: purposes.length?purposes:['bip84'],
            accounts:parseInt($('#accts').value,10)||1,
            change:parseInt($('#change').value,10)||1,
@@ -807,9 +927,15 @@ function updateCrackVis(mode, target){
 // ---------- render ----------
 function bigVal(b){ if(b===null||b===undefined) return '∞ '+t('unboundedShort'); const s=(typeof b==='bigint'?b:BigInt(b)).toString(); return `<span title="${esc(spoken(s))}">${fmtBig(b)}</span>`; }
 function render(r, input){
-  const v = r.verdict;
-  const vw = (VERDICT_WORD[LANG]||VERDICT_WORD.en)[v];
-  let html = `<div class="verdict ${v}"><span class="dot"></span>${vw} — ${r.unbounded?t('unbounded'):(r.eta?(t('exhaustIn')+' '+localizeTime(r.eta.timeToExhaust)):'')}</div>`;
+  lastR = r;
+  let html = '';
+  // Timings (verdict tier + ETA) only after a benchmark; before that, sizes only.
+  if(BENCH){
+    const tl = tierLabel(r.tier.key);
+    html += `<div class="verdict ${r.tier.color}">${tl} — ${r.unbounded?t('unbounded'):(r.eta?(t('exhaustIn')+' '+localizeTime(r.eta.timeToExhaust)):'')}</div>`;
+  } else {
+    html += `<div class="cta"><div style="margin-bottom:8px">${t('benchGate')}</div><button class="act" id="ctaBench" style="margin-top:0">${t('benchDo')}</button></div>`;
+  }
 
   const totalStr = r.totalCandidates===null ? null : r.totalCandidates.toString();
   html += `<div class="card"><h3>${t('totalCandidates')} <span class="pill">${t('dimPill')}</span></h3>
@@ -828,7 +954,7 @@ function render(r, input){
   kv.push([t('kPathMult'), '×'+r.pathPlan.value+(r.pathPlan.collapsed?' ('+t('collapsed')+')':'')]);
   html += '<div class="kv">'+kv.map(([k,val])=>`<div class="k">${k}</div><div class="v">${val}</div>`).join('')+'</div></div>';
 
-  if(r.eta){
+  if(r.eta && BENCH){
     html += `<div class="card"><h3>${t('etaTitle')} <span class="pill">${r.eta.calibrated?t('etaCalibrated'):t('etaAssumed')}</span></h3>
       <div class="kv">
         <div class="k">${t('etaExhaust')}</div><div class="v">${localizeTime(r.eta.timeToExhaust)}</div>
@@ -845,8 +971,15 @@ function render(r, input){
   if(r.narrowingLevers.length)
     html+=`<div class="card"><h3>${t('levers')}</h3><ul class="levers">${r.narrowingLevers.map(l=>`<li>${esc(l)}</li>`).join('')}</ul></div>`;
 
-  html+=`<div class="card sample"><h3>${t('dryRun')} <span class="pill">${t('viaUnrank')}</span></h3>${sampleHTML(r)}</div>`;
+  html+=`<div class="card"><button class="ghost" id="showSample">🎲 ${t('showDryRun')}</button></div>`;
   $('#results').innerHTML=html;
+  const cb=$('#ctaBench'); if(cb) cb.onclick=openBenchModal;
+  const ss=$('#showSample'); if(ss) ss.onclick=openSampleModal;
+}
+function openSampleModal(){
+  if(!lastR) return;
+  $('#sampleBody').innerHTML = sampleHTML(lastR);
+  $('#sampleOverlay').classList.add('on');
 }
 
 function sampleHTML(r){
@@ -893,5 +1026,27 @@ function renderDictList(){
   }
 }
 </script>
+<!-- Benchmark modal -->
+<div class="overlay" id="benchOverlay">
+  <div class="modal">
+    <h3>⏱ <span data-i18n="benchTitle">Benchmark this browser</span> <button class="x" id="benchClose">✕</button></h3>
+    <div class="body">
+      <div class="note" data-i18n="benchIntro" style="margin-bottom:10px"></div>
+      <div id="benchSteps"></div>
+    </div>
+    <div class="foot">
+      <button class="ghost" id="benchCancel" data-i18n="close">Close</button>
+      <button class="act" id="benchRun" style="margin-top:0" data-i18n="benchRun">Run benchmark</button>
+    </div>
+  </div>
+</div>
+<!-- Dry-run sample modal -->
+<div class="overlay" id="sampleOverlay">
+  <div class="modal">
+    <h3>🎲 <span data-i18n="dryRun">Dry-run sample</span> <span class="pill" data-i18n="viaUnrank">via librxe unrank</span> <button class="x" id="sampleClose">✕</button></h3>
+    <div class="body sample" id="sampleBody"></div>
+    <div class="foot"><button class="ghost" id="sampleCloseB" data-i18n="close">Close</button></div>
+  </div>
+</div>
 </body>
 </html>

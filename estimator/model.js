@@ -44,6 +44,22 @@ const DEFAULT_RATES = {
 const GREEN_MAX_SEC = 24 * 3600;             // <= 1 day  -> green
 const YELLOW_MAX_SEC = 365 * 24 * 3600;      // <= 1 year -> yellow, else red
 
+// 9-tier feasibility scale on time-to-exhaust. Returns { key, color } where
+// color (green/yellow/red) still drives styling + which narrowing levers show.
+function verdictTier(sec) {
+  const H = 3600, D = 86400, Y = 365 * D;
+  if (!isFinite(sec))    return { key:'hopeless', color:'red' };
+  if (sec < 60)          return { key:'trivial',  color:'green' };
+  if (sec < H)           return { key:'veryEasy', color:'green' };
+  if (sec < D)           return { key:'easy',     color:'green' };
+  if (sec < 7 * D)       return { key:'days',     color:'yellow' };
+  if (sec < 30 * D)      return { key:'weeks',    color:'yellow' };
+  if (sec < Y)           return { key:'months',   color:'yellow' };
+  if (sec < 10 * Y)      return { key:'years',    color:'red' };
+  if (sec < 100 * Y)     return { key:'decades',  color:'red' };
+  return { key:'hopeless', color:'red' };
+}
+
 // EC mults per address derivation for an *address* target (PLAN §2.4:
 // change + index + address = 3 fixed-base mults; taproot's +1 is ignored here).
 const MULTS_PER_ADDRESS = 3;
@@ -341,12 +357,9 @@ function estimate(input, deps) {
     };
   }
 
-  // ---- verdict ----
-  let verdict;
-  if (unbounded) verdict = 'red';
-  else if (eta.exhaustSeconds <= GREEN_MAX_SEC) verdict = 'green';
-  else if (eta.exhaustSeconds <= YELLOW_MAX_SEC) verdict = 'yellow';
-  else verdict = 'red';
+  // ---- verdict: a 9-tier feasibility scale on time-to-exhaust ----
+  const tier = unbounded ? { key:'hopeless', color:'red' } : verdictTier(eta.exhaustSeconds);
+  const verdict = tier.color;   // green/yellow/red kept for styling + lever gating
 
   // ---- narrowing levers (PLAN §14) ----
   const levers = [];
@@ -381,7 +394,7 @@ function estimate(input, deps) {
     totalCandidates,
     totalCandidatesHuman: totalCandidates === null ? 'unbounded' : humanCount(totalCandidates),
     eta,
-    verdict,
+    verdict, tier,
     narrowingLevers: levers,
     notes,
     warnings,

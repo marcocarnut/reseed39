@@ -64,6 +64,20 @@ async function gpuSeeds(g, mid, mnemonic, passphrases){
   return out;
 }
 
+// A short identifier for the current WebGPU adapter (for the benchmark cache).
+async function getGpuInfo(){
+  if (!navigator.gpu) return null;
+  try {
+    const adapter = await navigator.gpu.requestAdapter();
+    if (!adapter) return null;
+    let info = adapter.info;
+    if (!info && adapter.requestAdapterInfo) info = await adapter.requestAdapterInfo();
+    if (!info) return 'WebGPU';
+    const parts = [info.vendor, info.architecture, info.device, info.description].filter(Boolean);
+    return parts.length ? parts.join(' ').trim().slice(0,80) : 'WebGPU';
+  } catch(e){ return 'WebGPU'; }
+}
+
 // Measure raw GPU seed throughput (seeds/s).
 async function benchmark(n){
   n = n||8192;
@@ -266,5 +280,5 @@ async function gateWords(mnemonics, passphrase){
 }
 
 window.GpuCrack = { initGpu, gpuSeeds, benchmark, crackXpub, crackAddress, MAXSALT,
-  initGpuWords, gpuSeedsWords, crackWordsGpu, gateWords };
+  initGpuWords, gpuSeedsWords, crackWordsGpu, gateWords, getGpuInfo };
 })();
