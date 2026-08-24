@@ -216,12 +216,12 @@
 <script src="../wasm/rxecore_api.js"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b3"></script>
-<script src="../estimator/model.js?v=b3"></script>
-<script src="../estimator/wordset.js?v=b3"></script>
-<script src="../estimator/bip39crypto.js?v=b3"></script>
-<script src="../estimator/gpucrack.js?v=b3"></script>
-<script src="../estimator/i18n.js?v=b3"></script>
+<script src="../estimator/bip39.js?v=b4"></script>
+<script src="../estimator/model.js?v=b4"></script>
+<script src="../estimator/wordset.js?v=b4"></script>
+<script src="../estimator/bip39crypto.js?v=b4"></script>
+<script src="../estimator/gpucrack.js?v=b4"></script>
+<script src="../estimator/i18n.js?v=b4"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -635,7 +635,7 @@ function recompute(){
            accounts:parseInt($('#accts').value,10)||1,
            change:parseInt($('#change').value,10)||1,
            gap:parseInt($('#gap').value,10)||1 },
-    exactThreshold:50000, sampleSize:5000,
+    exactThreshold:50000, sampleSize:5000, exactFallbackCap:1000000,
   };
   let r;
   try{ r = BIP39Estimator.estimate(input,{rxe:RXE,validator:VALIDATOR}); }

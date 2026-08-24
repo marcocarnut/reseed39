@@ -135,11 +135,30 @@ function checksumSurvival(set, validator, opts = {}) {
     const m = set.unrank(i);
     if (m !== null && validator.isValid(m)) survivors++;
   }
+  // Sampling can't resolve a rare survivor: e.g. [a-z]{4} for one missing word
+  // is 456,976 candidates but only ~1 is a valid mnemonic (most [a-z]{4} aren't
+  // even wordlist words), so a 5k sample sees 0 and reports "0 candidates" -- yet
+  // the cracker enumerates all and finds it. When the sample finds <=2 survivors
+  // and the raw set is small enough to walk, recount EXACTLY so the estimate
+  // agrees with the cracker instead of misleading with a hard zero.
+  const exactFallbackCap = BigInt(opts.exactFallbackCap != null ? opts.exactFallbackCap : 1000000);
+  if (survivors <= 2 && raw <= exactFallbackCap) {
+    let valid = 0n;
+    for (let i = 0n; i < raw; i++) {
+      const m = set.unrank(i);
+      if (m !== null && validator.isValid(m)) valid++;
+    }
+    const fr = raw === 0n ? 0 : Number(valid) / Number(raw);
+    return { infinite: false, method: 'exact', raw, validCount: valid, fraction: fr,
+             wordCount, theoreticalFraction, exactFallback: true };
+  }
   const fraction = draws === 0 ? 0 : survivors / draws;
   // extrapolated valid count, kept exact-ratio in BigInt for magnitude
   const validCount = draws === 0 ? 0n : (raw * BigInt(survivors)) / BigInt(draws);
   return { infinite: false, method: 'sampled', raw, validCount, fraction,
-           sampleSize: draws, survivors, wordCount, theoreticalFraction };
+           sampleSize: draws, survivors, wordCount, theoreticalFraction,
+           // sample saw nothing but the set is too big to walk -> not a true zero
+           belowSampleResolution: survivors === 0 };
 }
 
 /* --------------------------- path multiplier ---------------------------- */
@@ -212,6 +231,7 @@ function estimate(input, deps) {
     wordsSet = rxe.parse(String(input.mnemonicPattern));
     survival = checksumSurvival(wordsSet, validator, {
       exactThreshold: input.exactThreshold, sampleSize: input.sampleSize,
+      exactFallbackCap: input.exactFallbackCap,
     });
     if (survival.infinite) {
       warnings.push('mnemonic pattern is unbounded/infinite -- bound it (no * or {n,} tails).');
@@ -221,9 +241,13 @@ function estimate(input, deps) {
       notes.push(
         `checksum-survival: ${survival.method}, ${(survival.fraction * 100).toPrecision(3)}%` +
         (survival.method === 'sampled' ? ` (sampled ${survival.sampleSize} of ${humanCount(survival.raw)})`
-                                       : ` (exact over ${humanCount(survival.raw)})`) +
+                                       : ` (exact over ${humanCount(survival.raw)}${survival.exactFallback ? ', fallback' : ''})`) +
         (survival.theoreticalFraction != null
           ? `; full-entropy theory = ${(survival.theoreticalFraction * 100).toPrecision(3)}%` : ''));
+      if (survival.exactFallback)
+        notes.push('note: sampling found no valid mnemonic (they are rare here -- most [a-z]{n} tokens are not wordlist words), so it was recounted exactly. This count matches what the cracker will actually test.');
+      if (survival.belowSampleResolution)
+        warnings.push('the sample found no checksum-valid mnemonic and the set is too big to count exactly -- the true count is small but non-zero (the cracker still tests all candidates). Prefer [:bip39en:] for the unknown word(s) over [a-z]{n} so candidates stay real words.');
     }
   } else if (mode === 'passphrase') {
     notes.push('passphrase mode: mnemonic is fixed & already checksum-valid -- checksum filter is a no-op here (PLAN §7).');
