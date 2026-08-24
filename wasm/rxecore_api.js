@@ -130,4 +130,4 @@ class RxeSet {
 
 const _rxeApiExports = { loadRxeCore, FLAGS };
 if (typeof module !== 'undefined' && module.exports) module.exports = _rxeApiExports;
-if (typeof window !== 'undefined') window.RxeCoreAPI = _rxeApiExports;
+if (typeof globalThis !== 'undefined') globalThis.RxeCoreAPI = _rxeApiExports; // window OR worker(self)

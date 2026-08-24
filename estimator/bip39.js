@@ -111,4 +111,4 @@ function makeValidator(words) {
 
 const _bip39Exports = { sha256, makeValidator, VALID_WORD_COUNTS };
 if (typeof module !== 'undefined' && module.exports) module.exports = _bip39Exports;
-if (typeof window !== 'undefined') window.BIP39 = _bip39Exports;
+if (typeof globalThis !== 'undefined') globalThis.BIP39 = _bip39Exports; // window OR worker(self)

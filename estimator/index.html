@@ -221,17 +221,17 @@
 <script src="../wasm/rxecore_api.js"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b5"></script>
-<script src="../estimator/model.js?v=b5"></script>
-<script src="../estimator/wordset.js?v=b5"></script>
-<script src="../estimator/bip39crypto.js?v=b5"></script>
-<script src="../estimator/gpucrack.js?v=b5"></script>
-<script src="../estimator/i18n.js?v=b5"></script>
+<script src="../estimator/bip39.js?v=b7"></script>
+<script src="../estimator/model.js?v=b7"></script>
+<script src="../estimator/wordset.js?v=b7"></script>
+<script src="../estimator/bip39crypto.js?v=b7"></script>
+<script src="../estimator/gpucrack.js?v=b7"></script>
+<script src="../estimator/i18n.js?v=b7"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
-let RXE, VALIDATOR;
+let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
 let debounce;
@@ -311,6 +311,7 @@ function setLang(l){
   try{
     const txt = await (await fetch('../data/english.txt')).text();
     const englishWords = txt.trim().split(/\r?\n/);
+    ENGLISH = englishWords;                       // shared with crack workers
     RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
@@ -496,15 +497,16 @@ async function onCrack(){
   // The candidate set + what stays fixed differ by mode:
   //  passphrase -> fixed mnemonic (#crackMn) x candidate passphrases (#passPat)   [GPU-able]
   //  words      -> candidate mnemonics (#wordsPat, checksum-filtered) x fixed passphrase (#crackPass)  [CPU]
-  let set, mnFixed=null, passFixed='';
+  let set, mnFixed=null, passFixed='', patStr='';
   if(mode==='words'){
-    let pat; try{ pat=currentMnemonicPattern('words'); }catch(e){ msg.textContent='pattern: '+e.message; return; }
+    try{ patStr=currentMnemonicPattern('words'); }catch(e){ msg.textContent='pattern: '+e.message; return; }
     passFixed = $('#crackPass').value;
-    try{ set=RXE.parse(pat); }catch(e){ msg.textContent='pattern: '+e.message; return; }
+    try{ set=RXE.parse(patStr); }catch(e){ msg.textContent='pattern: '+e.message; return; }
   } else {
     mnFixed=$('#crackMn').value.trim().replace(/\s+/g,' ');
     if(!mnFixed){ msg.textContent=t('crackNeedMn'); return; }
-    try{ set=RXE.parse($('#passPat').value.trim()); }catch(e){ msg.textContent='pattern: '+e.message; return; }
+    patStr=$('#passPat').value.trim();
+    try{ set=RXE.parse(patStr); }catch(e){ msg.textContent='pattern: '+e.message; return; }
   }
   if(set.isInfinite()){ set.free(); res.innerHTML='<span class="warnmsg">'+esc(t('crackRedNote'))+'</span>'; return; }
   const card=set.cardinality(), CAP=200000000n;
@@ -524,26 +526,39 @@ async function onCrack(){
   const nchange=Math.max(1,parseInt($('#change').value,10)||1);
   const changes=nchange>=2?[0,1]:[0];
   const gapN=Math.max(1,parseInt($('#gap').value,10)||1);
+  const reqCsum=$('#reqChecksum').checked;
+  // CPU multicore: honor the "cores" box, capped by the hardware.
+  const nWorkers=Math.max(1, Math.min(parseInt($('#cores').value,10)||1, navigator.hardwareConcurrency||8, 32));
+  // Target for workers, as hex (no typed arrays over postMessage).
+  const wTarget = (target==='xpub')
+    ? { kind:'xpub', chainCodeHex:C.toHex(tcc) }
+    : { kind:'address', addrType:taddr.type, programHex:C.toHex(taddr.program) };
   const common={ plan, total, unrank:i=>set.unrank(BigInt(i)),
     onProgress:(done,tot,rate,extra)=>{
       let s=`${fmtBig(done)} / ${fmtBig(tot)} · ${fmtBig(Math.round(rate))} ${t('crackTried')}/s`;
-      // words mode: the "tried" sweep is cheap; the real cost is the checksum-valid
-      // ones that get hashed -- show those so the timing makes sense.
+      // the "tried" sweep is cheap; the real cost is the ones actually HASHED --
+      // show those (and the worker count) so the timing makes sense.
       if(extra) s+=` · ${fmtBig(extra.seeded)} ${t('crackSeeded')} (${fmtBig(Math.round(extra.seedRate))}/s)`;
       prog.textContent=s;
     },
     isCancelled:()=>!cracking };
+  // A CPU path runs multicore via Web Workers, falling back to the single-thread
+  // function when workers are unavailable / the set is tiny.
+  const mt=(single)=>cpuCrackMT({ mode, pattern:patStr, mnemonic:mnFixed, passphrase:passFixed,
+    requireChecksum:reqCsum, plan, target:wTarget, changes, gap:gapN, total, nWorkers,
+    onProgress:common.onProgress, isCancelled:common.isCancelled, single });
   try{
     let r;
     if(mode==='words'){
-      r = await cpuCrackWords({...common, passphrase:passFixed, tcc, taddr, changes, gap:gapN, requireChecksum:$('#reqChecksum').checked});
+      r = await mt(()=>cpuCrackWords({...common, passphrase:passFixed, tcc, taddr, changes, gap:gapN, requireChecksum:reqCsum}));
     } else if(target==='xpub'){
       const args={...common, mnemonic:mnFixed, targetChainCode:tcc, batchSize:4096};
-      r = gpu ? await window.GpuCrack.crackXpub(args) : await cpuCrack(args);
+      r = gpu ? await window.GpuCrack.crackXpub(args) : await mt(()=>cpuCrack(args));
     } else {
       const args={...common, mnemonic:mnFixed, target:taddr, changes, gap:gapN, batchSize:2048};
-      r = gpu ? await window.GpuCrack.crackAddress(args) : await cpuCrackAddress(args);
+      r = gpu ? await window.GpuCrack.crackAddress(args) : await mt(()=>cpuCrackAddress(args));
     }
+    if(r && r.error) throw new Error(r.error);
     if(r.stopped) res.innerHTML='<span class="note">'+t('crackStopped')+'</span>';
     else if(r.found!=null){
       const pth = (target==='xpub')
@@ -593,6 +608,46 @@ async function cpuCrackWords(a){
     a.onProgress(start+n,a.total,(start+n)/el,{seeded,seedRate:seeded/el}); await new Promise(r=>setTimeout(r,0));
   }
   return {found:null};
+}
+
+// Multicore CPU crack: shard [0,total) across N Web Workers, each running its
+// own rxe core + the shared crypto (see crackworker.js). First hit wins (there
+// is normally exactly one matching candidate); Stop or a hit terminate()s the
+// pool. Falls back to the single-thread `o.single()` when workers are
+// unavailable or the set is too small to be worth the ~per-worker startup.
+// o: { mode, pattern, mnemonic?, passphrase?, requireChecksum, plan, target,
+//      changes, gap, total, nWorkers, onProgress, isCancelled, single }
+function cpuCrackMT(o){
+  const nW = Math.max(1, Math.min(o.nWorkers||1, 32));
+  if (nW<=1 || typeof Worker==='undefined' || o.total < 2048) return o.single();
+  return new Promise((resolve)=>{
+    const workers=[]; const swept=new Array(nW).fill(0), seeded=new Array(nW).fill(0);
+    const t0=performance.now(); let finished=false, done=0, spawned=0;
+    const cleanup=()=>{ workers.forEach(w=>{try{w.terminate()}catch(e){}}); clearInterval(poll); };
+    const report=()=>{ const S=swept.reduce((a,b)=>a+b,0), G=seeded.reduce((a,b)=>a+b,0), el=(performance.now()-t0)/1000||1e-6;
+      o.onProgress(S,o.total,S/el,{seeded:G,seedRate:G/el}); };
+    const finish=(r)=>{ if(finished) return; finished=true; cleanup(); resolve(r); };
+    const poll=setInterval(()=>{ if(o.isCancelled && o.isCancelled()) finish({stopped:true}); }, 200);
+    const per=Math.ceil(o.total/nW);
+    for (let k=0;k<nW;k++){
+      const start=k*per, end=Math.min(o.total,(k+1)*per);
+      if (start>=end) continue;
+      spawned++;
+      let w; try{ w=new Worker('crackworker.js?v=b7'); }catch(e){ cleanup(); return resolve(o.single()); }
+      workers.push(w);
+      w.onmessage=(e)=>{ const m=e.data; if(finished) return;
+        if (m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
+        else if (m.type==='hit'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); finish({found:m.candidate, path:m.path, index:m.index}); }
+        else if (m.type==='done'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); if(++done>=spawned) finish({found:null}); }
+        else if (m.type==='error'){ finish({error:m.message}); }
+      };
+      w.onerror=(ev)=>{ finish({error:(ev && ev.message)||'worker error'}); };
+      w.postMessage({ type:'run', id:k, wordlist:ENGLISH, pattern:o.pattern, mode:o.mode,
+        mnemonic:o.mnemonic||null, passphrase:o.passphrase||'', requireChecksum:o.requireChecksum,
+        plan:o.plan, target:o.target, changes:o.changes, gap:o.gap, start, end, progressEvery:2000 });
+    }
+    if (spawned===0) finish({found:null});
+  });
 }
 // single-thread JS-CPU fallback (small sets / no WebGPU) -- xpub target, EC-free.
 async function cpuCrack(a){

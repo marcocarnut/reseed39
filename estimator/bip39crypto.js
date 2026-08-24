@@ -571,4 +571,4 @@ const _exports = {
   decodeAddress, purposeType, pubToTarget, addressTarget,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = _exports;
-if (typeof window !== 'undefined') window.BIP39Crypto = _exports;
+if (typeof globalThis !== 'undefined') globalThis.BIP39Crypto = _exports; // window OR worker(self)

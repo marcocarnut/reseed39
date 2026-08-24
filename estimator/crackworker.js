@@ -1,0 +1,90 @@
+// crackworker.js -- one shard of a CPU crack, off the main thread.
+// Each worker loads its OWN rxe wasm core (so it can unrank its slice of the
+// keyspace) plus the shared BIP39 crypto, then sweeps [start,end): for words
+// mode it enumerates candidate MNEMONICS x a fixed passphrase (optionally
+// checksum-filtered); for passphrase mode a fixed mnemonic x candidate
+// PASSPHRASES. On a hit it posts it and stops; the main thread terminate()s the
+// pool. This is what makes words-mode multicore (the unrank sweep AND the
+// PBKDF2 both parallelize) -- the GPU can't help there (varying HMAC key).
+//
+// Correctness note: the seed/derive/compare here is the SAME bip39crypto used
+// (and gated 25/25) on the main thread -- workers are a scheduling change only.
+'use strict';
+// Propagate the ?v= cache-bust from the Worker URL to our importScripts, so a
+// plain reload picks up edited modules here too (http.server sends no cache
+// headers). The main thread spawns us as new Worker('crackworker.js?v=bN').
+const _v = self.location.search || '';
+importScripts('../wasm/rxecore.js'+_v, '../wasm/rxecore_api.js'+_v, 'bip39.js'+_v, 'bip39crypto.js'+_v);
+
+let core = null, C = null, V = null;
+async function ensureCore(wordlist){
+  if (core) return;
+  C = globalThis.BIP39Crypto;
+  core = await globalThis.RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile: p => '../wasm/'+p } });
+  core.registerDict('bip39-en', wordlist);
+  ['bip39en','bip39','en','english'].forEach(a=>{ try{ core.registerDict(a, wordlist); }catch(e){} });
+  V = globalThis.BIP39.makeValidator(wordlist);
+}
+function hexToBytes(h){ const o=new Uint8Array(h.length/2); for(let i=0;i<o.length;i++) o[i]=parseInt(h.substr(i*2,2),16); return o; }
+
+onmessage = async (e) => {
+  const d = e.data;
+  if (!d || d.type !== 'run') return;
+  try {
+    await ensureCore(d.wordlist);
+    const set = core.parse(d.pattern);
+    const isWords = d.mode === 'words';
+    const isAddr  = d.target.kind === 'address';
+    const tcc   = isAddr ? null : hexToBytes(d.target.chainCodeHex);
+    const taddr = isAddr ? { type:d.target.addrType, program:hexToBytes(d.target.programHex) } : null;
+    const plan  = isAddr ? d.plan.filter(pp => C.purposeType(pp.purpose) === taddr.type) : d.plan;
+    const changes = (d.changes && d.changes.length) ? d.changes : [0];
+    const gap = Math.max(1, d.gap || 1);
+    const reqCsum = d.requireChecksum !== false;
+    const pass = d.passphrase || '';
+    let swept = 0, seeded = 0, lastPost = performance.now();
+    // Report on a wall-clock cadence, not every N candidates -- in passphrase
+    // mode (or checksum-off) a small shard may never reach a swept-count
+    // threshold, so the UI would sit blank until 'done'.
+    const maybePost = () => { const now = performance.now(); if (now - lastPost >= 250) { lastPost = now; postMessage({ type:'progress', id:d.id, swept, seeded }); } };
+
+    for (let i = d.start; i < d.end; i++) {
+      let mn, pw;
+      if (isWords) {
+        mn = set.unrank(BigInt(i)); pw = pass;
+        if (reqCsum && !(mn !== null && V.isValid(mn))) { swept++; maybePost(); continue; }
+      } else {
+        pw = set.unrank(BigInt(i)); mn = d.mnemonic;
+      }
+      seeded++;
+      const seed = C.mnemonicToSeed(mn, pw);
+      let hit = null;
+      if (isAddr) {
+        for (const pp of plan) {
+          const acct = C.deriveHardenedPath(seed, [pp.purpose, pp.coin||0, pp.account||0]);
+          for (const ch of changes) {
+            const chNode = C.ckdNormal(acct, ch);
+            for (let idx = 0; idx < gap; idx++) {
+              const node = C.ckdNormal(chNode, idx);
+              const tg = C.pubToTarget(C.privToPub(node.k), pp.purpose);
+              if (tg.type === taddr.type && C.eq(tg.program, taddr.program)) { hit = { ...pp, change:ch, index:idx }; break; }
+            }
+            if (hit) break;
+          }
+          if (hit) break;
+        }
+      } else {
+        for (const pp of d.plan) {
+          if (C.eq(C.accountNode(seed, pp.purpose, pp.account, pp.coin).c, tcc)) { hit = pp; break; }
+        }
+      }
+      swept++;
+      if (hit) { postMessage({ type:'hit', id:d.id, index:i, candidate:(isWords?mn:pw), path:hit, swept, seeded }); set.free(); return; }
+      maybePost();
+    }
+    set.free();
+    postMessage({ type:'done', id:d.id, swept, seeded });
+  } catch (err) {
+    postMessage({ type:'error', id:d.id, message: String(err && err.message || err) });
+  }
+};
