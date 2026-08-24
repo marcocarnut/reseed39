@@ -315,7 +315,9 @@ function estimate(input, deps) {
     let sweepSec = 0, rawSweep = 0;
     if ((mode === 'words' || mode === 'joint') && survival && !survival.infinite) {
       rawSweep = Number(survival.raw);
-      const sweepRate = rates.cpu.sweepPerCore * (backend === 'cpu' ? cores : 1);
+      // Both paths now shard the sweep across cores: CPU = multicore workers,
+      // GPU = the hybrid (workers sweep + checksum-filter, GPU seeds survivors).
+      const sweepRate = rates.cpu.sweepPerCore * cores;
       sweepSec = rawSweep / sweepRate;
     }
     const exhaustSec = sweepSec + seedSec + ecSec;

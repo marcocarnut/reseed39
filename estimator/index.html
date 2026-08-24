@@ -221,12 +221,12 @@
 <script src="../wasm/rxecore_api.js"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b11"></script>
-<script src="../estimator/model.js?v=b11"></script>
-<script src="../estimator/wordset.js?v=b11"></script>
-<script src="../estimator/bip39crypto.js?v=b11"></script>
-<script src="../estimator/gpucrack.js?v=b11"></script>
-<script src="../estimator/i18n.js?v=b11"></script>
+<script src="../estimator/bip39.js?v=b12"></script>
+<script src="../estimator/model.js?v=b12"></script>
+<script src="../estimator/wordset.js?v=b12"></script>
+<script src="../estimator/bip39crypto.js?v=b12"></script>
+<script src="../estimator/gpucrack.js?v=b12"></script>
+<script src="../estimator/i18n.js?v=b12"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -550,9 +550,12 @@ async function onCrack(){
   try{
     let r;
     if(mode==='words'){
-      r = gpu
-        ? await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384})
-        : await mt(()=>cpuCrackWords({...common, passphrase:passFixed, tcc, taddr, changes, gap:gapN, requireChecksum:reqCsum}));
+      if(gpu && reqCsum && typeof Worker!=='undefined')      // parallel sweep (workers) + GPU seed
+        r = await crackWordsHybrid({ pattern:patStr, passphrase:passFixed, requireChecksum:reqCsum, plan, tcc, taddr, changes, gap:gapN, total, nWorkers, onProgress:common.onProgress, isCancelled:common.isCancelled });
+      else if(gpu)                                            // checksum-off or no workers: main-thread sweep + GPU seed
+        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384});
+      else                                                    // CPU multicore
+        r = await mt(()=>cpuCrackWords({...common, passphrase:passFixed, tcc, taddr, changes, gap:gapN, requireChecksum:reqCsum}));
     } else if(target==='xpub'){
       const args={...common, mnemonic:mnFixed, targetChainCode:tcc, batchSize:4096};
       r = gpu ? await window.GpuCrack.crackXpub(args) : await mt(()=>cpuCrack(args));
@@ -635,7 +638,7 @@ function cpuCrackMT(o){
       const start=k*per, end=Math.min(o.total,(k+1)*per);
       if (start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b11'); }catch(e){ cleanup(); return resolve(o.single()); }
+      let w; try{ w=new Worker('crackworker.js?v=b12'); }catch(e){ cleanup(); return resolve(o.single()); }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if (m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
@@ -649,6 +652,75 @@ function cpuCrackMT(o){
         plan:o.plan, target:o.target, changes:o.changes, gap:o.gap, start, end, progressEvery:2000 });
     }
     if (spawned===0) finish({found:null});
+  });
+}
+
+// HYBRID words crack: workers do the SWEEP (unrank + checksum filter) in
+// parallel and stream the surviving mnemonics; the main thread GPU-seeds them
+// and derives/compares. This attacks the actual bottleneck for a multi-unknown-
+// word checksum-on crack -- the sweep -- which neither pure-GPU (single-thread
+// sweep) nor pure-CPU (slow KDF) handled well. Used only with the checksum on
+// (off-dictionary would stream the whole raw set); GPU backend, words mode.
+function crackWordsHybrid(o){
+  const C=window.BIP39Crypto;
+  const nW=Math.max(1, Math.min(o.nWorkers||1, 32));
+  return new Promise(async (resolve)=>{
+    try{ await window.GpuCrack.initGpuWords(); }catch(e){ return resolve({error:e.message}); }
+    const isAddr=!!o.taddr;
+    const plan=isAddr ? o.plan.filter(pp=>C.purposeType(pp.purpose)===o.taddr.type) : o.plan;
+    const changes=(o.changes&&o.changes.length)?o.changes:[0]; const gap=Math.max(1,o.gap||1);
+    const workers=[]; const sweptA=new Array(nW).fill(0);
+    let finished=false, doneCount=0, spawned=0, seededTotal=0, seeding=false, allSwept=false;
+    const queue=[]; const t0=performance.now();
+    const cleanup=()=>{ workers.forEach(w=>{try{w.terminate()}catch(e){}}); clearInterval(poll); };
+    const finish=(r)=>{ if(finished) return; finished=true; cleanup(); resolve(r); };
+    const report=()=>{ const swept=sweptA.reduce((a,b)=>a+b,0), el=(performance.now()-t0)/1000||1e-6;
+      o.onProgress(swept,o.total,swept/el,{seeded:seededTotal,seedRate:seededTotal/el}); };
+    const poll=setInterval(()=>{ if(o.isCancelled&&o.isCancelled()) finish({stopped:true}); },200);
+    async function pump(){
+      if(seeding||finished) return; seeding=true;
+      while(queue.length && !finished){
+        const batch=queue.splice(0,8192); const mns=batch.map(x=>x.mn);
+        let seeds; try{ seeds=await window.GpuCrack.gpuSeedsWords(mns,o.passphrase); }catch(e){ finish({error:e.message}); return; }
+        if(finished) return;
+        for(let k=0;k<mns.length;k++){
+          const seed=seeds.subarray(k*64,k*64+64);
+          if(isAddr){
+            let hit=null;
+            for(const pp of plan){ const acct=C.deriveHardenedPath(seed,[pp.purpose,pp.coin||0,pp.account||0]);
+              for(const ch of changes){ const chNode=C.ckdNormal(acct,ch);
+                for(let idx=0;idx<gap;idx++){ const node=C.ckdNormal(chNode,idx);
+                  const tg=C.pubToTarget(C.privToPub(node.k),pp.purpose);
+                  if(tg.type===o.taddr.type&&C.eq(tg.program,o.taddr.program)){ hit={...pp,change:ch,index:idx}; break;} } if(hit)break; } if(hit)break; }
+            if(hit){ finish({found:mns[k],path:hit,index:batch[k].index}); return; }
+          } else {
+            for(const pp of o.plan){ if(C.eq(C.accountNode(seed,pp.purpose,pp.account,pp.coin).c,o.tcc)){ finish({found:mns[k],path:pp,index:batch[k].index}); return; } }
+          }
+        }
+        seededTotal+=mns.length; report();
+      }
+      seeding=false;
+      if(allSwept && !queue.length && !finished) finish({found:null});
+    }
+    const per=Math.ceil(o.total/nW);
+    for(let k=0;k<nW;k++){
+      const start=k*per, end=Math.min(o.total,(k+1)*per); if(start>=end) continue;
+      spawned++;
+      let w; try{ w=new Worker('crackworker.js?v=b12'); }catch(e){ finish({error:'worker spawn failed'}); return; }
+      workers.push(w);
+      w.onmessage=(e)=>{ const m=e.data; if(finished) return;
+        if(m.type==='cand'){ sweptA[m.id]=m.swept; for(const it of m.items) queue.push(it); report(); pump(); }
+        else if(m.type==='progress'){ sweptA[m.id]=m.swept; report(); }
+        else if(m.type==='done'){ sweptA[m.id]=m.swept; if(++doneCount>=spawned){ allSwept=true; pump(); if(!seeding&&!queue.length) finish({found:null}); } }
+        else if(m.type==='error'){ finish({error:m.message}); }
+      };
+      w.onerror=(ev)=>finish({error:(ev&&ev.message)||'worker error'});
+      w.postMessage({ type:'run', id:k, sweepOnly:true, wordlist:ENGLISH, pattern:o.pattern, mode:'words',
+        passphrase:o.passphrase||'', requireChecksum:o.requireChecksum, plan:o.plan,
+        target: o.taddr ? {kind:'address',addrType:o.taddr.type,programHex:C.toHex(o.taddr.program)} : {kind:'xpub',chainCodeHex:C.toHex(o.tcc)},
+        changes:o.changes, gap:o.gap, start, end });
+    }
+    if(spawned===0) finish({found:null});
   });
 }
 // single-thread JS-CPU fallback (small sets / no WebGPU) -- xpub target, EC-free.

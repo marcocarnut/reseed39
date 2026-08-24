@@ -42,11 +42,18 @@ onmessage = async (e) => {
     const gap = Math.max(1, d.gap || 1);
     const reqCsum = d.requireChecksum !== false;
     const pass = d.passphrase || '';
+    // sweepOnly: this worker only unranks + checksum-filters and streams the
+    // surviving mnemonics back; the MAIN thread GPU-seeds them. That parallelizes
+    // the sweep (the real bottleneck for a multi-unknown-word checksum-on crack)
+    // while the GPU does the KDF -- neither alone was enough.
+    const sweepOnly = !!d.sweepOnly;
     let swept = 0, seeded = 0, lastPost = performance.now();
+    let candBuf = [];
+    const flushCand = (force) => { if (candBuf.length && (force || candBuf.length>=512)) { postMessage({ type:'cand', id:d.id, items:candBuf, swept }); candBuf=[]; } };
     // Report on a wall-clock cadence, not every N candidates -- in passphrase
     // mode (or checksum-off) a small shard may never reach a swept-count
     // threshold, so the UI would sit blank until 'done'.
-    const maybePost = () => { const now = performance.now(); if (now - lastPost >= 250) { lastPost = now; postMessage({ type:'progress', id:d.id, swept, seeded }); } };
+    const maybePost = () => { const now = performance.now(); if (now - lastPost >= 250) { lastPost = now; if(sweepOnly) flushCand(true); postMessage({ type:'progress', id:d.id, swept, seeded }); } };
 
     for (let i = d.start; i < d.end; i++) {
       let mn, pw;
@@ -56,6 +63,7 @@ onmessage = async (e) => {
       } else {
         pw = set.unrank(BigInt(i)); mn = d.mnemonic;
       }
+      if (sweepOnly) { swept++; seeded++; candBuf.push({ mn, index:i }); flushCand(false); maybePost(); continue; }
       seeded++;
       const seed = C.mnemonicToSeed(mn, pw);
       let hit = null;
@@ -82,6 +90,7 @@ onmessage = async (e) => {
       if (hit) { postMessage({ type:'hit', id:d.id, index:i, candidate:(isWords?mn:pw), path:hit, swept, seeded }); set.free(); return; }
       maybePost();
     }
+    if (sweepOnly) flushCand(true);
     set.free();
     postMessage({ type:'done', id:d.id, swept, seeded });
   } catch (err) {
