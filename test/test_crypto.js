@@ -118,5 +118,13 @@ for (const [purpose,addr] of [[84,'bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu'],
   ok(found===realPass, `e2e address crack: recovered "${realPass}" via P2WPKH program compare — got ${found}`);
 })();
 
+// 12) privToPubBatch (Montgomery batch inversion) == privToPub elementwise.
+(function(){
+  const ks=[]; for(let i=1;i<=500;i++) ks.push((C.SECP_N - BigInt(i)*104729n) % C.SECP_N);
+  const b=C.privToPubBatch(ks); let good=true;
+  for(let i=0;i<ks.length;i++) if(C.toHex(b[i])!==C.toHex(C.privToPub(ks[i]))) good=false;
+  ok(good, `privToPubBatch == privToPub over ${ks.length} keys (batch inversion)`);
+})();
+
 console.log(`\n==== FINAL: ${pass} passed, ${fail} failed ====`);
 process.exit(fail?1:0);

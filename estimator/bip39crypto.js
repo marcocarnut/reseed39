@@ -406,15 +406,44 @@ function _buildCombG(){
   }
   return tbl;
 }
-function pointFromPriv(k){                     // k*G via the comb table -> affine {x,y} or null
-  k=_mod(k,SECP_N); if (k===0n) return null;
+function _combMulJ(k){                          // k*G via the comb -> Jacobian point (no inverse)
+  k=_mod(k,SECP_N); if (k===0n) return _INF;
   if (!_combG) _combG=_buildCombG();
   let R=_INF;
   for (let i=0;i<64;i++){
     const nib=Number((k>>BigInt(i*4))&15n);
     if (nib){ const a=_combG[i][nib]; R=_jAdd(R,{X:a.x,Y:a.y,Z:1n}); }
   }
-  return _jToAffine(R);
+  return R;
+}
+function pointFromPriv(k){                     // k*G -> affine {x,y} or null (one inverse)
+  const R=_combMulJ(k); return (R.Z===0n)?null:_jToAffine(R);
+}
+// Montgomery batch inversion: N inverses in ONE modinv + ~3N muls.
+function _batchInv(zs){
+  const n=zs.length; if (!n) return [];
+  const pref=new Array(n); pref[0]=_mod(zs[0],_P);
+  for (let i=1;i<n;i++) pref[i]=_mod(pref[i-1]*zs[i],_P);
+  let inv=_modinv(pref[n-1],_P);
+  const out=new Array(n);
+  for (let i=n-1;i>0;i--){ out[i]=_mod(inv*pref[i-1],_P); inv=_mod(inv*_mod(zs[i],_P),_P); }
+  out[0]=inv; return out;
+}
+// Compressed pubkeys for a batch of privkeys with ONE modular inversion for the
+// whole batch (the inverse is ~1/3 of a single privToPub, so this is the address
+// crack's EC lever). Returns Uint8Array(33)[] (null entries for k==0).
+function privToPubBatch(ks){
+  const n=ks.length, pts=new Array(n);
+  for (let i=0;i<n;i++){ const k=_mod(ks[i],SECP_N); pts[i]=(k===0n)?null:_combMulJ(k); }
+  const idx=[], zs=[];
+  for (let i=0;i<n;i++){ if (pts[i] && pts[i].Z!==0n){ idx.push(i); zs.push(pts[i].Z); } }
+  const zinv=_batchInv(zs);
+  const out=new Array(n).fill(null);
+  for (let j=0;j<idx.length;j++){ const i=idx[j], p=pts[i], zi=zinv[j];
+    const zi2=_mod(zi*zi,_P), zi3=_mod(zi2*zi,_P);
+    out[i]=serPoint({ x:_mod(p.X*zi2,_P), y:_mod(p.Y*zi3,_P) });
+  }
+  return out;
 }
 function serPoint(pt){                       // affine -> 33-byte compressed
   const o=new Uint8Array(33); o[0]=(pt.y&1n)===0n?0x02:0x03;
@@ -592,7 +621,7 @@ const _exports = {
   // GPU HMAC midstate decomposition (host precompute + node gate).
   hmacMidstates, sha512FromState1blk, hmacViaMid, pbkdf2ViaMid,
   // secp256k1 + address-target crack (the EC path).
-  SECP_P, pointFromPriv, privToPub, serPoint, liftX,
+  SECP_P, pointFromPriv, privToPub, privToPubBatch, serPoint, liftX,
   ckdNormal, addressNode,
   ripemd160, hash160,
   bech32Encode, bech32Decode, segwitEncode,
