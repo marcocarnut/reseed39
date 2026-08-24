@@ -212,16 +212,16 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b19"></script>
-<script src="../wasm/rxecore_api.js?v=b19"></script>
+<script src="../wasm/rxecore.js?v=b20"></script>
+<script src="../wasm/rxecore_api.js?v=b20"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b19"></script>
-<script src="../estimator/model.js?v=b19"></script>
-<script src="../estimator/wordset.js?v=b19"></script>
-<script src="../estimator/bip39crypto.js?v=b19"></script>
-<script src="../estimator/gpucrack.js?v=b19"></script>
-<script src="../estimator/i18n.js?v=b19"></script>
+<script src="../estimator/bip39.js?v=b20"></script>
+<script src="../estimator/model.js?v=b20"></script>
+<script src="../estimator/wordset.js?v=b20"></script>
+<script src="../estimator/bip39crypto.js?v=b20"></script>
+<script src="../estimator/gpucrack.js?v=b20"></script>
+<script src="../estimator/i18n.js?v=b20"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -270,10 +270,11 @@ function saveBench(){ try{ localStorage.setItem(BENCH_KEY, JSON.stringify(BENCH)
 // Feed the measured rates into the model's calibration slots (best-of for the estimate).
 function applyBench(){
   if(!BENCH){ calCpu=null; calGpu=null; return; }
-  calCpu = { source:(LANG==='pt'?'medido neste navegador':'measured on this browser'),
-             cpu:{ kdfPerCore:BENCH.cpuKdf, sweepPerCore:BENCH.cpuSweep } };
+  const cpu={ kdfPerCore:BENCH.cpuKdf, sweepPerCore:BENCH.cpuSweep };
+  if(BENCH.ecMult) cpu.ecMultPerCore=BENCH.ecMult;   // measured host privToPub/s (older cache may lack it)
+  calCpu = { source:(LANG==='pt'?'medido neste navegador':'measured on this browser'), cpu:{...cpu} };
   calGpu = BENCH.gpuKdf ? { source:(LANG==='pt'?'medido (WebGPU)':'measured (WebGPU)'),
-             cpu:{ kdfPerCore:BENCH.cpuKdf, sweepPerCore:BENCH.cpuSweep }, gpu:{ kdf:BENCH.gpuKdf } } : null;
+             cpu:{...cpu}, gpu:{ kdf:BENCH.gpuKdf } } : null;
 }
 
 // ---- derivation catalogue (language-neutral) ----
@@ -347,7 +348,7 @@ function setLang(l){
     const txt = await (await fetch('../data/english.txt')).text();
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b19' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b20' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -510,7 +511,7 @@ function schedule(){ clearTimeout(debounce); debounce=setTimeout(recompute,300);
 function benchStepRow(id,label){ return `<div class="benchstep"><span>${label}</span><span class="st" id="bs-${id}">—</span></div>`; }
 function openBenchModal(){
   const steps=$('#benchSteps');
-  steps.innerHTML = benchStepRow('cpuk',t('benchCpuKdf'))+benchStepRow('cpus',t('benchCpuSweep'))+(HAS_GPU?benchStepRow('gpuk',t('benchGpuKdf')):'');
+  steps.innerHTML = benchStepRow('cpuk',t('benchCpuKdf'))+benchStepRow('cpus',t('benchCpuSweep'))+benchStepRow('ec',t('benchEc'))+(HAS_GPU?benchStepRow('gpuk',t('benchGpuKdf')):'');
   $('#benchOverlay').classList.add('on');
 }
 function closeBenchModal(){ $('#benchOverlay').classList.remove('on'); }
@@ -522,10 +523,22 @@ async function _measCpuKdf(ms){ const C=window.BIP39Crypto;
   do{ for(let k=0;k<8;k++){ C.accountNode(C.mnemonicToSeed(_benchMn,'c'+n),84); n++; } }while(performance.now()-t0<ms);
   return n/((performance.now()-t0)/1000); }
 async function _measCpuSweep(ms){
+  // Measure the SAME sweep the cracker runs: batched unrank + checksum (falls
+  // back to per-index if the core lacks the batch export).
   const sset=RXE.parse('abandon '.repeat(23)+'[:bip39-en:]');   // 24-word, conservative
   const total=Number(sset.cardinality()); let m=0; const t0=performance.now();
-  while(performance.now()-t0<ms){ for(let k=0;k<256;k++){ VALIDATOR.isValid(sset.unrank(BigInt(m%total))); m++; } }
+  while(performance.now()-t0<ms){
+    const cands = sset.unrankBatch ? sset.unrankBatch(m%total, 1024) : null;
+    if(cands){ for(let k=0;k<cands.length;k++){ VALIDATOR.isValid(cands[k]); m++; } }
+    else { for(let k=0;k<256;k++){ VALIDATOR.isValid(sset.unrank(BigInt(m%total))); m++; } }
+  }
   sset.free(); return m/((performance.now()-t0)/1000); }
+// Host secp256k1 privToPub rate -- the address crack's EC cost (W=8 comb).
+async function _measEcMult(ms){ const C=window.BIP39Crypto;
+  const k0=C.SECP_N/2n; C.privToPub(k0);   // warm + lazy comb build
+  const t0=performance.now(); let n=0;
+  while(performance.now()-t0<ms){ for(let i=0;i<50;i++){ C.privToPub((k0+BigInt(n))%C.SECP_N); n++; } }
+  return n/((performance.now()-t0)/1000); }
 async function _measGpuKdf(ms){
   const words=['abandon','ability','able','zoo','yellow','legal','winner','museum','sausage','worth'];
   const batch=[]; for(let i=0;i<8192;i++){ let s=''; for(let w=0;w<12;w++) s+=(s?' ':'')+words[(i+w*7)%words.length]; batch.push(s); }
@@ -548,12 +561,13 @@ async function runBenchAll(){
   try{
     const cpuKdf = await worst('cpuk', _measCpuKdf);   set('cpuk', fmtBig(Math.round(cpuKdf))+' /s/core');
     const cpuSweep = await worst('cpus', _measCpuSweep); set('cpus', fmtBig(Math.round(cpuSweep))+' /s/core');
+    const ecMult = await worst('ec', _measEcMult);     set('ec', fmtBig(Math.round(ecMult))+' /s');
     let gpuKdf=null, gpuId=CUR_GPU_ID||null;
     if(HAS_GPU && window.GpuCrack){
       try{ gpuId=(await window.GpuCrack.getGpuInfo())||gpuId; gpuKdf=await worst('gpuk', _measGpuKdf); set('gpuk', fmtBig(Math.round(gpuKdf))+' /s'); }
       catch(e){ set('gpuk','failed: '+e.message); }
     }
-    BENCH={ gpuId, cpuKdf, cpuSweep, gpuKdf, depth:(thorough?'thorough':'rough'), ts:Date.now() };
+    BENCH={ gpuId, cpuKdf, cpuSweep, ecMult, gpuKdf, depth:(thorough?'thorough':'rough'), ts:Date.now() };
     saveBench(); applyBench(); renderBenchCard(); recompute();
     run.textContent=t('benchDoneBtn');
     setTimeout(()=>{ closeBenchModal(); run.textContent=t('benchRun'); run.disabled=false; }, 700);
@@ -571,7 +585,7 @@ function renderBenchCard(){
       <span>🖥 <b>${t('benchCached')}</b></span>
       <button class="ghost" id="benchOpen">${t('benchRedo')}</button></div>
       <div class="gid">${esc(BENCH.gpuId||'CPU only')}</div>
-      <div class="note" style="margin-top:4px">CPU ${fmtBig(Math.round(BENCH.cpuKdf))} /s/core · sweep ${fmtBig(Math.round(BENCH.cpuSweep))} /s/core${BENCH.gpuKdf?` · GPU ${fmtBig(Math.round(BENCH.gpuKdf))} /s`:''}</div>
+      <div class="note" style="margin-top:4px">CPU ${fmtBig(Math.round(BENCH.cpuKdf))} /s/core · sweep ${fmtBig(Math.round(BENCH.cpuSweep))} /s/core${BENCH.ecMult?` · EC ${fmtBig(Math.round(BENCH.ecMult))} /s`:''}${BENCH.gpuKdf?` · GPU ${fmtBig(Math.round(BENCH.gpuKdf))} /s`:''}</div>
       ${mismatch?`<div class="warnmsg" style="margin-top:4px">⚠ ${t('benchMismatch')}</div>`:''}`;
   }
   const b=$('#benchOpen'); if(b) b.onclick=openBenchModal;
@@ -741,7 +755,7 @@ function cpuCrackMT(o){
       const start=k*per, end=Math.min(o.total,(k+1)*per);
       if (start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b19'); }catch(e){ cleanup(); return resolve(o.single()); }
+      let w; try{ w=new Worker('crackworker.js?v=b20'); }catch(e){ cleanup(); return resolve(o.single()); }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if (m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
@@ -809,7 +823,7 @@ function crackWordsHybrid(o){
     for(let k=0;k<nW;k++){
       const start=k*per, end=Math.min(o.total,(k+1)*per); if(start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b19'); }catch(e){ finish({error:'worker spawn failed'}); return; }
+      let w; try{ w=new Worker('crackworker.js?v=b20'); }catch(e){ finish({error:'worker spawn failed'}); return; }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if(m.type==='cand'){ sweptA[m.id]=m.swept; for(const it of m.items) queue.push(it); report(); pump(); }
