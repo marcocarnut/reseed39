@@ -227,7 +227,24 @@ function estimate(input, deps) {
 
   // ---- DIM 1: mnemonic set + checksum survival ----
   let wordsSet = null, survival = null, validMnemonicCount = 1n;
-  if (hasWordsPattern) {
+  // requireChecksum defaults to true (standard BIP39 wallets enforce it). When
+  // the user may have used off-dictionary / custom words, they turn it off and
+  // EVERY candidate must be hashed -- so the candidate count is the raw set and
+  // the checksum filter is skipped (both here and in the cracker).
+  const requireChecksum = input.requireChecksum !== false;
+  if (hasWordsPattern && !requireChecksum) {
+    wordsSet = rxe.parse(String(input.mnemonicPattern));
+    const raw = wordsSet.cardinality();
+    if (raw === null) {
+      warnings.push('mnemonic pattern is unbounded/infinite -- bound it (no * or {n,} tails).');
+      validMnemonicCount = null;
+    } else {
+      validMnemonicCount = raw;
+      survival = { infinite:false, method:'none', raw, validCount:raw, fraction:1,
+                   wordCount:null, theoreticalFraction:null, checksumOff:true };
+      notes.push('checksum filter OFF: every candidate is hashed (off-dictionary / custom words allowed) -- candidate count = the full raw set, so expect it to be ~256x slower than with the checksum on.');
+    }
+  } else if (hasWordsPattern) {
     wordsSet = rxe.parse(String(input.mnemonicPattern));
     survival = checksumSurvival(wordsSet, validator, {
       exactThreshold: input.exactThreshold, sampleSize: input.sampleSize,

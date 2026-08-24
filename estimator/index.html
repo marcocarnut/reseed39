@@ -134,6 +134,11 @@
           <div class="hint" style="align-self:end" data-i18n-html="anyHint"></div>
         </div>
       </div>
+      <label class="derivrow" style="cursor:pointer;margin-top:8px">
+        <input type="checkbox" id="reqChecksum" checked>
+        <span><b data-i18n="reqCsum">Require BIP39 checksum</b>
+          <span class="hint" data-i18n="reqCsumHint" style="display:block;margin-top:2px">On: only wordlist mnemonics that pass the checksum are hashed (≈256× fewer). Off: every candidate is hashed — check this if you may have used off-dictionary / custom words.</span></span>
+      </label>
     </div>
 
     <fieldset>
@@ -216,12 +221,12 @@
 <script src="../wasm/rxecore_api.js"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b4"></script>
-<script src="../estimator/model.js?v=b4"></script>
-<script src="../estimator/wordset.js?v=b4"></script>
-<script src="../estimator/bip39crypto.js?v=b4"></script>
-<script src="../estimator/gpucrack.js?v=b4"></script>
-<script src="../estimator/i18n.js?v=b4"></script>
+<script src="../estimator/bip39.js?v=b5"></script>
+<script src="../estimator/model.js?v=b5"></script>
+<script src="../estimator/wordset.js?v=b5"></script>
+<script src="../estimator/bip39crypto.js?v=b5"></script>
+<script src="../estimator/gpucrack.js?v=b5"></script>
+<script src="../estimator/i18n.js?v=b5"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -440,6 +445,7 @@ function wireUI(){
     $('#coresWrap').style.display=b.dataset.b==='cpu'?'':'none';recompute();});
   ['#passPat','#wordsPat','#wordsK','#accts','#gap','#cores'].forEach(s=>$(s).addEventListener('input',schedule));
   $('#change').addEventListener('change',recompute);
+  $('#reqChecksum').addEventListener('change',recompute);
   $('#addr').addEventListener('input',()=>{clearTimeout(debounce);debounce=setTimeout(onAddr,250);});
   $('#benchBtn').onclick=runBenchmark;
   $('#crackBtn').onclick=onCrack;
@@ -519,12 +525,18 @@ async function onCrack(){
   const changes=nchange>=2?[0,1]:[0];
   const gapN=Math.max(1,parseInt($('#gap').value,10)||1);
   const common={ plan, total, unrank:i=>set.unrank(BigInt(i)),
-    onProgress:(done,tot,rate)=>{ prog.textContent=`${fmtBig(done)} / ${fmtBig(tot)} · ${fmtBig(Math.round(rate))} ${t('crackTried')}/s`; },
+    onProgress:(done,tot,rate,extra)=>{
+      let s=`${fmtBig(done)} / ${fmtBig(tot)} · ${fmtBig(Math.round(rate))} ${t('crackTried')}/s`;
+      // words mode: the "tried" sweep is cheap; the real cost is the checksum-valid
+      // ones that get hashed -- show those so the timing makes sense.
+      if(extra) s+=` · ${fmtBig(extra.seeded)} ${t('crackSeeded')} (${fmtBig(Math.round(extra.seedRate))}/s)`;
+      prog.textContent=s;
+    },
     isCancelled:()=>!cracking };
   try{
     let r;
     if(mode==='words'){
-      r = await cpuCrackWords({...common, passphrase:passFixed, tcc, taddr, changes, gap:gapN});
+      r = await cpuCrackWords({...common, passphrase:passFixed, tcc, taddr, changes, gap:gapN, requireChecksum:$('#reqChecksum').checked});
     } else if(target==='xpub'){
       const args={...common, mnemonic:mnFixed, targetChainCode:tcc, batchSize:4096};
       r = gpu ? await window.GpuCrack.crackXpub(args) : await cpuCrack(args);
@@ -544,21 +556,28 @@ async function onCrack(){
   }catch(e){ res.innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
   finally{ cracking=false; btn.textContent=t('crackBtn'); msg.textContent=''; try{set.free()}catch(e){} }
 }
-// WORDS mode: candidate mnemonics (checksum pre-filtered so only valid ones pay
-// for PBKDF2) x a fixed BIP39 passphrase. CPU only -- the varying mnemonic is the
-// HMAC key, so the GPU midstate precompute (fixed key) doesn't apply.
+// WORDS mode: candidate mnemonics x a fixed BIP39 passphrase. CPU only -- the
+// varying mnemonic is the HMAC key, so the GPU midstate precompute (fixed key)
+// doesn't apply. With requireChecksum (default), only checksum-valid wordlist
+// mnemonics get hashed (~256x fewer); off, EVERY candidate is hashed (needed
+// when the user may have used off-dictionary / custom words). The sweep over the
+// raw set is cheap; wall-clock is set by the number actually SEEDED -- so we
+// report both, else it looks like it's grinding the whole raw set at full cost.
 async function cpuCrackWords(a){
   const C=window.BIP39Crypto, t0=performance.now();
   const isAddr=!!a.taddr;
   const plan=isAddr ? a.plan.filter(pp=>C.purposeType(pp.purpose)===a.taddr.type) : a.plan;
   const changes=(a.changes&&a.changes.length)?a.changes:[0]; const gap=Math.max(1,a.gap||1);
   const pass=a.passphrase||'';
+  const reqCsum=a.requireChecksum!==false;
+  let seeded=0;
   for(let start=0;start<a.total;start+=1024){
     if(a.isCancelled()) return {stopped:true};
     const n=Math.min(1024,a.total-start);
     for(let i=0;i<n;i++){
       const mn=a.unrank(start+i);
-      if(!VALIDATOR.isValid(mn)) continue;              // checksum pre-filter -> skip PBKDF2
+      if(reqCsum && !VALIDATOR.isValid(mn)) continue;   // checksum pre-filter -> skip PBKDF2
+      seeded++;
       const seed=C.mnemonicToSeed(mn,pass);
       if(isAddr){
         for(const pp of plan){ const acct=C.deriveHardenedPath(seed,[pp.purpose,pp.coin||0,pp.account||0]);
@@ -570,7 +589,8 @@ async function cpuCrackWords(a){
         for(const pp of a.plan){ if(C.eq(C.accountNode(seed,pp.purpose,pp.account,pp.coin).c,a.tcc)) return {found:mn,path:pp,index:start+i}; }
       }
     }
-    a.onProgress(start+n,a.total,(start+n)/((performance.now()-t0)/1000)); await new Promise(r=>setTimeout(r,0));
+    const el=(performance.now()-t0)/1000;
+    a.onProgress(start+n,a.total,(start+n)/el,{seeded,seedRate:seeded/el}); await new Promise(r=>setTimeout(r,0));
   }
   return {found:null};
 }
@@ -629,6 +649,7 @@ function recompute(){
     mnemonicKnown: mode==='passphrase',
     mnemonicPattern: currentMnemonicPattern(mode),
     targetType: target, backend,
+    requireChecksum: $('#reqChecksum').checked,
     cores: parseInt($('#cores').value,10)||1,
     calibration: (backend==='gpu') ? calGpu : calCpu,
     path:{ purposes: purposes.length?purposes:['bip84'],
