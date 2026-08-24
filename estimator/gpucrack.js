@@ -192,6 +192,15 @@ async function crackWordsGpu(opts){
   const changes=(opts.changes&&opts.changes.length)?opts.changes:[0]; const gap=Math.max(1,opts.gap||1);
   const reqCsum = opts.requireChecksum!==false;
   const total=opts.total, B=opts.batchSize||8192;
+  // Address is EC-bound: if workers are available, run the secp256k1 derive+compare
+  // in PARALLEL across a pool (the paced host sweep + GPU seed stay on this thread).
+  if (isAddr){
+    const nW = Math.max(1, Math.min(opts.nWorkers||1, (self.navigator&&navigator.hardwareConcurrency)||8, 32));
+    if (typeof Worker!=='undefined' && nW>1 && opts.workerUrl){
+      const r = await _crackWordsAddrParallel(opts, plan, changes, gap, nW);
+      if (!r || !r.__fallback) return r;   // fall through to inline on worker-spawn failure
+    }
+  }
   const t0=performance.now(); let done=0, seeded=0;
   // Sweep + checksum-filter [start,start+B) on the host into {n,mns,gidx}.
   const sweepFilter=(start)=>{
@@ -229,6 +238,72 @@ async function crackWordsGpu(opts){
     cur = next; curSeedP = nextSeedP;
   }
   return cur ? { stopped:true, done } : { found:null, done };
+}
+
+// WORDS+ADDRESS parallel: candidate MNEMONICS are seeded on the GPU (per-lane
+// key), then the EC derive+compare runs across a worker pool. The host sweep is
+// PACED (one batch per producer iteration + backpressure), so unlike the hybrid
+// worker-sweep it can't flood memory when the checksum filter is off. Returns
+// {__fallback:true} if the pool can't be spawned (caller then goes inline).
+async function _crackWordsAddrParallel(opts, plan, changes, gap, nW){
+  const C = window.BIP39Crypto;
+  await initGpuWords();
+  // Decouple the GPU SEED batch from the per-worker DERIVE task: seed a big batch
+  // (the GPU is most efficient in bulk -- a 2k batch left it seed-bound), then
+  // split those seeds into small tasks so every worker stays fed (a 16k task
+  // would pin one worker for ~16s while the rest idle).
+  const total=opts.total, SB=opts.addrSeedBatch||16384, TS=opts.addrTask||2048;
+  const reqCsum = opts.requireChecksum!==false;
+  const programHex=C.toHex(opts.taddr.program), addrType=opts.taddr.type;
+  const sweepFilter=(start)=>{ const n=Math.min(SB,total-start);
+    const cands=opts.unrankBatch?opts.unrankBatch(start,n):null; const mns=[],gidx=[];
+    for(let i=0;i<n;i++){ const mn=cands?cands[i]:opts.unrank(start+i); if(mn==null)continue; if(reqCsum&&!opts.validator.isValid(mn))continue; mns.push(mn); gidx.push(start+i); }
+    return {n,mns,gidx}; };
+  return new Promise((resolve)=>{
+    const workers=[], idle=[], pending=new Map(); const queue=[];
+    let finished=false, batchId=0, dispatched=0, completed=0, sweepDone=false, seeded=0, done=0, poll=0, spawnFail=false;
+    const t0=performance.now();
+    const cleanup=()=>{ clearInterval(poll); workers.forEach(w=>{try{w.terminate()}catch(e){}}); };
+    const finish=(r)=>{ if(finished)return; finished=true; cleanup(); resolve(r); };
+    const report=()=>{ if(opts.onProgress){ const el=(performance.now()-t0)/1000||1e-6; opts.onProgress(Math.min(done,total),total,done/el,{seeded,seedRate:seeded/el}); } };
+    const drain=()=>{ while(idle.length && queue.length && !finished){ const w=idle.shift(), task=queue.shift();
+      pending.set(task.batchId, task);
+      w.postMessage({ type:'derive', batchId:task.batchId, seedsBuf:task.seedsBuf, n:task.mns.length, startIndex:0,
+        plan, addrType, programHex, changes, gap }, [task.seedsBuf]); } };
+    for(let i=0;i<nW;i++){ let w; try{ w=new Worker(opts.workerUrl); }catch(e){ spawnFail=true; break; }
+      workers.push(w); idle.push(w);
+      w.onmessage=(e)=>{ const m=e.data; if(finished)return;
+        if(m.type==='derivehit'){ const info=pending.get(m.batchId); finish({found:info.mns[m.index], path:m.path, index:info.gidx[m.index], done}); }
+        else if(m.type==='derivedone'){ const info=pending.get(m.batchId); pending.delete(m.batchId); completed++; if(info) done+=info.n; idle.push(w); report(); drain();
+          if(sweepDone && completed>=dispatched && !finished) finish({found:null, done}); } };
+      w.onerror=(ev)=>finish({error:(ev&&ev.message)||'derive worker error'});
+    }
+    if(spawnFail || !workers.length){ cleanup(); return resolve({__fallback:true}); }
+    poll=setInterval(()=>{ if(opts.isCancelled&&opts.isCancelled()) finish({stopped:true,done}); },200);
+    (async ()=>{
+      try{
+        for(let start=0; start<total && !finished; start+=SB){
+          const b=sweepFilter(start);
+          if(!b.mns.length){ done+=b.n; report(); continue; }
+          const seeds=await gpuSeedsWords(b.mns, opts.passphrase);   // one bulk GPU seed
+          if(finished)return;
+          seeded+=b.mns.length;
+          // split the seeded batch into per-worker derive tasks (own transferable buffer)
+          for(let o=0;o<b.mns.length;o+=TS){ const m=Math.min(TS,b.mns.length-o);
+            const buf=seeds.slice(o*64,(o+m)*64);
+            queue.push({ batchId:batchId++, seedsBuf:buf.buffer, mns:b.mns.slice(o,o+m), gidx:b.gidx.slice(o,o+m), n:m });
+            dispatched++; drain(); }
+          done += (b.n - b.mns.length);   // filtered-out candidates are swept immediately
+          report();
+          await new Promise(r=>setTimeout(r,0));
+          // backpressure: cap seeded-but-underived tasks so we don't run ahead of the pool.
+          while(queue.length>nW*4 && !finished) await new Promise(r=>setTimeout(r,4));
+        }
+        sweepDone=true;
+        if(completed>=dispatched && !finished) finish({found:null, done});
+      }catch(e){ finish({error:e.message}); }
+    })();
+  });
 }
 
 // Crack an ADDRESS passphrase. Unlike the xpub path this needs elliptic curve:
