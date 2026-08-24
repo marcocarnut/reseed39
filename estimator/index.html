@@ -176,8 +176,15 @@
 
     <fieldset id="crackBox" style="display:none;border-color:var(--accent)">
       <legend data-i18n="crackTitle">Crack in your browser</legend>
-      <label class="f" data-i18n="crackMnLabel">Your 12/24-word mnemonic — stays in this browser</label>
-      <textarea id="crackMn" rows="2" placeholder="abandon abandon abandon … about"></textarea>
+      <div id="crackMnWrap">
+        <label class="f" data-i18n="crackMnLabel">Your 12/24-word mnemonic — stays in this browser</label>
+        <textarea id="crackMn" rows="2" placeholder="abandon abandon abandon … about"></textarea>
+      </div>
+      <div id="crackPassWrap" style="display:none">
+        <label class="f" data-i18n="crackPassLabel">BIP39 passphrase (the 25th word) — leave blank if none</label>
+        <input id="crackPass" type="text" placeholder="(usually blank)" style="max-width:320px">
+        <div class="hint" data-i18n="crackWordsHint" style="margin-top:6px">The mnemonic pattern above is the candidate set — CPU only (the varying mnemonic can't reuse the GPU key-schedule).</div>
+      </div>
       <div style="margin-top:10px">
         <button class="act" id="crackBtn" data-i18n="crackBtn">🔓 Crack here</button>
         <span class="hint" id="crackMsg" style="margin-left:10px"></span>
@@ -207,12 +214,14 @@
 
 <script src="../wasm/rxecore.js"></script>
 <script src="../wasm/rxecore_api.js"></script>
-<script src="../estimator/bip39.js"></script>
-<script src="../estimator/model.js"></script>
-<script src="../estimator/wordset.js"></script>
-<script src="../estimator/bip39crypto.js"></script>
-<script src="../estimator/gpucrack.js"></script>
-<script src="../estimator/i18n.js"></script>
+<!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
+     during dev (python http.server sends no cache headers). Bump on each change. -->
+<script src="../estimator/bip39.js?v=b3"></script>
+<script src="../estimator/model.js?v=b3"></script>
+<script src="../estimator/wordset.js?v=b3"></script>
+<script src="../estimator/bip39crypto.js?v=b3"></script>
+<script src="../estimator/gpucrack.js?v=b3"></script>
+<script src="../estimator/i18n.js?v=b3"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -300,6 +309,8 @@ function setLang(l){
     RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
+    // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
+    ['bip39en','bip39','en','english'].forEach(a=>{ try{ RXE.registerDict(a, englishWords); }catch(e){} });
     VALIDATOR = BIP39.makeValidator(englishWords);
     $('#booting').style.display='none';
     $('#view-est').classList.add('active');
@@ -469,16 +480,26 @@ async function onCrack(){
   const btn=$('#crackBtn'), msg=$('#crackMsg'), prog=$('#crackProg'), res=$('#crackRes');
   if(cracking){ cracking=false; return; }          // Stop toggles the flag; the loop checks it
   const C=window.BIP39Crypto;
+  const mode = segVal('#modeSeg','data-mode');
   const target = segVal('#targetSeg','data-t');
-  const mn=$('#crackMn').value.trim().replace(/\s+/g,' ');
-  if(!mn){ msg.textContent=t('crackNeedMn'); return; }
   const addr=$('#addr').value.trim();
   // decode the target: xpub -> 32-byte chain code (EC-free); address -> {type,program} (needs EC)
   let tcc=null, taddr=null;
   if(target==='xpub'){ try{ tcc=C.decodeXpub(addr).chainCode; }catch(e){ msg.textContent=t('crackNeedXpub'); return; } }
   else { try{ taddr=C.decodeAddress(addr); }catch(e){ msg.textContent=t('crackNeedAddr'); return; } }
-  let set; try{ set=RXE.parse($('#passPat').value.trim()); }
-  catch(e){ msg.textContent='pattern: '+e.message; return; }
+  // The candidate set + what stays fixed differ by mode:
+  //  passphrase -> fixed mnemonic (#crackMn) x candidate passphrases (#passPat)   [GPU-able]
+  //  words      -> candidate mnemonics (#wordsPat, checksum-filtered) x fixed passphrase (#crackPass)  [CPU]
+  let set, mnFixed=null, passFixed='';
+  if(mode==='words'){
+    let pat; try{ pat=currentMnemonicPattern('words'); }catch(e){ msg.textContent='pattern: '+e.message; return; }
+    passFixed = $('#crackPass').value;
+    try{ set=RXE.parse(pat); }catch(e){ msg.textContent='pattern: '+e.message; return; }
+  } else {
+    mnFixed=$('#crackMn').value.trim().replace(/\s+/g,' ');
+    if(!mnFixed){ msg.textContent=t('crackNeedMn'); return; }
+    try{ set=RXE.parse($('#passPat').value.trim()); }catch(e){ msg.textContent='pattern: '+e.message; return; }
+  }
   if(set.isInfinite()){ set.free(); res.innerHTML='<span class="warnmsg">'+esc(t('crackRedNote'))+'</span>'; return; }
   const card=set.cardinality(), CAP=200000000n;
   if(card>CAP){ set.free(); res.innerHTML='<span class="warnmsg">'+esc(t('crackRedNote'))+'</span>'; return; }
@@ -493,32 +514,65 @@ async function onCrack(){
     set.free(); msg.textContent=t('crackTypeMismatch').replace('%t',taddr.type); return;
   }
   cracking=true; btn.textContent=t('crackStop'); msg.textContent=t('crackRunning'); res.innerHTML=''; prog.textContent='';
-  const gpu = segVal('#backendSeg','data-b')==='gpu' && window.GpuCrack && navigator.gpu;
+  const gpu = segVal('#backendSeg','data-b')==='gpu' && window.GpuCrack && navigator.gpu && mode!=='words';
   const nchange=Math.max(1,parseInt($('#change').value,10)||1);
   const changes=nchange>=2?[0,1]:[0];
   const gapN=Math.max(1,parseInt($('#gap').value,10)||1);
-  const common={ mnemonic:mn, plan, total, unrank:i=>set.unrank(BigInt(i)),
+  const common={ plan, total, unrank:i=>set.unrank(BigInt(i)),
     onProgress:(done,tot,rate)=>{ prog.textContent=`${fmtBig(done)} / ${fmtBig(tot)} · ${fmtBig(Math.round(rate))} ${t('crackTried')}/s`; },
     isCancelled:()=>!cracking };
   try{
     let r;
-    if(target==='xpub'){
-      const args={...common, targetChainCode:tcc, batchSize:4096};
+    if(mode==='words'){
+      r = await cpuCrackWords({...common, passphrase:passFixed, tcc, taddr, changes, gap:gapN});
+    } else if(target==='xpub'){
+      const args={...common, mnemonic:mnFixed, targetChainCode:tcc, batchSize:4096};
       r = gpu ? await window.GpuCrack.crackXpub(args) : await cpuCrack(args);
     } else {
-      const args={...common, target:taddr, changes, gap:gapN, batchSize:2048};
+      const args={...common, mnemonic:mnFixed, target:taddr, changes, gap:gapN, batchSize:2048};
       r = gpu ? await window.GpuCrack.crackAddress(args) : await cpuCrackAddress(args);
     }
     if(r.stopped) res.innerHTML='<span class="note">'+t('crackStopped')+'</span>';
     else if(r.found!=null){
-      const pth = target==='xpub'
+      const pth = (target==='xpub')
         ? `m/${r.path.purpose}'/${r.path.coin}'/${r.path.account}'`
         : `m/${r.path.purpose}'/${r.path.coin}'/${r.path.account}'/${r.path.change}/${r.path.index}`;
-      res.innerHTML=`<div class="verdict green" style="margin:0"><span class="dot"></span>${t('crackFound')} <b>${esc(r.found)}</b></div>`
+      const label = mode==='words' ? t('crackFoundMn') : t('crackFound');
+      res.innerHTML=`<div class="verdict green" style="margin:0"><span class="dot"></span>${label} <b>${esc(r.found)}</b></div>`
                    +`<div class="note">${t('crackVia')} ${esc(pth)}, index ${fmtBig(r.index)}</div>`;
     } else res.innerHTML='<span class="warnmsg">'+t('crackNotFound')+'</span>';
   }catch(e){ res.innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
   finally{ cracking=false; btn.textContent=t('crackBtn'); msg.textContent=''; try{set.free()}catch(e){} }
+}
+// WORDS mode: candidate mnemonics (checksum pre-filtered so only valid ones pay
+// for PBKDF2) x a fixed BIP39 passphrase. CPU only -- the varying mnemonic is the
+// HMAC key, so the GPU midstate precompute (fixed key) doesn't apply.
+async function cpuCrackWords(a){
+  const C=window.BIP39Crypto, t0=performance.now();
+  const isAddr=!!a.taddr;
+  const plan=isAddr ? a.plan.filter(pp=>C.purposeType(pp.purpose)===a.taddr.type) : a.plan;
+  const changes=(a.changes&&a.changes.length)?a.changes:[0]; const gap=Math.max(1,a.gap||1);
+  const pass=a.passphrase||'';
+  for(let start=0;start<a.total;start+=1024){
+    if(a.isCancelled()) return {stopped:true};
+    const n=Math.min(1024,a.total-start);
+    for(let i=0;i<n;i++){
+      const mn=a.unrank(start+i);
+      if(!VALIDATOR.isValid(mn)) continue;              // checksum pre-filter -> skip PBKDF2
+      const seed=C.mnemonicToSeed(mn,pass);
+      if(isAddr){
+        for(const pp of plan){ const acct=C.deriveHardenedPath(seed,[pp.purpose,pp.coin||0,pp.account||0]);
+          for(const ch of changes){ const chNode=C.ckdNormal(acct,ch);
+            for(let idx=0;idx<gap;idx++){ const node=C.ckdNormal(chNode,idx);
+              const tg=C.pubToTarget(C.privToPub(node.k),pp.purpose);
+              if(tg.type===a.taddr.type&&C.eq(tg.program,a.taddr.program)) return {found:mn,path:{...pp,change:ch,index:idx},index:start+i}; } } }
+      } else {
+        for(const pp of a.plan){ if(C.eq(C.accountNode(seed,pp.purpose,pp.account,pp.coin).c,a.tcc)) return {found:mn,path:pp,index:start+i}; }
+      }
+    }
+    a.onProgress(start+n,a.total,(start+n)/((performance.now()-t0)/1000)); await new Promise(r=>setTimeout(r,0));
+  }
+  return {found:null};
 }
 // single-thread JS-CPU fallback (small sets / no WebGPU) -- xpub target, EC-free.
 async function cpuCrack(a){
@@ -591,7 +645,13 @@ function recompute(){
   updateCrackVis(mode, target);
 }
 function updateCrackVis(mode, target){
-  $('#crackBox').style.display = (mode==='passphrase' && (target==='xpub'||target==='address')) ? '' : 'none';
+  // passphrase mode (fixed mnemonic, GPU-able) and words mode (candidate
+  // mnemonics, CPU) both crack in-browser; joint stays estimator-only.
+  const canCrack = (mode==='passphrase'||mode==='words') && (target==='xpub'||target==='address');
+  $('#crackBox').style.display = canCrack ? '' : 'none';
+  const mnW=$('#crackMnWrap'), pW=$('#crackPassWrap');
+  if(mnW) mnW.style.display = mode==='passphrase' ? '' : 'none';
+  if(pW)  pW.style.display  = mode==='words' ? '' : 'none';
 }
 
 // ---------- render ----------
