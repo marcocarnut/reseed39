@@ -393,26 +393,31 @@ function _scalarMult(k, ax, ay){             // k * (ax,ay) affine -> affine {x,
 // and no doublings -> the address crack's host EC gets several x faster. Built
 // lazily once. pointFromPriv stays byte-exact (gated 25/25 in test_crypto.js).
 let _combG = null;
+const _COMB_W = 8, _COMB_NW = 32;               // 8-bit window: 32 point-adds / mult
 function _buildCombG(){
-  const W=4, WIN=1<<W, NW=64;
-  const tbl=new Array(NW);
-  let base={X:SECP_GX,Y:SECP_GY,Z:1n};        // 16^i * G (i=0 -> G)
-  for (let i=0;i<NW;i++){
-    const row=new Array(WIN); row[0]=null;
+  const WIN=1<<_COMB_W;                          // 256
+  const tbl=new Array(_COMB_NW); for (let i=0;i<_COMB_NW;i++){ tbl[i]=new Array(WIN); tbl[i][0]=null; }
+  // Build every table point in Jacobian, then ONE batch inversion to affine
+  // (else 32*255 per-point inverses make the lazy init slow).
+  const jp=[], meta=[];
+  let base={X:SECP_GX,Y:SECP_GY,Z:1n};          // 256^i * G (i=0 -> G)
+  for (let i=0;i<_COMB_NW;i++){
     let acc=_INF;
-    for (let j=1;j<WIN;j++){ acc=_jAdd(acc, base); row[j]=_jToAffine(acc); }  // j*base
-    tbl[i]=row;
-    for (let d=0;d<W;d++) base=_jDouble(base);  // base *= 16
+    for (let j=1;j<WIN;j++){ acc=_jAdd(acc, base); jp.push(acc); meta.push([i,j]); }
+    for (let d=0;d<_COMB_W;d++) base=_jDouble(base);   // base *= 256
   }
+  const zinv=_batchInv(jp.map(p=>p.Z));
+  for (let t=0;t<jp.length;t++){ const p=jp[t], zi=zinv[t], zi2=_mod(zi*zi,_P), zi3=_mod(zi2*zi,_P);
+    const m=meta[t]; tbl[m[0]][m[1]]={ x:_mod(p.X*zi2,_P), y:_mod(p.Y*zi3,_P) }; }
   return tbl;
 }
 function _combMulJ(k){                          // k*G via the comb -> Jacobian point (no inverse)
   k=_mod(k,SECP_N); if (k===0n) return _INF;
   if (!_combG) _combG=_buildCombG();
   let R=_INF;
-  for (let i=0;i<64;i++){
-    const nib=Number((k>>BigInt(i*4))&15n);
-    if (nib){ const a=_combG[i][nib]; R=_jAdd(R,{X:a.x,Y:a.y,Z:1n}); }
+  for (let i=0;i<_COMB_NW;i++){
+    const byte=Number((k>>BigInt(i*_COMB_W))&255n);
+    if (byte){ const a=_combG[i][byte]; R=_jAdd(R,{X:a.x,Y:a.y,Z:1n}); }
   }
   return R;
 }
@@ -461,6 +466,15 @@ function liftX(x){
 function _modpow(b,e,m){ b=_mod(b,m); let r=1n; while(e>0n){ if(e&1n) r=_mod(r*b,m); b=_mod(b*b,m); e>>=1n; } return r; }
 
 /* ---- non-hardened CKDpriv (needs the parent PUBKEY = one scalar mult) ---- */
+// Variant taking the parent pubkey precomputed -- lets the address crack batch
+// the scalar mults (privToPubBatch) across a candidate batch instead of one per
+// derivation. ckdNormal is this with pub computed inline.
+function ckdNormalPub(par, pub, index){
+  if ((index>>>0) >= HARD) throw new Error('ckdNormal: index must be non-hardened (<2^31)');
+  const I = hmacSha512(par.c, concat(pub, ser32(index>>>0)));
+  const IL = bytesToBig(I.slice(0,32));
+  return { k:(IL + par.k) % SECP_N, c:I.slice(32,64) };
+}
 function ckdNormal(par, index){
   if ((index>>>0) >= HARD) throw new Error('ckdNormal: index must be non-hardened (<2^31)');
   const pub = privToPub(par.k);
@@ -622,7 +636,7 @@ const _exports = {
   hmacMidstates, sha512FromState1blk, hmacViaMid, pbkdf2ViaMid,
   // secp256k1 + address-target crack (the EC path).
   SECP_P, pointFromPriv, privToPub, privToPubBatch, serPoint, liftX,
-  ckdNormal, addressNode,
+  ckdNormal, ckdNormalPub, addressNode,
   ripemd160, hash160,
   bech32Encode, bech32Decode, segwitEncode,
   decodeAddress, purposeType, pubToTarget, addressTarget,

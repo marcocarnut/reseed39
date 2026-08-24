@@ -216,12 +216,12 @@
 <script src="../wasm/rxecore_api.js"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b16"></script>
-<script src="../estimator/model.js?v=b16"></script>
-<script src="../estimator/wordset.js?v=b16"></script>
-<script src="../estimator/bip39crypto.js?v=b16"></script>
-<script src="../estimator/gpucrack.js?v=b16"></script>
-<script src="../estimator/i18n.js?v=b16"></script>
+<script src="../estimator/bip39.js?v=b18"></script>
+<script src="../estimator/model.js?v=b18"></script>
+<script src="../estimator/wordset.js?v=b18"></script>
+<script src="../estimator/bip39crypto.js?v=b18"></script>
+<script src="../estimator/gpucrack.js?v=b18"></script>
+<script src="../estimator/i18n.js?v=b18"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -740,7 +740,7 @@ function cpuCrackMT(o){
       const start=k*per, end=Math.min(o.total,(k+1)*per);
       if (start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b16'); }catch(e){ cleanup(); return resolve(o.single()); }
+      let w; try{ w=new Worker('crackworker.js?v=b18'); }catch(e){ cleanup(); return resolve(o.single()); }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if (m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
@@ -808,7 +808,7 @@ function crackWordsHybrid(o){
     for(let k=0;k<nW;k++){
       const start=k*per, end=Math.min(o.total,(k+1)*per); if(start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b16'); }catch(e){ finish({error:'worker spawn failed'}); return; }
+      let w; try{ w=new Worker('crackworker.js?v=b18'); }catch(e){ finish({error:'worker spawn failed'}); return; }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if(m.type==='cand'){ sweptA[m.id]=m.swept; for(const it of m.items) queue.push(it); report(); pump(); }

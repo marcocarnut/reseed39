@@ -228,6 +228,29 @@ async function crackWordsGpu(opts){
 // program, and compares to the decoded target. opts: { mnemonic,
 // target:{type,program}, plan:[{purpose,account,coin}], changes:[0|1...],
 // gap, total, unrank, batchSize, onProgress, isCancelled }.
+// A/B: batch the address host-derive EC (one Montgomery inverse per stage per
+// batch, via privToPubBatch) vs per-candidate. Toggle GpuCrack.batchEC=false to
+// compare. Only the simple plan (1 purpose, change [0], gap 1) is batched; other
+// shapes fall through to per-candidate.
+let BATCH_EC = true;
+// Returns {i, tg} of the first batch match, or null. Batches the 3 privToPub
+// stages (acct, change-node, index-node) across the n seeds.
+function _addrBatchMatch(seeds, n, pp, target){
+  const C = window.BIP39Crypto;
+  const accts = new Array(n);
+  for (let i=0;i<n;i++) accts[i]=C.deriveHardenedPath(seeds.subarray(i*64,i*64+64),[pp.purpose,pp.coin||0,pp.account||0]);
+  const pubA = C.privToPubBatch(accts.map(a=>a.k));
+  const chs = new Array(n); for (let i=0;i<n;i++) chs[i]=C.ckdNormalPub(accts[i], pubA[i], 0);
+  const pubC = C.privToPubBatch(chs.map(c=>c.k));
+  const nodes = new Array(n); for (let i=0;i<n;i++) nodes[i]=C.ckdNormalPub(chs[i], pubC[i], 0);
+  const pubN = C.privToPubBatch(nodes.map(nd=>nd.k));
+  for (let i=0;i<n;i++){
+    const tg = C.pubToTarget(pubN[i], pp.purpose);
+    if (tg.type===target.type && C.eq(tg.program, target.program)) return { i };
+  }
+  return null;
+}
+
 async function crackAddress(opts){
   const g = await initGpu();
   const C = window.BIP39Crypto;
@@ -237,6 +260,7 @@ async function crackAddress(opts){
   if (!plan.length) return { found:null, done:0, mismatch:opts.target.type };
   const changes = (opts.changes && opts.changes.length) ? opts.changes : [0];
   const gap = Math.max(1, opts.gap||1);
+  const simple = BATCH_EC && plan.length===1 && changes.length===1 && changes[0]===0 && gap===1;
   const total = opts.total, B = opts.batchSize||2048;
   const t0 = performance.now(); let done=0;
   for (let start=0; start<total; start+=B){
@@ -244,17 +268,22 @@ async function crackAddress(opts){
     const n = Math.min(B, total-start);
     const passes = new Array(n); for (let i=0;i<n;i++) passes[i]=opts.unrank(start+i);
     const seeds = await gpuSeeds(g, mid, opts.mnemonic, passes);
-    for (let i=0;i<n;i++){
-      const seed = seeds.subarray(i*64,i*64+64);
-      for (const pp of plan){
-        const acct = C.deriveHardenedPath(seed, [pp.purpose, pp.coin||0, pp.account||0]);
-        for (const ch of changes){
-          const chNode = C.ckdNormal(acct, ch);          // one derive per (candidate,purpose,change)
-          for (let idx=0; idx<gap; idx++){
-            const node = C.ckdNormal(chNode, idx);
-            const tg = C.pubToTarget(C.privToPub(node.k), pp.purpose);
-            if (tg.type===opts.target.type && C.eq(tg.program, opts.target.program))
-              return { found: passes[i], path:{...pp, change:ch, index:idx}, index:start+i, done:done+i+1 };
+    if (simple){
+      const hit = _addrBatchMatch(seeds, n, plan[0], opts.target);
+      if (hit) return { found: passes[hit.i], path:{...plan[0], change:0, index:0}, index:start+hit.i, done:done+hit.i+1 };
+    } else {
+      for (let i=0;i<n;i++){
+        const seed = seeds.subarray(i*64,i*64+64);
+        for (const pp of plan){
+          const acct = C.deriveHardenedPath(seed, [pp.purpose, pp.coin||0, pp.account||0]);
+          for (const ch of changes){
+            const chNode = C.ckdNormal(acct, ch);
+            for (let idx=0; idx<gap; idx++){
+              const node = C.ckdNormal(chNode, idx);
+              const tg = C.pubToTarget(C.privToPub(node.k), pp.purpose);
+              if (tg.type===opts.target.type && C.eq(tg.program, opts.target.program))
+                return { found: passes[i], path:{...pp, change:ch, index:idx}, index:start+i, done:done+i+1 };
+            }
           }
         }
       }
@@ -280,5 +309,6 @@ async function gateWords(mnemonics, passphrase){
 }
 
 window.GpuCrack = { initGpu, gpuSeeds, benchmark, crackXpub, crackAddress, MAXSALT,
-  initGpuWords, gpuSeedsWords, crackWordsGpu, gateWords, getGpuInfo };
+  initGpuWords, gpuSeedsWords, crackWordsGpu, gateWords, getGpuInfo,
+  setBatchEC:(b)=>{ BATCH_EC=!!b; }, getBatchEC:()=>BATCH_EC };
 })();
