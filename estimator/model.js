@@ -107,6 +107,12 @@ function humanTime(sec) {
 //   validator  : { isValid(mnemonicString), theoreticalFraction(W) }
 //   opts.exactThreshold : walk-and-count if raw cardinality <= this (default 2e5)
 //   opts.sampleSize     : random samples when not exact (default 20000)
+// Deterministic PRNG so the SAME pattern always yields the SAME sampled survival
+// count -- otherwise checking then un-checking a box would jitter the total and
+// confuse the user. Seeded from the pattern's own shape (first member + raw size).
+function _hashStr(s){ let h=2166136261>>>0; for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619); } return h>>>0; }
+function _mulberry32(a){ return function(){ a|=0; a=(a+0x6D2B79F5)|0; let t=Math.imul(a^(a>>>15), 1|a); t=(t+Math.imul(t^(t>>>7), 61|t))^t; return ((t^(t>>>14))>>>0)/4294967296; }; }
+
 function checksumSurvival(set, validator, opts = {}) {
   const exactThreshold = BigInt(opts.exactThreshold != null ? opts.exactThreshold : 200000);
   const sampleSize = opts.sampleSize != null ? opts.sampleSize : 20000;
@@ -136,7 +142,9 @@ function checksumSurvival(set, validator, opts = {}) {
              fraction, wordCount, theoreticalFraction };
   }
 
-  // SAMPLED: draw random indices, validate, extrapolate.
+  // SAMPLED: draw random indices, validate, extrapolate. Deterministic RNG seeded
+  // from the pattern shape so the count is stable across recomputes.
+  const rng = _mulberry32((_hashStr(String(first||'')) ^ (Number(raw & 0xffffffffn)>>>0)) >>> 0);
   const rawNum = Number(raw);
   let survivors = 0;
   const seen = new Set();
@@ -145,7 +153,7 @@ function checksumSurvival(set, validator, opts = {}) {
   // guard against pathological dup-heavy draws on tiny-but-over-threshold sets
   let guard = target * 20;
   while (seen.size < target && guard-- > 0) {
-    const i = BigInt(Math.floor(Math.random() * rawNum));
+    const i = BigInt(Math.floor(rng() * rawNum));
     if (seen.has(i.toString())) continue;
     seen.add(i.toString());
     draws++;
