@@ -221,12 +221,12 @@
 <script src="../wasm/rxecore_api.js"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b10"></script>
-<script src="../estimator/model.js?v=b10"></script>
-<script src="../estimator/wordset.js?v=b10"></script>
-<script src="../estimator/bip39crypto.js?v=b10"></script>
-<script src="../estimator/gpucrack.js?v=b10"></script>
-<script src="../estimator/i18n.js?v=b10"></script>
+<script src="../estimator/bip39.js?v=b11"></script>
+<script src="../estimator/model.js?v=b11"></script>
+<script src="../estimator/wordset.js?v=b11"></script>
+<script src="../estimator/bip39crypto.js?v=b11"></script>
+<script src="../estimator/gpucrack.js?v=b11"></script>
+<script src="../estimator/i18n.js?v=b11"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -635,7 +635,7 @@ function cpuCrackMT(o){
       const start=k*per, end=Math.min(o.total,(k+1)*per);
       if (start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b10'); }catch(e){ cleanup(); return resolve(o.single()); }
+      let w; try{ w=new Worker('crackworker.js?v=b11'); }catch(e){ cleanup(); return resolve(o.single()); }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if (m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
@@ -761,6 +761,8 @@ function render(r, input){
       <div class="kv">
         <div class="k">${t('etaExhaust')}</div><div class="v">${localizeTime(r.eta.timeToExhaust)}</div>
         <div class="k">${t('etaHit')}</div><div class="v">${localizeTime(r.eta.expectedTimeToHit)}</div>
+        ${r.eta.rawSweep ? `<div class="k">${t('etaSweep')}</div><div class="v">${fmtBig(r.eta.rawSweep)} → ${localizeTime(r.eta.sweepTime)}</div>
+        <div class="k">${t('etaKdf')}</div><div class="v">${fmtBig(Math.round(Number(r.dim1)))} → ${localizeTime(r.eta.seedTime)}</div>` : ''}
         <div class="k">${t('etaRate')}</div><div class="v">${fmtBig(Math.round(r.eta.kdfRate))}/s KDF${input.backend==='cpu'?' ('+input.cores+' '+t('cores')+')':''}</div>
       </div>
       <div class="note">${esc(r.eta.note)} ${esc(r.eta.rateSource)}.</div></div>`;

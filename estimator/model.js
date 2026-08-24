@@ -31,6 +31,7 @@ const DEFAULT_RATES = {
   cpu: {
     kdfPerCore: 3000,          // PBKDF2-HMAC-SHA512(2048) cand/s/core (range ~1-5K)
     ecMultPerCore: 50000,      // fixed-base k*G mults/s/core (libsecp ~50-70K)
+    sweepPerCore: 30000,       // unrank + checksum-test cand/s/core (the words SWEEP)
   },
   gpu: {
     kdf: 300000,               // device KDF cand/s (PLAN range 1e5-1e6)
@@ -306,19 +307,35 @@ function estimate(input, deps) {
       const ecRate = backend === 'gpu' ? rates.gpu.ecMult : rates.cpu.ecMultPerCore * cores;
       ecSec = (derivations * MULTS_PER_ADDRESS) / ecRate;
     }
-    const exhaustSec = seedSec + ecSec;
+    // The SWEEP: words/joint must unrank + checksum-test the WHOLE raw mnemonic
+    // set to find the checksum-valid ones -- this is separate from (and usually
+    // dominates) the KDF on those survivors. The KDF is what "candidates" counts;
+    // the sweep is why the crack visits the full raw set. The CPU path shards the
+    // sweep across cores; the GPU path currently sweeps single-threaded on the host.
+    let sweepSec = 0, rawSweep = 0;
+    if ((mode === 'words' || mode === 'joint') && survival && !survival.infinite) {
+      rawSweep = Number(survival.raw);
+      const sweepRate = rates.cpu.sweepPerCore * (backend === 'cpu' ? cores : 1);
+      sweepSec = rawSweep / sweepRate;
+    }
+    const exhaustSec = sweepSec + seedSec + ecSec;
+    const sweepDominates = sweepSec > seedSec + ecSec;
     eta = {
       calibrated: rates.calibrated,
       rateSource: rates.source,
       backend, cores: backend === 'cpu' ? cores : undefined,
       kdfRate, seedSeconds: seedSec, ecSeconds: ecSec,
+      sweepSeconds: sweepSec, rawSweep,
+      sweepTime: humanTime(sweepSec), seedTime: humanTime(seedSec + ecSec),
       exhaustSeconds: exhaustSec,
       expectedHitSeconds: exhaustSec / 2, // ~half if the guess is in the set
       timeToExhaust: humanTime(exhaustSec),
       expectedTimeToHit: humanTime(exhaustSec / 2),
-      note: targetType === 'xpub'
-        ? 'xpub target: no EC in the hot loop (KDF-bound).'
-        : 'address target: includes host secp256k1 fan-out (EC-bound on GPU).',
+      note: (rawSweep && sweepDominates)
+        ? `SWEEP-bound: finding the ${humanCount(dim1)} checksum-valid mnemonics means unranking + checksum-testing all ${humanCount(rawSweep)} raw candidates; that host sweep (${humanTime(sweepSec)}), not the KDF (${humanTime(seedSec)}), sets the time. GPU/CPU only speed the KDF, so they barely help here -- shrink the raw set (fewer/narrower unknown words) or turn off the checksum only if off-dictionary.`
+        : (targetType === 'xpub'
+            ? 'xpub target: no EC in the hot loop (KDF-bound).'
+            : 'address target: includes host secp256k1 fan-out (EC-bound).'),
     };
   }
 
