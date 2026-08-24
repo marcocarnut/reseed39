@@ -193,34 +193,42 @@ async function crackWordsGpu(opts){
   const reqCsum = opts.requireChecksum!==false;
   const total=opts.total, B=opts.batchSize||8192;
   const t0=performance.now(); let done=0, seeded=0;
-  for (let start=0; start<total; start+=B){
-    if (opts.isCancelled && opts.isCancelled()) return { stopped:true, done };
+  // Sweep + checksum-filter [start,start+B) on the host into {n,mns,gidx}.
+  const sweepFilter=(start)=>{
     const n=Math.min(B, total-start);
-    // sweep + filter this batch on the host (batched unrank when available)
     const cands = opts.unrankBatch ? opts.unrankBatch(start, n) : null;
     const mns=[], gidx=[];
     for (let i=0;i<n;i++){ const mn=cands?cands[i]:opts.unrank(start+i); if(mn==null) continue; if(reqCsum && !opts.validator.isValid(mn)) continue; mns.push(mn); gidx.push(start+i); }
-    if (mns.length){
-      const seeds = await gpuSeedsWords(mns, opts.passphrase);
-      seeded += mns.length;
-      for (let k=0;k<mns.length;k++){
-        const seed=seeds.subarray(k*64,k*64+64);
-        if (isAddr){
-          for (const pp of plan){ const acct=C.deriveHardenedPath(seed,[pp.purpose,pp.coin||0,pp.account||0]);
-            for (const ch of changes){ const chNode=C.ckdNormal(acct,ch);
-              for (let idx=0;idx<gap;idx++){ const node=C.ckdNormal(chNode,idx);
-                const tg=C.pubToTarget(C.privToPub(node.k),pp.purpose);
-                if(tg.type===opts.taddr.type&&C.eq(tg.program,opts.taddr.program)) return {found:mns[k],path:{...pp,change:ch,index:idx},index:gidx[k],done:done+k+1}; } } }
-        } else {
-          for (const pp of opts.plan){ if(C.eq(C.accountNode(seed,pp.purpose,pp.account,pp.coin).c,opts.tcc)) return {found:mns[k],path:pp,index:gidx[k],done:done+k+1}; }
-        }
+    return { n, mns, gidx };
+  };
+  const seed=(b)=> b.mns.length ? gpuSeedsWords(b.mns, opts.passphrase) : Promise.resolve(new Uint8Array(0));
+  // DOUBLE-BUFFER: sweep+filter the NEXT batch on the host while the GPU seeds
+  // the current one (and derive the current while the GPU seeds the next), so
+  // the GPU stays fed instead of idling through the host sweep.
+  let cur = sweepFilter(0), curSeedP = seed(cur), start = B;
+  while (cur && !(opts.isCancelled && opts.isCancelled())){
+    const next = start<total ? sweepFilter(start) : null;   // overlaps the GPU seed of `cur`
+    start += B;
+    const seeds = await curSeedP;
+    const nextSeedP = next ? seed(next) : null;             // kick off next GPU seed before deriving
+    for (let k=0;k<cur.mns.length;k++){
+      const s=seeds.subarray(k*64,k*64+64);
+      if (isAddr){
+        for (const pp of plan){ const acct=C.deriveHardenedPath(s,[pp.purpose,pp.coin||0,pp.account||0]);
+          for (const ch of changes){ const chNode=C.ckdNormal(acct,ch);
+            for (let idx=0;idx<gap;idx++){ const node=C.ckdNormal(chNode,idx);
+              const tg=C.pubToTarget(C.privToPub(node.k),pp.purpose);
+              if(tg.type===opts.taddr.type&&C.eq(tg.program,opts.taddr.program)) return {found:cur.mns[k],path:{...pp,change:ch,index:idx},index:cur.gidx[k],done:done+k+1}; } } }
+      } else {
+        for (const pp of opts.plan){ if(C.eq(C.accountNode(s,pp.purpose,pp.account,pp.coin).c,opts.tcc)) return {found:cur.mns[k],path:pp,index:cur.gidx[k],done:done+k+1}; }
       }
+      if((k&4095)===4095) await Promise.resolve();   // cheap microtask yield (no 4ms clamp)
     }
-    done += n;
+    seeded += cur.mns.length; done += cur.n;
     if (opts.onProgress){ const el=(performance.now()-t0)/1000; opts.onProgress(done,total,done/el,{seeded,seedRate:seeded/el}); }
-    await new Promise(r=>setTimeout(r,0));
+    cur = next; curSeedP = nextSeedP;
   }
-  return { found:null, done };
+  return cur ? { stopped:true, done } : { found:null, done };
 }
 
 // Crack an ADDRESS passphrase. Unlike the xpub path this needs elliptic curve:
