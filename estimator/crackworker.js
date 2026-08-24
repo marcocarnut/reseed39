@@ -20,7 +20,7 @@ let core = null, C = null, V = null;
 async function ensureCore(wordlist){
   if (core) return;
   C = globalThis.BIP39Crypto;
-  core = await globalThis.RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile: p => '../wasm/'+p } });
+  core = await globalThis.RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile: p => '../wasm/'+p+_v } });
   core.registerDict('bip39-en', wordlist);
   ['bip39en','bip39','en','english'].forEach(a=>{ try{ core.registerDict(a, wordlist); }catch(e){} });
   V = globalThis.BIP39.makeValidator(wordlist);
@@ -55,13 +55,29 @@ onmessage = async (e) => {
     // threshold, so the UI would sit blank until 'done'.
     const maybePost = () => { const now = performance.now(); if (now - lastPost >= 250) { lastPost = now; if(sweepOnly) flushCand(true); postMessage({ type:'progress', id:d.id, swept, seeded }); } };
 
+    // Candidate fetch backed by the batched sequential unrank (one seek + N
+    // odometer-steps, ~5x the per-index unrank). Falls back to unrank on an
+    // older core lacking the export.
+    const UB = 4096; let _cbBase = -1, _cb = null, _useBatch = true;
+    const candAt = (i) => {
+      if (_useBatch) {
+        if (!(_cb && i >= _cbBase && i < _cbBase + _cb.length)) {
+          const r = set.unrankBatch ? set.unrankBatch(i, Math.min(UB, d.end - i)) : null;
+          if (r === null) { _useBatch = false; return set.unrank(BigInt(i)); }
+          _cbBase = i; _cb = r;
+        }
+        return _cb[i - _cbBase];
+      }
+      return set.unrank(BigInt(i));
+    };
+
     for (let i = d.start; i < d.end; i++) {
       let mn, pw;
       if (isWords) {
-        mn = set.unrank(BigInt(i)); pw = pass;
+        mn = candAt(i); pw = pass;
         if (reqCsum && !(mn !== null && V.isValid(mn))) { swept++; maybePost(); continue; }
       } else {
-        pw = set.unrank(BigInt(i)); mn = d.mnemonic;
+        pw = candAt(i); mn = d.mnemonic;
       }
       if (sweepOnly) { swept++; seeded++; candBuf.push({ mn, index:i }); flushCand(false); maybePost(); continue; }
       seeded++;

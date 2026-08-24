@@ -106,7 +106,7 @@ async function crackXpub(opts){
   for (let start=0; start<total; start+=B){
     if (opts.isCancelled && opts.isCancelled()) return { stopped:true, done };
     const n = Math.min(B, total-start);
-    const passes = new Array(n); for (let i=0;i<n;i++) passes[i]=opts.unrank(start+i);
+    const _cb = opts.unrankBatch ? opts.unrankBatch(start, n) : null; const passes = new Array(n); for (let i=0;i<n;i++) passes[i]=_cb?_cb[i]:opts.unrank(start+i);
     const seeds = await gpuSeeds(g, mid, opts.mnemonic, passes);
     for (let i=0;i<n;i++){
       const seed = seeds.subarray(i*64,i*64+64);
@@ -196,9 +196,10 @@ async function crackWordsGpu(opts){
   for (let start=0; start<total; start+=B){
     if (opts.isCancelled && opts.isCancelled()) return { stopped:true, done };
     const n=Math.min(B, total-start);
-    // sweep + filter this batch on the host
+    // sweep + filter this batch on the host (batched unrank when available)
+    const cands = opts.unrankBatch ? opts.unrankBatch(start, n) : null;
     const mns=[], gidx=[];
-    for (let i=0;i<n;i++){ const mn=opts.unrank(start+i); if(mn==null) continue; if(reqCsum && !opts.validator.isValid(mn)) continue; mns.push(mn); gidx.push(start+i); }
+    for (let i=0;i<n;i++){ const mn=cands?cands[i]:opts.unrank(start+i); if(mn==null) continue; if(reqCsum && !opts.validator.isValid(mn)) continue; mns.push(mn); gidx.push(start+i); }
     if (mns.length){
       const seeds = await gpuSeedsWords(mns, opts.passphrase);
       seeded += mns.length;
@@ -266,7 +267,7 @@ async function crackAddress(opts){
   for (let start=0; start<total; start+=B){
     if (opts.isCancelled && opts.isCancelled()) return { stopped:true, done };
     const n = Math.min(B, total-start);
-    const passes = new Array(n); for (let i=0;i<n;i++) passes[i]=opts.unrank(start+i);
+    const _cb = opts.unrankBatch ? opts.unrankBatch(start, n) : null; const passes = new Array(n); for (let i=0;i<n;i++) passes[i]=_cb?_cb[i]:opts.unrank(start+i);
     const seeds = await gpuSeeds(g, mid, opts.mnemonic, passes);
     if (simple){
       const hit = _addrBatchMatch(seeds, n, plan[0], opts.target);

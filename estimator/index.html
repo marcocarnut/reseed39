@@ -212,16 +212,16 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js"></script>
-<script src="../wasm/rxecore_api.js"></script>
+<script src="../wasm/rxecore.js?v=b19"></script>
+<script src="../wasm/rxecore_api.js?v=b19"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b18"></script>
-<script src="../estimator/model.js?v=b18"></script>
-<script src="../estimator/wordset.js?v=b18"></script>
-<script src="../estimator/bip39crypto.js?v=b18"></script>
-<script src="../estimator/gpucrack.js?v=b18"></script>
-<script src="../estimator/i18n.js?v=b18"></script>
+<script src="../estimator/bip39.js?v=b19"></script>
+<script src="../estimator/model.js?v=b19"></script>
+<script src="../estimator/wordset.js?v=b19"></script>
+<script src="../estimator/bip39crypto.js?v=b19"></script>
+<script src="../estimator/gpucrack.js?v=b19"></script>
+<script src="../estimator/i18n.js?v=b19"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -347,7 +347,7 @@ function setLang(l){
     const txt = await (await fetch('../data/english.txt')).text();
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b19' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -630,6 +630,7 @@ async function onCrack(){
   const crackStart=performance.now();
   const engLabel = gpu ? 'GPU' : 'CPU';
   const common={ plan, total, unrank:i=>set.unrank(BigInt(i)),
+    unrankBatch:(start,count)=>set.unrankBatch(start,count),   // batched sweep (null on old core)
     onProgress:(done,tot,rate,extra)=>{
       let s=`${fmtBig(done)} / ${fmtBig(tot)} · ${fmtBig(Math.round(rate))} ${t('crackTried')}/s`;
       // the "tried" sweep is cheap; the real cost is the ones actually HASHED --
@@ -695,9 +696,9 @@ async function cpuCrackWords(a){
   let seeded=0;
   for(let start=0;start<a.total;start+=1024){
     if(a.isCancelled()) return {stopped:true};
-    const n=Math.min(1024,a.total-start);
+    const n=Math.min(1024,a.total-start); const _cb=a.unrankBatch?a.unrankBatch(start,n):null;
     for(let i=0;i<n;i++){
-      const mn=a.unrank(start+i);
+      const mn=(_cb?_cb[i]:a.unrank(start+i));
       if(reqCsum && !VALIDATOR.isValid(mn)) continue;   // checksum pre-filter -> skip PBKDF2
       seeded++;
       const seed=C.mnemonicToSeed(mn,pass);
@@ -740,7 +741,7 @@ function cpuCrackMT(o){
       const start=k*per, end=Math.min(o.total,(k+1)*per);
       if (start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b18'); }catch(e){ cleanup(); return resolve(o.single()); }
+      let w; try{ w=new Worker('crackworker.js?v=b19'); }catch(e){ cleanup(); return resolve(o.single()); }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if (m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
@@ -808,7 +809,7 @@ function crackWordsHybrid(o){
     for(let k=0;k<nW;k++){
       const start=k*per, end=Math.min(o.total,(k+1)*per); if(start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b18'); }catch(e){ finish({error:'worker spawn failed'}); return; }
+      let w; try{ w=new Worker('crackworker.js?v=b19'); }catch(e){ finish({error:'worker spawn failed'}); return; }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if(m.type==='cand'){ sweptA[m.id]=m.swept; for(const it of m.items) queue.push(it); report(); pump(); }
@@ -830,8 +831,8 @@ async function cpuCrack(a){
   const C=window.BIP39Crypto, t0=performance.now();
   for(let start=0;start<a.total;start+=512){
     if(a.isCancelled()) return {stopped:true};
-    const n=Math.min(512,a.total-start);
-    for(let i=0;i<n;i++){ const pass=a.unrank(start+i); const seed=C.mnemonicToSeed(a.mnemonic,pass);
+    const n=Math.min(512,a.total-start); const _cb=a.unrankBatch?a.unrankBatch(start,n):null;
+    for(let i=0;i<n;i++){ const pass=(_cb?_cb[i]:a.unrank(start+i)); const seed=C.mnemonicToSeed(a.mnemonic,pass);
       for(const pp of a.plan){ if(C.eq(C.accountNode(seed,pp.purpose,pp.account,pp.coin).c,a.targetChainCode)) return {found:pass,path:pp,index:start+i}; } }
     a.onProgress(start+n,a.total,(start+n)/((performance.now()-t0)/1000)); await new Promise(r=>setTimeout(r,0));
   }
@@ -844,8 +845,8 @@ async function cpuCrackAddress(a){
   const changes=(a.changes&&a.changes.length)?a.changes:[0]; const gap=Math.max(1,a.gap||1);
   for(let start=0;start<a.total;start+=128){
     if(a.isCancelled()) return {stopped:true};
-    const n=Math.min(128,a.total-start);
-    for(let i=0;i<n;i++){ const pass=a.unrank(start+i); const seed=C.mnemonicToSeed(a.mnemonic,pass);
+    const n=Math.min(128,a.total-start); const _cb=a.unrankBatch?a.unrankBatch(start,n):null;
+    for(let i=0;i<n;i++){ const pass=(_cb?_cb[i]:a.unrank(start+i)); const seed=C.mnemonicToSeed(a.mnemonic,pass);
       for(const pp of plan){ const acct=C.deriveHardenedPath(seed,[pp.purpose,pp.coin||0,pp.account||0]);
         for(const ch of changes){ const chNode=C.ckdNormal(acct,ch);
           for(let idx=0;idx<gap;idx++){ const node=C.ckdNormal(chNode,idx);

@@ -8,7 +8,12 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 RXE_DIR="${RXE_DIR:-/root/rxe}"
+# GMP-wasm: box default is $HERE/gmp-wasm/{include,lib}; overridable so the
+# laptop can reuse jsrxe's build (GMP_INC=.../jsrxe/build/gmp GMP_LIB=.../.libs/libgmp.a).
 GMP="$HERE/gmp-wasm"
+GMP_INC="${GMP_INC:-$GMP/include}"
+GMP_LIB="${GMP_LIB:-$GMP/lib/libgmp.a}"
+EMSDK_ENV="${EMSDK_ENV:-/root/emsdk/emsdk_env.sh}"
 
 # librxe translation units (see rxe/Makefile 'librxe.a' rule).
 RXE_SRCS=(rxe.c rxe_alt.c rxe_node.c parse.c bkreftbl.c permute.c repeat.c \
@@ -21,11 +26,11 @@ SRCS+=("$HERE/rxe_wasm.c")
 EXPORTS='["_rxew_parse","_rxew_error","_rxew_error_message","_rxew_error_pos","_rxew_is_infinite","_rxew_is_shortlex","_rxew_free","_rxew_free_str","_rxew_cardinality","_rxew_unrank","_rxew_unrank_batch","_rxew_rank","_rxew_register_dict","_malloc","_free"]'
 RT='["ccall","cwrap","UTF8ToString","stringToUTF8","lengthBytesUTF8"]'
 
-. /root/emsdk/emsdk_env.sh >/dev/null 2>&1
+. "$EMSDK_ENV" >/dev/null 2>&1
 
 emcc -O2 -Wall -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function \
-    -I"$RXE_DIR" -I"$GMP/include" \
-    "${SRCS[@]}" "$GMP/lib/libgmp.a" \
+    -I"$RXE_DIR" -I"$GMP_INC" \
+    "${SRCS[@]}" "$GMP_LIB" \
     -o "$HERE/rxecore.js" \
     -sMODULARIZE=1 -sEXPORT_NAME=RxeCore \
     -sALLOW_MEMORY_GROWTH=1 \
