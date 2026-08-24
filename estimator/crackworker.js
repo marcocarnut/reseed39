@@ -41,16 +41,34 @@ onmessage = async (e) => {
     const changes = (d.changes && d.changes.length) ? d.changes : [0];
     const gap = Math.max(1, d.gap || 1);
     let hit = null;
-    for (let i=0; i<d.n && !hit; i++) {
-      const seed = seeds.subarray(i*64, i*64+64);
-      for (const pp of plan) {
-        const acct = C.deriveHardenedPath(seed, [pp.purpose, pp.coin||0, pp.account||0]);
-        for (const ch of changes) { const chNode = C.ckdNormal(acct, ch);
-          for (let idx=0; idx<gap; idx++) { const node = C.ckdNormal(chNode, idx);
-            const tg = C.pubToTarget(C.privToPub(node.k), pp.purpose);
-            if (tg.type===taddr.type && C.eq(tg.program, taddr.program)) { hit = { index:d.startIndex+i, path:{...pp, change:ch, index:idx} }; break; } }
+    // BATCH EC: for the common simple derivation (1 purpose, change 0, index 0)
+    // amortize the modular inverse across the whole task via Montgomery batch
+    // inversion (privToPubBatch) -- ~1.7x the per-candidate privToPub.
+    const simple = plan.length===1 && changes.length===1 && changes[0]===0 && gap===1
+                   && typeof C.privToPubBatch==='function' && typeof C.ckdNormalPub==='function';
+    if (simple) {
+      const pp = plan[0], n = d.n;
+      const accts = new Array(n);
+      for (let i=0;i<n;i++) accts[i]=C.deriveHardenedPath(seeds.subarray(i*64,i*64+64),[pp.purpose,pp.coin||0,pp.account||0]);
+      const pubA = C.privToPubBatch(accts.map(a=>a.k));
+      const chs = new Array(n); for (let i=0;i<n;i++) chs[i]=C.ckdNormalPub(accts[i], pubA[i], 0);
+      const pubC = C.privToPubBatch(chs.map(c=>c.k));
+      const nodes = new Array(n); for (let i=0;i<n;i++) nodes[i]=C.ckdNormalPub(chs[i], pubC[i], 0);
+      const pubN = C.privToPubBatch(nodes.map(nd=>nd.k));
+      for (let i=0;i<n;i++){ const tg=C.pubToTarget(pubN[i], pp.purpose);
+        if (tg.type===taddr.type && C.eq(tg.program, taddr.program)){ hit={ index:d.startIndex+i, path:{...pp, change:0, index:0} }; break; } }
+    } else {
+      for (let i=0; i<d.n && !hit; i++) {
+        const seed = seeds.subarray(i*64, i*64+64);
+        for (const pp of plan) {
+          const acct = C.deriveHardenedPath(seed, [pp.purpose, pp.coin||0, pp.account||0]);
+          for (const ch of changes) { const chNode = C.ckdNormal(acct, ch);
+            for (let idx=0; idx<gap; idx++) { const node = C.ckdNormal(chNode, idx);
+              const tg = C.pubToTarget(C.privToPub(node.k), pp.purpose);
+              if (tg.type===taddr.type && C.eq(tg.program, taddr.program)) { hit = { index:d.startIndex+i, path:{...pp, change:ch, index:idx} }; break; } }
+            if (hit) break; }
           if (hit) break; }
-        if (hit) break; }
+      }
     }
     postMessage(hit ? { type:'derivehit', id:d.id, batchId:d.batchId, index:hit.index, path:hit.path }
                     : { type:'derivedone', id:d.id, batchId:d.batchId });
