@@ -212,16 +212,16 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b22"></script>
-<script src="../wasm/rxecore_api.js?v=b22"></script>
+<script src="../wasm/rxecore.js?v=b23"></script>
+<script src="../wasm/rxecore_api.js?v=b23"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b22"></script>
-<script src="../estimator/model.js?v=b22"></script>
-<script src="../estimator/wordset.js?v=b22"></script>
-<script src="../estimator/bip39crypto.js?v=b22"></script>
-<script src="../estimator/gpucrack.js?v=b22"></script>
-<script src="../estimator/i18n.js?v=b22"></script>
+<script src="../estimator/bip39.js?v=b23"></script>
+<script src="../estimator/model.js?v=b23"></script>
+<script src="../estimator/wordset.js?v=b23"></script>
+<script src="../estimator/bip39crypto.js?v=b23"></script>
+<script src="../estimator/gpucrack.js?v=b23"></script>
+<script src="../estimator/i18n.js?v=b23"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -348,7 +348,7 @@ function setLang(l){
     const txt = await (await fetch('../data/english.txt')).text();
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b22' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b23' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -676,7 +676,7 @@ async function onCrack(){
       r = gpu ? await window.GpuCrack.crackXpub(args) : await mt(()=>cpuCrack(args));
     } else {
       const args={...common, mnemonic:mnFixed, target:taddr, changes, gap:gapN, batchSize:2048,
-        nWorkers, workerUrl:'crackworker.js?v=b22' };   // parallel-EC derive pool
+        nWorkers, workerUrl:'crackworker.js?v=b23' };   // parallel-EC derive pool
       r = gpu ? await window.GpuCrack.crackAddress(args) : await mt(()=>cpuCrackAddress(args));
     }
     if(r && r.error) throw new Error(r.error);
@@ -756,7 +756,7 @@ function cpuCrackMT(o){
       const start=k*per, end=Math.min(o.total,(k+1)*per);
       if (start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b22'); }catch(e){ cleanup(); return resolve(o.single()); }
+      let w; try{ w=new Worker('crackworker.js?v=b23'); }catch(e){ cleanup(); return resolve(o.single()); }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if (m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
@@ -798,10 +798,14 @@ function crackWordsHybrid(o){
     async function pump(){
       if(seeding||finished) return; seeding=true;
       while(queue.length && !finished){
-        const batch=queue.splice(0,8192); const mns=batch.map(x=>x.mn);
+        const batch=queue.splice(0,4096); const mns=batch.map(x=>x.mn);
         let seeds; try{ seeds=await window.GpuCrack.gpuSeedsWords(mns,o.passphrase); }catch(e){ finish({error:e.message}); return; }
         if(finished) return;
-        for(let k=0;k<mns.length;k++){
+        // Derive+compare in small chunks, YIELDING between them, so the main
+        // thread returns to the event loop -- the sweep workers keep streaming
+        // (their messages get handled) and the GPU/UI stay smooth instead of
+        // freezing for ~1s per big batch (the stutter). EC still overlaps the sweep.
+        for(let k=0;k<mns.length && !finished;k++){
           const seed=seeds.subarray(k*64,k*64+64);
           if(isAddr){
             let hit=null;
@@ -814,6 +818,7 @@ function crackWordsHybrid(o){
           } else {
             for(const pp of o.plan){ if(C.eq(C.accountNode(seed,pp.purpose,pp.account,pp.coin).c,o.tcc)){ finish({found:mns[k],path:pp,index:batch[k].index}); return; } }
           }
+          if((k&255)===255){ await new Promise(r=>setTimeout(r,0)); if(finished) return; }   // yield: keep the sweep + UI flowing
         }
         seededTotal+=mns.length; report();
       }
@@ -824,7 +829,7 @@ function crackWordsHybrid(o){
     for(let k=0;k<nW;k++){
       const start=k*per, end=Math.min(o.total,(k+1)*per); if(start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b22'); }catch(e){ finish({error:'worker spawn failed'}); return; }
+      let w; try{ w=new Worker('crackworker.js?v=b23'); }catch(e){ finish({error:'worker spawn failed'}); return; }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if(m.type==='cand'){ sweptA[m.id]=m.swept; for(const it of m.items) queue.push(it); report(); pump(); }
