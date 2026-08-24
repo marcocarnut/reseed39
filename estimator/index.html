@@ -212,16 +212,16 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b23"></script>
-<script src="../wasm/rxecore_api.js?v=b23"></script>
+<script src="../wasm/rxecore.js?v=b24"></script>
+<script src="../wasm/rxecore_api.js?v=b24"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b23"></script>
-<script src="../estimator/model.js?v=b23"></script>
-<script src="../estimator/wordset.js?v=b23"></script>
-<script src="../estimator/bip39crypto.js?v=b23"></script>
-<script src="../estimator/gpucrack.js?v=b23"></script>
-<script src="../estimator/i18n.js?v=b23"></script>
+<script src="../estimator/bip39.js?v=b24"></script>
+<script src="../estimator/model.js?v=b24"></script>
+<script src="../estimator/wordset.js?v=b24"></script>
+<script src="../estimator/bip39crypto.js?v=b24"></script>
+<script src="../estimator/gpucrack.js?v=b24"></script>
+<script src="../estimator/i18n.js?v=b24"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -348,7 +348,7 @@ function setLang(l){
     const txt = await (await fetch('../data/english.txt')).text();
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b23' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b24' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -676,7 +676,7 @@ async function onCrack(){
       r = gpu ? await window.GpuCrack.crackXpub(args) : await mt(()=>cpuCrack(args));
     } else {
       const args={...common, mnemonic:mnFixed, target:taddr, changes, gap:gapN, batchSize:2048,
-        nWorkers, workerUrl:'crackworker.js?v=b23' };   // parallel-EC derive pool
+        nWorkers, workerUrl:'crackworker.js?v=b24' };   // parallel-EC derive pool
       r = gpu ? await window.GpuCrack.crackAddress(args) : await mt(()=>cpuCrackAddress(args));
     }
     if(r && r.error) throw new Error(r.error);
@@ -756,7 +756,7 @@ function cpuCrackMT(o){
       const start=k*per, end=Math.min(o.total,(k+1)*per);
       if (start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b23'); }catch(e){ cleanup(); return resolve(o.single()); }
+      let w; try{ w=new Worker('crackworker.js?v=b24'); }catch(e){ cleanup(); return resolve(o.single()); }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if (m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
@@ -782,6 +782,7 @@ function cpuCrackMT(o){
 function crackWordsHybrid(o){
   const C=window.BIP39Crypto;
   const nW=Math.max(1, Math.min(o.nWorkers||1, 32));
+  const WURL='crackworker.js?v=b24';
   return new Promise(async (resolve)=>{
     try{ await window.GpuCrack.initGpuWords(); }catch(e){ return resolve({error:e.message}); }
     const isAddr=!!o.taddr;
@@ -790,51 +791,63 @@ function crackWordsHybrid(o){
     const workers=[]; const sweptA=new Array(nW).fill(0);
     let finished=false, doneCount=0, spawned=0, seededTotal=0, seeding=false, allSwept=false;
     const queue=[]; const t0=performance.now();
-    const cleanup=()=>{ workers.forEach(w=>{try{w.terminate()}catch(e){}}); clearInterval(poll); };
+    // Address: a PARALLEL derive pool does the secp256k1 compare off the main
+    // thread. xpub: the chaincode compare is cheap, keep it inline.
+    const dWorkers=[], dIdle=[], dPending=new Map(); const dQueue=[];
+    let dBatchId=0, dDispatched=0, dCompleted=0;
+    const cleanup=()=>{ workers.forEach(w=>{try{w.terminate()}catch(e){}}); dWorkers.forEach(w=>{try{w.terminate()}catch(e){}}); clearInterval(poll); };
     const finish=(r)=>{ if(finished) return; finished=true; cleanup(); resolve(r); };
     const report=()=>{ const swept=sweptA.reduce((a,b)=>a+b,0), el=(performance.now()-t0)/1000||1e-6;
       o.onProgress(swept,o.total,swept/el,{seeded:seededTotal,seedRate:seededTotal/el}); };
     const poll=setInterval(()=>{ if(o.isCancelled&&o.isCancelled()) finish({stopped:true}); },200);
+    const maybeDone=()=>{ if(allSwept && !queue.length && !seeding && (!isAddr || (dDispatched===dCompleted && !dQueue.length)) && !finished) finish({found:null}); };
+    // dispatch pending seed-batches to idle derive workers
+    const drainDerive=()=>{ while(dIdle.length && dQueue.length && !finished){ const w=dIdle.shift(), task=dQueue.shift();
+      dPending.set(task.batchId, task);
+      w.postMessage({ type:'derive', batchId:task.batchId, seedsBuf:task.seedsBuf, n:task.batch.length, startIndex:0,
+        plan, addrType:o.taddr.type, programHex:C.toHex(o.taddr.program), changes, gap }, [task.seedsBuf]); } };
+    if(isAddr){
+      for(let i=0;i<nW;i++){ let w; try{ w=new Worker(WURL); }catch(e){ break; } dWorkers.push(w); dIdle.push(w);
+        w.onmessage=(e)=>{ const m=e.data; if(finished) return;
+          if(m.type==='derivehit'){ const task=dPending.get(m.batchId); const hitc=task.batch[m.index]; finish({found:hitc.mn, path:m.path, index:hitc.index}); }
+          else if(m.type==='derivedone'){ dPending.delete(m.batchId); dCompleted++; dIdle.push(w); drainDerive(); pump(); maybeDone(); } };
+        w.onerror=(ev)=>finish({error:(ev&&ev.message)||'derive worker error'});
+      }
+    }
     async function pump(){
       if(seeding||finished) return; seeding=true;
       while(queue.length && !finished){
+        // backpressure: don't seed far ahead of the derive pool
+        if(isAddr && dQueue.length > nW*3){ break; }
         const batch=queue.splice(0,4096); const mns=batch.map(x=>x.mn);
         let seeds; try{ seeds=await window.GpuCrack.gpuSeedsWords(mns,o.passphrase); }catch(e){ finish({error:e.message}); return; }
         if(finished) return;
-        // Derive+compare in small chunks, YIELDING between them, so the main
-        // thread returns to the event loop -- the sweep workers keep streaming
-        // (their messages get handled) and the GPU/UI stay smooth instead of
-        // freezing for ~1s per big batch (the stutter). EC still overlaps the sweep.
-        for(let k=0;k<mns.length && !finished;k++){
-          const seed=seeds.subarray(k*64,k*64+64);
-          if(isAddr){
-            let hit=null;
-            for(const pp of plan){ const acct=C.deriveHardenedPath(seed,[pp.purpose,pp.coin||0,pp.account||0]);
-              for(const ch of changes){ const chNode=C.ckdNormal(acct,ch);
-                for(let idx=0;idx<gap;idx++){ const node=C.ckdNormal(chNode,idx);
-                  const tg=C.pubToTarget(C.privToPub(node.k),pp.purpose);
-                  if(tg.type===o.taddr.type&&C.eq(tg.program,o.taddr.program)){ hit={...pp,change:ch,index:idx}; break;} } if(hit)break; } if(hit)break; }
-            if(hit){ finish({found:mns[k],path:hit,index:batch[k].index}); return; }
-          } else {
+        seededTotal+=mns.length;
+        if(isAddr){
+          // hand the seeds to a derive worker (parallel EC); transfer zero-copy.
+          dQueue.push({ batchId:dBatchId++, seedsBuf:seeds.buffer, batch }); dDispatched++; drainDerive();
+        } else {
+          // xpub: cheap chaincode compare inline, chunked+yield to stay smooth.
+          for(let k=0;k<mns.length && !finished;k++){ const seed=seeds.subarray(k*64,k*64+64);
             for(const pp of o.plan){ if(C.eq(C.accountNode(seed,pp.purpose,pp.account,pp.coin).c,o.tcc)){ finish({found:mns[k],path:pp,index:batch[k].index}); return; } }
-          }
-          if((k&255)===255){ await new Promise(r=>setTimeout(r,0)); if(finished) return; }   // yield: keep the sweep + UI flowing
+            if((k&511)===511){ await new Promise(r=>setTimeout(r,0)); if(finished) return; } }
         }
-        seededTotal+=mns.length; report();
+        report();
+        await new Promise(r=>setTimeout(r,0));   // yield so the sweep keeps flowing
       }
       seeding=false;
-      if(allSwept && !queue.length && !finished) finish({found:null});
+      maybeDone();
     }
     const per=Math.ceil(o.total/nW);
     for(let k=0;k<nW;k++){
       const start=k*per, end=Math.min(o.total,(k+1)*per); if(start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b23'); }catch(e){ finish({error:'worker spawn failed'}); return; }
+      let w; try{ w=new Worker(WURL); }catch(e){ finish({error:'worker spawn failed'}); return; }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if(m.type==='cand'){ sweptA[m.id]=m.swept; for(const it of m.items) queue.push(it); report(); pump(); }
         else if(m.type==='progress'){ sweptA[m.id]=m.swept; report(); }
-        else if(m.type==='done'){ sweptA[m.id]=m.swept; if(++doneCount>=spawned){ allSwept=true; pump(); if(!seeding&&!queue.length) finish({found:null}); } }
+        else if(m.type==='done'){ sweptA[m.id]=m.swept; if(++doneCount>=spawned){ allSwept=true; pump(); maybeDone(); } }
         else if(m.type==='error'){ finish({error:m.message}); }
       };
       w.onerror=(ev)=>finish({error:(ev&&ev.message)||'worker error'});
