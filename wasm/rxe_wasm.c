@@ -119,6 +119,44 @@ char *rxew_unrank(void *r, const char *index_dec)
     return buf;
 }
 
+/* ----- batched sequential unrank (the SWEEP fast path) ------------------- *
+ * rxe_seek pays a division to position the odometer; rxe_next just STEPS it
+ * (rxe.h: "a division is paid only at the start"). So for a contiguous sweep
+ * we seek ONCE then step, rendering each member, and return them all in one
+ * buffer -- amortizing the per-call JS<->wasm boundary + index marshalling that
+ * dominates the sweep's unrank half. Members are '\n'-separated (mnemonics and
+ * passphrases are single-line); the JS side splits and drops the trailing empty.
+ * Returns up to `count` members starting at `start_dec`, or NULL on error. */
+EMSCRIPTEN_KEEPALIVE
+char *rxew_unrank_batch(void *r, const char *start_dec, int count)
+{
+    struct rxe *rxe = (struct rxe *)r;
+    if (count <= 0) return NULL;
+    mpz_t idx; mpz_init(idx);
+    if (mpz_set_str(idx, start_dec, 10) != 0 || mpz_sgn(idx) < 0) { mpz_clear(idx); return NULL; }
+    if (!rxe_is_infinite(rxe) && mpz_cmp(idx, rxe->nitems) >= 0) { mpz_clear(idx); return NULL; }
+    rxe_check_overflow();
+    if (rxe_seek(rxe, idx)) { mpz_clear(idx); return NULL; }
+    mpz_clear(idx);
+
+    size_t cap = 8192, len = 0;
+    char *out = (char *)malloc(cap);
+    char *tmp = (char *)malloc(RXEW_RENDER_CAP + 1);
+    if (!out || !tmp) { free(out); free(tmp); return NULL; }
+    for (int c = 0; c < count; c++) {
+        rxe_current(tmp, RXEW_RENDER_CAP, rxe);
+        if (rxe_check_overflow()) break;
+        size_t tl = strlen(tmp);
+        if (len + tl + 2 > cap) { while (len + tl + 2 > cap) cap *= 2;
+            char *n = (char *)realloc(out, cap); if (!n) { free(out); free(tmp); return NULL; } out = n; }
+        memcpy(out + len, tmp, tl); len += tl; out[len++] = '\n';
+        if (c + 1 < count && !rxe_next(rxe)) break;   /* end of a finite set */
+    }
+    free(tmp);
+    out[len] = '\0';
+    return out;
+}
+
 /* ----- rank (inverse: string -> smallest index, as decimal) -------------- */
 
 /* Smallest index at which string s sits, or NULL if s is not a member or the

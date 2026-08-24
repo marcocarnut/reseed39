@@ -56,6 +56,9 @@ class RxeCoreApi {
     this._unrank = c('rxew_unrank', 'number', ['number', 'string']); // char*
     this._rank = c('rxew_rank', 'number', ['number', 'string']);     // char*
     this._registerDict = c('rxew_register_dict', 'number', ['string', 'string']);
+    // Optional batched sweep primitive -- only if the wasm was rebuilt with it.
+    this._unrankBatch = Module['_rxew_unrank_batch']
+      ? c('rxew_unrank_batch', 'number', ['number', 'string', 'number']) : null;
   }
 
   // Read a malloc'd C string returned by the wasm side, then free it.
@@ -114,6 +117,20 @@ class RxeSet {
   unrank(index) {
     const dec = typeof index === 'bigint' ? index.toString() : String(index);
     return this.api._takeString(this.api._unrank(this.h, dec));
+  }
+
+  // Contiguous batch starting at `start`: one seek + N odometer-steps, returned
+  // as a string[] in one boundary crossing (the sweep fast path). Returns null
+  // if the wasm lacks the batch export (older core) -- caller falls back to
+  // per-index unrank. Members are '\n'-separated on the C side; we split here.
+  unrankBatch(start, count) {
+    if (!this.api._unrankBatch) return null;
+    const dec = typeof start === 'bigint' ? start.toString() : String(start);
+    const s = this.api._takeString(this.api._unrankBatch(this.h, dec, count | 0));
+    if (s === null) return null;
+    const arr = s.split('\n');
+    if (arr.length && arr[arr.length - 1] === '') arr.pop();
+    return arr;
   }
 
   // Smallest index (BigInt) at which `s` sits, or null if not a member / the

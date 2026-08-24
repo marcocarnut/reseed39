@@ -18,7 +18,7 @@ SRCS=()
 for f in "${RXE_SRCS[@]}"; do SRCS+=("$RXE_DIR/$f"); done
 SRCS+=("$HERE/rxe_wasm.c")
 
-EXPORTS='["_rxew_parse","_rxew_error","_rxew_error_message","_rxew_error_pos","_rxew_is_infinite","_rxew_is_shortlex","_rxew_free","_rxew_free_str","_rxew_cardinality","_rxew_unrank","_rxew_rank","_rxew_register_dict","_malloc","_free"]'
+EXPORTS='["_rxew_parse","_rxew_error","_rxew_error_message","_rxew_error_pos","_rxew_is_infinite","_rxew_is_shortlex","_rxew_free","_rxew_free_str","_rxew_cardinality","_rxew_unrank","_rxew_unrank_batch","_rxew_rank","_rxew_register_dict","_malloc","_free"]'
 RT='["ccall","cwrap","UTF8ToString","stringToUTF8","lengthBytesUTF8"]'
 
 . /root/emsdk/emsdk_env.sh >/dev/null 2>&1
