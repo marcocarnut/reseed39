@@ -387,7 +387,35 @@ function _scalarMult(k, ax, ay){             // k * (ax,ay) affine -> affine {x,
   while (k>0n){ if (k&1n) R=_jAdd(R,Q); Q=_jDouble(Q); k>>=1n; }
   return _jToAffine(R);
 }
-function pointFromPriv(k){ return _scalarMult(k, SECP_GX, SECP_GY); }   // affine {x,y}
+// Fixed-base comb table for G: table[i][j] = (j << 4i)*G, i=0..63, j=1..15.
+// Every EC op in the address path is k*G (privToPub, ckdNormal's parent pubkey,
+// the taproot tweak), so this replaces ~256 doublings + 128 adds with ~64 adds
+// and no doublings -> the address crack's host EC gets several x faster. Built
+// lazily once. pointFromPriv stays byte-exact (gated 25/25 in test_crypto.js).
+let _combG = null;
+function _buildCombG(){
+  const W=4, WIN=1<<W, NW=64;
+  const tbl=new Array(NW);
+  let base={X:SECP_GX,Y:SECP_GY,Z:1n};        // 16^i * G (i=0 -> G)
+  for (let i=0;i<NW;i++){
+    const row=new Array(WIN); row[0]=null;
+    let acc=_INF;
+    for (let j=1;j<WIN;j++){ acc=_jAdd(acc, base); row[j]=_jToAffine(acc); }  // j*base
+    tbl[i]=row;
+    for (let d=0;d<W;d++) base=_jDouble(base);  // base *= 16
+  }
+  return tbl;
+}
+function pointFromPriv(k){                     // k*G via the comb table -> affine {x,y} or null
+  k=_mod(k,SECP_N); if (k===0n) return null;
+  if (!_combG) _combG=_buildCombG();
+  let R=_INF;
+  for (let i=0;i<64;i++){
+    const nib=Number((k>>BigInt(i*4))&15n);
+    if (nib){ const a=_combG[i][nib]; R=_jAdd(R,{X:a.x,Y:a.y,Z:1n}); }
+  }
+  return _jToAffine(R);
+}
 function serPoint(pt){                       // affine -> 33-byte compressed
   const o=new Uint8Array(33); o[0]=(pt.y&1n)===0n?0x02:0x03;
   const xb=ser256(pt.x); o.set(xb,1); return o;
