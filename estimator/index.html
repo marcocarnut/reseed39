@@ -131,9 +131,9 @@
 
     <label class="f" data-i18n="whatSearch">What are you searching for?</label>
     <div class="seg" id="modeSeg">
-      <button data-mode="passphrase" class="on" data-i18n="mPass">Passphrase</button>
-      <button data-mode="words" data-i18n="mWords">Words</button>
-      <button data-mode="joint" data-i18n="mJoint">Both (joint)</button>
+      <button data-mode="words" data-i18n="mWords">Mnemonic (12/24 words)</button>
+      <button data-mode="passphrase" class="on" data-i18n="mPass">Passphrase (Extra Words)</button>
+      <button data-mode="joint" data-i18n="mJoint">Both</button>
     </div>
 
     <div id="passBox">
@@ -216,12 +216,12 @@
 <script src="../wasm/rxecore_api.js"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b15"></script>
-<script src="../estimator/model.js?v=b15"></script>
-<script src="../estimator/wordset.js?v=b15"></script>
-<script src="../estimator/bip39crypto.js?v=b15"></script>
-<script src="../estimator/gpucrack.js?v=b15"></script>
-<script src="../estimator/i18n.js?v=b15"></script>
+<script src="../estimator/bip39.js?v=b16"></script>
+<script src="../estimator/model.js?v=b16"></script>
+<script src="../estimator/wordset.js?v=b16"></script>
+<script src="../estimator/bip39crypto.js?v=b16"></script>
+<script src="../estimator/gpucrack.js?v=b16"></script>
+<script src="../estimator/i18n.js?v=b16"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -740,7 +740,7 @@ function cpuCrackMT(o){
       const start=k*per, end=Math.min(o.total,(k+1)*per);
       if (start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b15'); }catch(e){ cleanup(); return resolve(o.single()); }
+      let w; try{ w=new Worker('crackworker.js?v=b16'); }catch(e){ cleanup(); return resolve(o.single()); }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if (m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
@@ -808,7 +808,7 @@ function crackWordsHybrid(o){
     for(let k=0;k<nW;k++){
       const start=k*per, end=Math.min(o.total,(k+1)*per); if(start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b15'); }catch(e){ finish({error:'worker spawn failed'}); return; }
+      let w; try{ w=new Worker('crackworker.js?v=b16'); }catch(e){ finish({error:'worker spawn failed'}); return; }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if(m.type==='cand'){ sweptA[m.id]=m.swept; for(const it of m.items) queue.push(it); report(); pump(); }
@@ -912,14 +912,21 @@ function render(r, input){
   let html = '';
   const crackable = (r.mode==='passphrase'||r.mode==='words');
   // Timings (prognosis + ETA) only after a benchmark; before that, sizes only.
+  // The prognosis pane holds its own title and the Crack button (right-flushed),
+  // so cracking is only offered once benchmarked -- which is fine.
   if(BENCH){
     const tl = tierLabel(r.tier.key);
-    html += `<div class="plabel">${t('prognosis')}</div>`;
-    html += `<div class="verdict ${r.tier.color}">${tl} — ${r.unbounded?t('unbounded'):(r.eta?(t('exhaustIn')+' '+localizeTime(r.eta.timeToExhaust)):'')}</div>`;
+    const timeStr = r.unbounded?t('unbounded'):(r.eta?(t('exhaustIn')+' '+localizeTime(r.eta.timeToExhaust)):'');
+    html += `<div class="verdict ${r.tier.color}" style="flex-direction:column;align-items:stretch;gap:9px">
+      <div style="display:flex;justify-content:space-between;align-items:center;width:100%;gap:10px">
+        <span style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;opacity:.82">${t('prognosis')}</span>
+        ${crackable?`<button class="act" id="openCrack" style="margin:0;padding:5px 13px;font-size:13px">${t('crackOpen')}</button>`:''}
+      </div>
+      <div>${tl} — ${timeStr}</div>
+    </div>`;
   } else {
     html += `<div class="cta"><div style="margin-bottom:8px">${t('benchGate')}</div><button class="act" id="ctaBench" style="margin-top:0">${t('benchDo')}</button></div>`;
   }
-  if(crackable) html += `<div class="rightbtns"><button class="act" id="openCrack" style="margin-top:0">${t('crackOpen')}</button></div>`;
 
   const totalStr = r.totalCandidates===null ? null : r.totalCandidates.toString();
   html += `<div class="card"><h3>${t('totalCandidates')} <span class="pill">${t('dimPill')}</span></h3>
