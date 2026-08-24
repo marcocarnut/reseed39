@@ -252,7 +252,72 @@ function _addrBatchMatch(seeds, n, pp, target){
   return null;
 }
 
+// Address crack: GPU seeds on the main thread, then the secp256k1 derive+compare
+// (the EC-bound half) runs in PARALLEL across a worker pool -- the seeds are
+// transferred to idle workers while the GPU seeds the next batch. Falls back to
+// the single-thread inline path when workers/URL aren't available.
 async function crackAddress(opts){
+  const nW = Math.max(1, Math.min(opts.nWorkers||1, (self.navigator&&navigator.hardwareConcurrency)||8, 32));
+  if (typeof Worker==='undefined' || nW<=1 || !opts.workerUrl) return _crackAddressInline(opts);
+  return _crackAddressParallel(opts, nW);
+}
+
+async function _crackAddressParallel(opts, nW){
+  const g = await initGpu();
+  const C = window.BIP39Crypto;
+  const mid = C.hmacMidstates(C.utf8(C.nfkd(opts.mnemonic)));
+  const plan = (opts.plan||[]).filter(pp => C.purposeType(pp.purpose) === opts.target.type);
+  if (!plan.length) return { found:null, done:0, mismatch:opts.target.type };
+  const changes = (opts.changes && opts.changes.length) ? opts.changes : [0];
+  const gap = Math.max(1, opts.gap||1);
+  const total = opts.total, B = opts.batchSize||4096;
+  const programHex = C.toHex(opts.target.program), addrType = opts.target.type;
+  return new Promise((resolve)=>{
+    const workers=[], idle=[], pending=new Map(); const queue=[];
+    let finished=false, batchId=0, dispatched=0, completed=0, sweepDone=false, seeded=0, poll=0;
+    const t0=performance.now();
+    const cleanup=()=>{ clearInterval(poll); workers.forEach(w=>{try{w.terminate()}catch(e){}}); };
+    const finish=(r)=>{ if(finished) return; finished=true; cleanup(); resolve(r); };
+    const report=()=>{ if(opts.onProgress){ const el=(performance.now()-t0)/1000||1e-6; opts.onProgress(Math.min(seeded,total), total, seeded/el, {seeded, seedRate:seeded/el}); } };
+    const drain=()=>{ while(idle.length && queue.length && !finished){ const w=idle.shift(), task=queue.shift();
+      pending.set(task.batchId, task);
+      w.__batch=task.batchId;
+      w.postMessage({ type:'derive', batchId:task.batchId, seedsBuf:task.seedsBuf, n:task.n, startIndex:task.start,
+        plan, addrType, programHex, changes, gap }, [task.seedsBuf]); } };
+    for (let i=0;i<nW;i++){
+      let w; try{ w=new Worker(opts.workerUrl); }catch(e){ cleanup(); return resolve(_crackAddressInline(opts)); }
+      workers.push(w); idle.push(w);
+      w.onmessage=(e)=>{ const m=e.data; if(finished) return;
+        if(m.type==='derivehit'){ const info=pending.get(m.batchId); finish({ found:info.passes[m.index-info.start], path:m.path, index:m.index }); }
+        else if(m.type==='derivedone'){ pending.delete(m.batchId); completed++; idle.push(w); drain();
+          if(sweepDone && completed>=dispatched && !finished) finish({ found:null }); }
+      };
+    }
+    poll=setInterval(()=>{ if(opts.isCancelled && opts.isCancelled()) finish({ stopped:true }); }, 200);
+    (async ()=>{
+      try{
+        for (let start=0; start<total && !finished; start+=B){
+          const n=Math.min(B, total-start);
+          const cands = opts.unrankBatch ? opts.unrankBatch(start, n) : null;
+          const passes = new Array(n); for (let i=0;i<n;i++) passes[i]=cands?cands[i]:opts.unrank(start+i);
+          const seeds = await gpuSeeds(g, mid, opts.mnemonic, passes);
+          if (finished) return;
+          // gpuSeeds returns a fresh Uint8Array(n*64) each call, so transfer its
+          // buffer directly (zero-copy) -- main doesn't need the seeds after this.
+          queue.push({ batchId:batchId++, seedsBuf:seeds.buffer, n, start, passes });
+          dispatched++; seeded+=n; report(); drain();
+          await new Promise(r=>setTimeout(r,0));
+          // backpressure: EC (workers) is the bottleneck, so cap the seed queue.
+          while (queue.length > nW*3 && !finished) await new Promise(r=>setTimeout(r,4));
+        }
+        sweepDone=true;
+        if (completed>=dispatched && !finished) finish({ found:null });
+      }catch(e){ finish({ error:e.message }); }
+    })();
+  });
+}
+
+async function _crackAddressInline(opts){
   const g = await initGpu();
   const C = window.BIP39Crypto;
   const mid = C.hmacMidstates(C.utf8(C.nfkd(opts.mnemonic)));

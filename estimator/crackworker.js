@@ -29,7 +29,35 @@ function hexToBytes(h){ const o=new Uint8Array(h.length/2); for(let i=0;i<o.leng
 
 onmessage = async (e) => {
   const d = e.data;
-  if (!d || d.type !== 'run') return;
+  if (!d) return;
+
+  // DERIVE mode: parallel secp256k1 derive+compare on GPU-produced seeds (the
+  // address crack's EC, moved off the main thread). No rxe core needed here.
+  if (d.type === 'derive') {
+    C = C || globalThis.BIP39Crypto;
+    const seeds = new Uint8Array(d.seedsBuf);
+    const taddr = { type:d.addrType, program:hexToBytes(d.programHex) };
+    const plan = d.plan.filter(pp => C.purposeType(pp.purpose) === taddr.type);
+    const changes = (d.changes && d.changes.length) ? d.changes : [0];
+    const gap = Math.max(1, d.gap || 1);
+    let hit = null;
+    for (let i=0; i<d.n && !hit; i++) {
+      const seed = seeds.subarray(i*64, i*64+64);
+      for (const pp of plan) {
+        const acct = C.deriveHardenedPath(seed, [pp.purpose, pp.coin||0, pp.account||0]);
+        for (const ch of changes) { const chNode = C.ckdNormal(acct, ch);
+          for (let idx=0; idx<gap; idx++) { const node = C.ckdNormal(chNode, idx);
+            const tg = C.pubToTarget(C.privToPub(node.k), pp.purpose);
+            if (tg.type===taddr.type && C.eq(tg.program, taddr.program)) { hit = { index:d.startIndex+i, path:{...pp, change:ch, index:idx} }; break; } }
+          if (hit) break; }
+        if (hit) break; }
+    }
+    postMessage(hit ? { type:'derivehit', id:d.id, batchId:d.batchId, index:hit.index, path:hit.path }
+                    : { type:'derivedone', id:d.id, batchId:d.batchId });
+    return;
+  }
+
+  if (d.type !== 'run') return;
   try {
     await ensureCore(d.wordlist);
     const set = core.parse(d.pattern);

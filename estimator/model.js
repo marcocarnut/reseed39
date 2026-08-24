@@ -328,11 +328,10 @@ function estimate(input, deps) {
     let ecSec = 0;
     if (targetType === 'address') {
       const derivations = Number(totalCandidates);
-      // The address EC (privToPub fan-out) runs on the HOST regardless of
-      // backend -- single-threaded on the main thread for the GPU paths, across
-      // workers for the CPU path -- so use the measured host rate, x cores only
-      // for CPU. (Was using gpu.ecMult, which implied non-existent GPU EC.)
-      const ecRate = rates.cpu.ecMultPerCore * (backend === 'cpu' ? cores : 1);
+      // The address EC (privToPub fan-out) runs on the HOST and is now
+      // PARALLELIZED across the worker pool for the GPU path too (derive workers)
+      // as well as the CPU path -- so it scales with cores. Measured host rate.
+      const ecRate = rates.cpu.ecMultPerCore * cores;
       ecSec = (derivations * MULTS_PER_ADDRESS) / ecRate;
     }
     // The SWEEP: words/joint must unrank + checksum-test the WHOLE raw mnemonic
