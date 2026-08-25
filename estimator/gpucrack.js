@@ -24,8 +24,39 @@ async function initGpu(){
   const K = new Uint32Array(160); for (let i=0;i<80;i++){ K[i*2]=C.gpuK.hi[i]; K[i*2+1]=C.gpuK.lo[i]; }
   const ST=GPUBufferUsage.STORAGE, CD=GPUBufferUsage.COPY_DST;
   const kBuf = dev.createBuffer({size:K.byteLength, usage:ST|CD}); dev.queue.writeBuffer(kBuf,0,K);
+  // A WebGPU device can be lost at any time -- a driver reset (a hot GPU tripping
+  // the OS's timeout-detection-and-recovery), sleep/wake, or the browser dropping
+  // the GPU process. When that happens the cached device is dead; clear it so the
+  // next init re-acquires a fresh adapter+device (see _withGpuRetry).
+  dev.lost.then((info)=>{ try{ console.warn('[gpucrack] WebGPU device lost:', info&&info.reason, info&&info.message); }catch(_){}
+    if (_gpu && _gpu.dev===dev){ _gpu=null; _gpuW=null; } }).catch(()=>{});
   _gpu = { dev, pipe, kBuf, adapter };
   return _gpu;
+}
+
+// Does this error look like a lost/invalidated GPU device (vs a real bug)?
+function _isDeviceLost(e){ const s=((e&&e.message)||String(e||'')).toLowerCase();
+  return s.includes('device')&&s.includes('lost') || s.includes('external instance')
+      || s.includes('destroyed') || s.includes('mapasync') || s.includes('invalid') && s.includes('device'); }
+// Drop the cached device/pipelines so the next initGpu*/ re-acquires fresh ones.
+function _resetGpu(){ try{ if(_gpu&&_gpu.dev&&_gpu.dev.destroy) _gpu.dev.destroy(); }catch(_){}
+  _gpu=null; _gpuW=null; }
+// Run a GPU op; if the device was lost, re-init and retry (with backoff) so a
+// transient driver reset doesn't abort a multi-hour crack. Re-throws non-device
+// errors (real bugs) immediately, and gives up after `tries` device re-inits.
+let _gpuResets = 0;   // how many times we've recovered from a lost device this session
+async function _withGpuRetry(fn, tries=5){
+  let delay=300;
+  for (let t=0;;t++){
+    try { return await fn(); }
+    catch(e){
+      if (t>=tries || !_isDeviceLost(e)) throw e;
+      _gpuResets++;
+      try{ console.warn(`[gpucrack] GPU op failed (${(e&&e.message)||e}); recovering device -- restart #${_gpuResets} (attempt ${t+1}/${tries})`); }catch(_){}
+      _resetGpu();
+      await new Promise(r=>setTimeout(r, delay)); delay=Math.min(delay*2, 4000);
+    }
+  }
 }
 
 // Compute seeds (Uint8Array(count*64)) for `passphrases` under a FIXED mnemonic.
@@ -43,23 +74,28 @@ async function gpuSeeds(g, mid, mnemonic, passphrases){
   }
   const m = idxGpu.length;
   if (m > 0) {
-    const { dev, pipe, kBuf } = g;
+    // device-INDEPENDENT host arrays
     const sl = new Uint32Array(m), sd = new Uint32Array(m*STRIDE);
     for (let k=0;k<m;k++){ const s=salts[k]; sl[k]=s.length; for (let j=0;j<s.length;j++) sd[k*STRIDE+(j>>2)] |= (s[j]<<((3-(j&3))*8)); }
-    const ST=GPUBufferUsage.STORAGE,U=GPUBufferUsage.UNIFORM,CS=GPUBufferUsage.COPY_SRC,CD=GPUBufferUsage.COPY_DST;
-    const mk=(a,us)=>{const b=dev.createBuffer({size:Math.max(16,a.byteLength),usage:us});dev.queue.writeBuffer(b,0,a);return b;};
-    const iB=mk(mid.ipad,ST|CD), oB=mk(mid.opad,ST|CD), lB=mk(sl,ST|CD), dB=mk(sd,ST|CD);
-    const pB=mk(new Uint32Array([m,STRIDE,2048,0]),U|CD);
-    const oBuf=dev.createBuffer({size:m*64,usage:ST|CS});
-    const bg=dev.createBindGroup({layout:pipe.getBindGroupLayout(0),entries:[
-      {binding:0,resource:{buffer:kBuf}},{binding:1,resource:{buffer:iB}},{binding:2,resource:{buffer:oB}},
-      {binding:3,resource:{buffer:lB}},{binding:4,resource:{buffer:dB}},{binding:5,resource:{buffer:oBuf}},{binding:6,resource:{buffer:pB}}]});
-    const enc=dev.createCommandEncoder(); const p=enc.beginComputePass(); p.setPipeline(pipe); p.setBindGroup(0,bg); p.dispatchWorkgroups(Math.ceil(m/64)); p.end();
-    const stg=dev.createBuffer({size:m*64,usage:CD|GPUBufferUsage.MAP_READ}); enc.copyBufferToBuffer(oBuf,0,stg,0,m*64);
-    dev.queue.submit([enc.finish()]); await stg.mapAsync(GPUMapMode.READ);
-    const words=new Uint32Array(stg.getMappedRange().slice(0)); stg.unmap();
-    for (let k=0;k<m;k++){ const o=idxGpu[k]*64; for (let w=0;w<16;w++){ const v=words[k*16+w]>>>0; out[o+w*4]=(v>>>24)&255; out[o+w*4+1]=(v>>>16)&255; out[o+w*4+2]=(v>>>8)&255; out[o+w*4+3]=v&255; } }
-    [iB,oB,lB,dB,pB,oBuf,stg].forEach(b=>b.destroy&&b.destroy());
+    // device-DEPENDENT: re-acquire device + kBuf on retry (ignore the passed-in
+    // `g`, whose device may have been lost mid-crack).
+    await _withGpuRetry(async ()=>{
+      const { dev, pipe, kBuf } = await initGpu();
+      const ST=GPUBufferUsage.STORAGE,U=GPUBufferUsage.UNIFORM,CS=GPUBufferUsage.COPY_SRC,CD=GPUBufferUsage.COPY_DST;
+      const mk=(a,us)=>{const b=dev.createBuffer({size:Math.max(16,a.byteLength),usage:us});dev.queue.writeBuffer(b,0,a);return b;};
+      const iB=mk(mid.ipad,ST|CD), oB=mk(mid.opad,ST|CD), lB=mk(sl,ST|CD), dB=mk(sd,ST|CD);
+      const pB=mk(new Uint32Array([m,STRIDE,2048,0]),U|CD);
+      const oBuf=dev.createBuffer({size:m*64,usage:ST|CS});
+      const bg=dev.createBindGroup({layout:pipe.getBindGroupLayout(0),entries:[
+        {binding:0,resource:{buffer:kBuf}},{binding:1,resource:{buffer:iB}},{binding:2,resource:{buffer:oB}},
+        {binding:3,resource:{buffer:lB}},{binding:4,resource:{buffer:dB}},{binding:5,resource:{buffer:oBuf}},{binding:6,resource:{buffer:pB}}]});
+      const enc=dev.createCommandEncoder(); const p=enc.beginComputePass(); p.setPipeline(pipe); p.setBindGroup(0,bg); p.dispatchWorkgroups(Math.ceil(m/64)); p.end();
+      const stg=dev.createBuffer({size:m*64,usage:CD|GPUBufferUsage.MAP_READ}); enc.copyBufferToBuffer(oBuf,0,stg,0,m*64);
+      dev.queue.submit([enc.finish()]); await stg.mapAsync(GPUMapMode.READ);
+      const words=new Uint32Array(stg.getMappedRange().slice(0)); stg.unmap();
+      for (let k=0;k<m;k++){ const o=idxGpu[k]*64; for (let w=0;w<16;w++){ const v=words[k*16+w]>>>0; out[o+w*4]=(v>>>24)&255; out[o+w*4+1]=(v>>>16)&255; out[o+w*4+2]=(v>>>8)&255; out[o+w*4+3]=v&255; } }
+      [iB,oB,lB,dB,pB,oBuf,stg].forEach(b=>b.destroy&&b.destroy());
+    });
   }
   return out;
 }
@@ -143,10 +179,10 @@ async function initGpuWords(){
 }
 // Seeds (Uint8Array(n*64)) for candidate `mnemonics` under a FIXED passphrase.
 // Over-long mnemonic/salt fall back to the JS reference per candidate.
+let _wordsK = null;   // device-independent SHA-512 K schedule (built once)
+function _getWordsK(C){ return _wordsK || (_wordsK=(()=>{ const K=new Uint32Array(160); for(let i=0;i<80;i++){K[i*2]=C.gpuK.hi[i];K[i*2+1]=C.gpuK.lo[i];} return K; })()); }
 async function gpuSeedsWords(mnemonics, passphrase){
   const C = window.BIP39Crypto;
-  const g = await initGpuWords();
-  const { dev, pipe } = g;
   const salt = C.utf8('mnemonic' + C.nfkd(passphrase||''));
   const n = mnemonics.length;
   const out = new Uint8Array(n*64);
@@ -158,24 +194,29 @@ async function gpuSeedsWords(mnemonics, passphrase){
   }
   const m = idxGpu.length;
   if (m>0){
-    const K = g._K || (g._K = (()=>{ const K=new Uint32Array(160); for(let i=0;i<80;i++){K[i*2]=C.gpuK.hi[i];K[i*2+1]=C.gpuK.lo[i];} return K; })());
+    // device-INDEPENDENT host arrays (safe to reuse across a device re-init)
+    const K = _getWordsK(C);
     const sl = new Uint32Array(Math.ceil((salt.length+1)/4)+1); for(let j=0;j<salt.length;j++) sl[j>>2]|=(salt[j]<<((3-(j&3))*8));
     const md = new Uint32Array(m*WSTRIDE), ml = new Uint32Array(m);
     for (let k=0;k<m;k++){ const b=mnBytes[k]; ml[k]=b.length; for(let j=0;j<b.length;j++) md[k*WSTRIDE+(j>>2)]|=(b[j]<<((3-(j&3))*8)); }
-    const ST=GPUBufferUsage.STORAGE,U=GPUBufferUsage.UNIFORM,CS=GPUBufferUsage.COPY_SRC,CD=GPUBufferUsage.COPY_DST;
-    const mk=(a,us)=>{const bf=dev.createBuffer({size:Math.max(16,a.byteLength),usage:us});dev.queue.writeBuffer(bf,0,a);return bf;};
-    const kBuf=mk(K,ST|CD), sBuf=mk(sl,ST|CD), lBuf=mk(ml,ST|CD), dBuf=mk(md,ST|CD);
-    const pBuf=mk(new Uint32Array([m,WSTRIDE,2048,salt.length]),U|CD);
-    const oBuf=dev.createBuffer({size:m*64,usage:ST|CS});
-    const bg=dev.createBindGroup({layout:pipe.getBindGroupLayout(0),entries:[
-      {binding:0,resource:{buffer:kBuf}},{binding:1,resource:{buffer:sBuf}},{binding:2,resource:{buffer:lBuf}},
-      {binding:3,resource:{buffer:dBuf}},{binding:4,resource:{buffer:oBuf}},{binding:5,resource:{buffer:pBuf}}]});
-    const enc=dev.createCommandEncoder(); const p=enc.beginComputePass(); p.setPipeline(pipe); p.setBindGroup(0,bg); p.dispatchWorkgroups(Math.ceil(m/64)); p.end();
-    const stg=dev.createBuffer({size:m*64,usage:CD|GPUBufferUsage.MAP_READ}); enc.copyBufferToBuffer(oBuf,0,stg,0,m*64);
-    dev.queue.submit([enc.finish()]); await stg.mapAsync(GPUMapMode.READ);
-    const words=new Uint32Array(stg.getMappedRange().slice(0)); stg.unmap();
-    for (let k=0;k<m;k++){ const o=idxGpu[k]*64; for(let w=0;w<16;w++){ const v=words[k*16+w]>>>0; out[o+w*4]=(v>>>24)&255;out[o+w*4+1]=(v>>>16)&255;out[o+w*4+2]=(v>>>8)&255;out[o+w*4+3]=v&255; } }
-    [kBuf,sBuf,lBuf,dBuf,pBuf,oBuf,stg].forEach(b=>b.destroy&&b.destroy());
+    // device-DEPENDENT block: re-acquire the device + rebuild buffers on retry.
+    await _withGpuRetry(async ()=>{
+      const { dev, pipe } = await initGpuWords();
+      const ST=GPUBufferUsage.STORAGE,U=GPUBufferUsage.UNIFORM,CS=GPUBufferUsage.COPY_SRC,CD=GPUBufferUsage.COPY_DST;
+      const mk=(a,us)=>{const bf=dev.createBuffer({size:Math.max(16,a.byteLength),usage:us});dev.queue.writeBuffer(bf,0,a);return bf;};
+      const kBuf=mk(K,ST|CD), sBuf=mk(sl,ST|CD), lBuf=mk(ml,ST|CD), dBuf=mk(md,ST|CD);
+      const pBuf=mk(new Uint32Array([m,WSTRIDE,2048,salt.length]),U|CD);
+      const oBuf=dev.createBuffer({size:m*64,usage:ST|CS});
+      const bg=dev.createBindGroup({layout:pipe.getBindGroupLayout(0),entries:[
+        {binding:0,resource:{buffer:kBuf}},{binding:1,resource:{buffer:sBuf}},{binding:2,resource:{buffer:lBuf}},
+        {binding:3,resource:{buffer:dBuf}},{binding:4,resource:{buffer:oBuf}},{binding:5,resource:{buffer:pBuf}}]});
+      const enc=dev.createCommandEncoder(); const p=enc.beginComputePass(); p.setPipeline(pipe); p.setBindGroup(0,bg); p.dispatchWorkgroups(Math.ceil(m/64)); p.end();
+      const stg=dev.createBuffer({size:m*64,usage:CD|GPUBufferUsage.MAP_READ}); enc.copyBufferToBuffer(oBuf,0,stg,0,m*64);
+      dev.queue.submit([enc.finish()]); await stg.mapAsync(GPUMapMode.READ);
+      const words=new Uint32Array(stg.getMappedRange().slice(0)); stg.unmap();
+      for (let k=0;k<m;k++){ const o=idxGpu[k]*64; for(let w=0;w<16;w++){ const v=words[k*16+w]>>>0; out[o+w*4]=(v>>>24)&255;out[o+w*4+1]=(v>>>16)&255;out[o+w*4+2]=(v>>>8)&255;out[o+w*4+3]=v&255; } }
+      [kBuf,sBuf,lBuf,dBuf,pBuf,oBuf,stg].forEach(b=>b.destroy&&b.destroy());
+    });
   }
   return out;
 }
@@ -459,5 +500,6 @@ async function gateWords(mnemonics, passphrase){
 
 window.GpuCrack = { initGpu, gpuSeeds, benchmark, crackXpub, crackAddress, MAXSALT,
   initGpuWords, gpuSeedsWords, crackWordsGpu, gateWords, getGpuInfo,
-  setBatchEC:(b)=>{ BATCH_EC=!!b; }, getBatchEC:()=>BATCH_EC };
+  setBatchEC:(b)=>{ BATCH_EC=!!b; }, getBatchEC:()=>BATCH_EC,
+  getGpuResets:()=>_gpuResets };
 })();
