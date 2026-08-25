@@ -212,16 +212,16 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b39"></script>
-<script src="../wasm/rxecore_api.js?v=b39"></script>
+<script src="../wasm/rxecore.js?v=b40"></script>
+<script src="../wasm/rxecore_api.js?v=b40"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b39"></script>
-<script src="../estimator/model.js?v=b39"></script>
-<script src="../estimator/wordset.js?v=b39"></script>
-<script src="../estimator/bip39crypto.js?v=b39"></script>
-<script src="../estimator/gpucrack.js?v=b39"></script>
-<script src="../estimator/i18n.js?v=b39"></script>
+<script src="../estimator/bip39.js?v=b40"></script>
+<script src="../estimator/model.js?v=b40"></script>
+<script src="../estimator/wordset.js?v=b40"></script>
+<script src="../estimator/bip39crypto.js?v=b40"></script>
+<script src="../estimator/gpucrack.js?v=b40"></script>
+<script src="../estimator/i18n.js?v=b40"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -355,7 +355,7 @@ function setLang(l){
     const txt = await (await fetch('../data/english.txt')).text();
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b39' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b40' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -559,7 +559,7 @@ async function _measCpuSweep(ms){
   }
   const per=Math.ceil(total/cores), swept=new Array(cores).fill(0), workers=[];
   for(let k=0;k<cores;k++){
-    let w; try{ w=new Worker('crackworker.js?v=b39'); }catch(e){ break; }
+    let w; try{ w=new Worker('crackworker.js?v=b40'); }catch(e){ break; }
     workers.push(w);
     w.onmessage=(e)=>{ const m=e.data; if(m&&(m.type==='cand'||m.type==='progress')) swept[m.id]=m.swept; };
     const start=k*per, end=Math.min(total,(k+1)*per);
@@ -731,7 +731,7 @@ async function onCrack(){
       if(gpu && reqCsum && typeof Worker!=='undefined')      // parallel sweep (workers) + GPU seed
         r = await crackWordsHybrid({ pattern:patStr, passphrase:passFixed, requireChecksum:reqCsum, plan, tcc, taddr, changes, gap:gapN, total, nWorkers, onProgress:common.onProgress, isCancelled:common.isCancelled });
       else if(gpu)                                            // checksum-off or no workers: double-buffered main-thread sweep + GPU seed (+ parallel-EC derive pool for address)
-        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b39'});
+        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b40'});
       else                                                    // CPU multicore
         r = await mt(()=>cpuCrackWords({...common, passphrase:passFixed, tcc, taddr, changes, gap:gapN, requireChecksum:reqCsum}));
     } else if(target==='xpub'){
@@ -739,7 +739,7 @@ async function onCrack(){
       r = gpu ? await window.GpuCrack.crackXpub(args) : await mt(()=>cpuCrack(args));
     } else {
       const args={...common, mnemonic:mnFixed, target:taddr, changes, gap:gapN, batchSize:2048,
-        nWorkers, workerUrl:'crackworker.js?v=b39' };   // parallel-EC derive pool
+        nWorkers, workerUrl:'crackworker.js?v=b40' };   // parallel-EC derive pool
       r = gpu ? await window.GpuCrack.crackAddress(args) : await mt(()=>cpuCrackAddress(args));
     }
     if(r && r.error) throw new Error(r.error);
@@ -822,7 +822,7 @@ function cpuCrackMT(o){
       const start=k*per, end=Math.min(o.total,(k+1)*per);
       if (start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b39'); }catch(e){ cleanup(); return resolve(o.single()); }
+      let w; try{ w=new Worker('crackworker.js?v=b40'); }catch(e){ cleanup(); return resolve(o.single()); }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if (m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
@@ -848,14 +848,24 @@ function cpuCrackMT(o){
 function crackWordsHybrid(o){
   const C=window.BIP39Crypto;
   const nW=Math.max(1, Math.min(o.nWorkers||1, 32));
-  const WURL='crackworker.js?v=b39';
+  const WURL='crackworker.js?v=b40';
   return new Promise(async (resolve)=>{
     try{ await window.GpuCrack.initGpuWords(); }catch(e){ return resolve({error:e.message}); }
     const isAddr=!!o.taddr; const isXpub=!isAddr;   // one derive pool serves both
     const plan=isAddr ? o.plan.filter(pp=>C.purposeType(pp.purpose)===o.taddr.type) : o.plan;
     const changes=(o.changes&&o.changes.length)?o.changes:[0]; const gap=Math.max(1,o.gap||1);
-    const workers=[]; const sweptA=new Array(nW).fill(0);
-    let finished=false, doneCount=0, spawned=0, seededTotal=0, seeding=false, allSwept=false;
+    const CHUNK=1<<20;              // monotonic-cursor chunk = 1,048,576 candidates
+    const workers=[];
+    // MONOTONIC CURSOR: workers pull CHUNK-sized ranges in increasing order; the
+    // checkpoint frontier is the highest index with EVERY chunk below it done
+    // (so resuming from it can't skip a candidate). Robust to core-count changes.
+    const startAt=Math.max(0, o.resumeFrom||0);
+    let cursor=startAt, frontier=startAt, sweptBase=startAt;
+    const inflight=new Map();       // workerId -> {start,end} currently sweeping
+    const completed=new Set();      // completed chunk starts (for the frontier)
+    const sweptCur={};              // workerId -> swept-so-far in its current chunk
+    let finished=false, seededTotal=0, seeding=false, allSwept=(startAt>=o.total);
+    const curSwept=()=>{ let s=sweptBase; for(const k in sweptCur) s+=sweptCur[k]; return s; };
     const queue=[]; const t0=performance.now();
     // Address: a PARALLEL derive pool does the secp256k1 compare off the main
     // thread. xpub: the chaincode compare is cheap, keep it inline.
@@ -863,8 +873,8 @@ function crackWordsHybrid(o){
     let dBatchId=0, dDispatched=0, dCompleted=0;
     const cleanup=()=>{ workers.forEach(w=>{try{w.terminate()}catch(e){}}); dWorkers.forEach(w=>{try{w.terminate()}catch(e){}}); clearInterval(poll); };
     const finish=(r)=>{ if(finished) return; finished=true; cleanup(); resolve(r); };
-    const report=()=>{ const swept=sweptA.reduce((a,b)=>a+b,0), el=(performance.now()-t0)/1000||1e-6;
-      o.onProgress(swept,o.total,swept/el,{seeded:seededTotal,seedRate:seededTotal/el}); };
+    const report=()=>{ const swept=curSwept(), el=(performance.now()-t0)/1000||1e-6;
+      o.onProgress(swept,o.total,(swept-startAt)/el,{seeded:seededTotal,seedRate:seededTotal/el}); };
     const poll=setInterval(()=>{ if(o.isCancelled&&o.isCancelled()) finish({stopped:true}); },200);
     const maybeDone=()=>{ if(allSwept && !queue.length && !seeding && (dDispatched===dCompleted && !dQueue.length) && !finished) finish({found:null}); };
     // dispatch pending seed-batches to idle derive workers. Address = secp256k1
@@ -901,25 +911,37 @@ function crackWordsHybrid(o){
       seeding=false;
       maybeDone();
     }
-    const per=Math.ceil(o.total/nW);
-    for(let k=0;k<nW;k++){
-      const start=k*per, end=Math.min(o.total,(k+1)*per); if(start>=end) continue;
-      spawned++;
-      let w; try{ w=new Worker(WURL); }catch(e){ finish({error:'worker spawn failed'}); return; }
-      workers.push(w);
-      w.onmessage=(e)=>{ const m=e.data; if(finished) return;
-        if(m.type==='cand'){ sweptA[m.id]=m.swept; for(const it of m.items) queue.push(it); report(); pump(); }
-        else if(m.type==='progress'){ sweptA[m.id]=m.swept; report(); }
-        else if(m.type==='done'){ sweptA[m.id]=m.swept; if(++doneCount>=spawned){ allSwept=true; pump(); maybeDone(); } }
-        else if(m.type==='error'){ finish({error:m.message}); }
-      };
-      w.onerror=(ev)=>finish({error:(ev&&ev.message)||'worker error'});
-      w.postMessage({ type:'run', id:k, sweepOnly:true, wordlist:ENGLISH, pattern:o.pattern, mode:'words',
+    // hand the next CHUNK to a worker; false when the keyspace is exhausted.
+    const assign=(w,id)=>{
+      if(cursor>=o.total) return false;
+      const start=cursor, end=Math.min(o.total, cursor+CHUNK); cursor=end;
+      inflight.set(id,{start,end}); sweptCur[id]=0;
+      w.postMessage({ type:'run', id, sweepOnly:true, wordlist:ENGLISH, pattern:o.pattern, mode:'words',
         passphrase:o.passphrase||'', requireChecksum:o.requireChecksum, plan:o.plan,
         target: o.taddr ? {kind:'address',addrType:o.taddr.type,programHex:C.toHex(o.taddr.program)} : {kind:'xpub',chainCodeHex:C.toHex(o.tcc)},
         changes:o.changes, gap:o.gap, start, end });
+      return true;
+    };
+    if(startAt>=o.total){ finish({found:null}); return; }
+    const onSweepMsg=(w)=>(e)=>{ const m=e.data; if(finished) return;
+      if(m.type==='cand'){ sweptCur[m.id]=m.swept; for(const it of m.items) queue.push(it); report(); pump(); }
+      else if(m.type==='progress'){ sweptCur[m.id]=m.swept; report(); }
+      else if(m.type==='done'){
+        const chunk=inflight.get(m.id); inflight.delete(m.id);
+        if(chunk){ sweptBase += (chunk.end-chunk.start); sweptCur[m.id]=0; completed.add(chunk.start);
+          while(completed.has(frontier)){ completed.delete(frontier); frontier=Math.min(o.total, frontier+CHUNK); }
+          if(o.onCheckpoint) try{ o.onCheckpoint(frontier); }catch(_){} }
+        if(!assign(w, m.id) && cursor>=o.total && inflight.size===0) allSwept=true;
+        report(); pump(); maybeDone();
+      }
+      else if(m.type==='error'){ finish({error:m.message}); }
+    };
+    for(let k=0;k<nW;k++){
+      let w; try{ w=new Worker(WURL); }catch(e){ if(k===0){ finish({error:'worker spawn failed'}); return; } break; }
+      workers.push(w); w.onmessage=onSweepMsg(w); w.onerror=(ev)=>finish({error:(ev&&ev.message)||'worker error'});
+      if(!assign(w, k)) break;    // keyspace exhausted -> don't spawn further workers
     }
-    if(spawned===0) finish({found:null});
+    if(inflight.size===0 && cursor>=o.total){ allSwept=true; maybeDone(); }
   });
 }
 // single-thread JS-CPU fallback (small sets / no WebGPU) -- xpub target, EC-free.

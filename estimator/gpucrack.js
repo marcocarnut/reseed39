@@ -293,7 +293,7 @@ async function crackWordsGpu(opts){
       if (!r || !r.__fallback) return r;   // fall through to inline on worker-spawn failure
     }
   }
-  const t0=performance.now(); let done=0, seeded=0;
+  const t0=performance.now(); let done=Math.max(0,opts.resumeFrom||0), seeded=0;  // resumeFrom: contiguous checkpoint
   // Sweep + checksum-filter [start,start+B) on the host into {n,mns,gidx}.
   const sweepFilter=(start)=>{
     const n=Math.min(B, total-start);
@@ -306,7 +306,7 @@ async function crackWordsGpu(opts){
   // DOUBLE-BUFFER: sweep+filter the NEXT batch on the host while the GPU seeds
   // the current one (and derive the current while the GPU seeds the next), so
   // the GPU stays fed instead of idling through the host sweep.
-  let cur = sweepFilter(0), curSeedP = seed(cur), start = B;
+  let cur = sweepFilter(done), curSeedP = seed(cur), start = done + B;
   while (cur && !(opts.isCancelled && opts.isCancelled())){
     const next = start<total ? sweepFilter(start) : null;   // overlaps the GPU seed of `cur`
     start += B;
@@ -327,6 +327,7 @@ async function crackWordsGpu(opts){
     }
     seeded += cur.mns.length; done += cur.n;
     if (opts.onProgress){ const el=(performance.now()-t0)/1000; opts.onProgress(done,total,done/el,{seeded,seedRate:seeded/el}); }
+    if (opts.onCheckpoint) try{ opts.onCheckpoint(done); }catch(_){}   // done is the contiguous frontier
     cur = next; curSeedP = nextSeedP;
   }
   return cur ? { stopped:true, done } : { found:null, done };
