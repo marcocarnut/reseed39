@@ -62,6 +62,7 @@ let _coolCurMs  = _coolBaseMs;    // current (backed-off) cooldown
 let _lastResumeAt = 0;            // when we last resumed after a recovery (0 = never)
 let _gpuMaxResets = 20;           // give up the crack after this many recoveries
 let _gpuStatusCb = null;          // optional UI hook: called during cooldown + on resume
+let _gpuCancel = null;            // optional isCancelled hook: breaks a long cooldown promptly
 // Reset the per-crack GPU recovery state (call at the start of each crack).
 function _resetGpuStats(){ _gpuResets=0; _coolCurMs=_coolBaseMs; _lastResumeAt=0; }
 async function _withGpuRetry(fn){
@@ -69,10 +70,18 @@ async function _withGpuRetry(fn){
     try { return await fn(); }
     catch(e){
       if (!_isDeviceLost(e)) throw e;                 // a real bug -- surface it now
-      _gpuResets++;
-      // Hard stop: an unstable GPU shouldn't keep a crack "alive" forever.
+      const msg=((e&&e.message)||String(e||'')).toLowerCase();
+      // A null adapter on the VERY FIRST attempt (nothing recovered yet) means
+      // there's genuinely no usable GPU -- fail fast instead of looping maxResets
+      // times over escalating cooldowns on a GPU-less box.
+      if (_gpuResets===0 && msg.includes('adapter'))
+        throw new Error('no usable WebGPU device available');
+      // Hard stop: allow up to _gpuMaxResets recoveries, then give up (an unstable
+      // GPU shouldn't keep a crack "alive" forever). Checked before incrementing so
+      // the counter reads exactly the number of recoveries that happened.
       if (_gpuResets >= _gpuMaxResets)
         throw new Error(`GPU gave up after ${_gpuResets} recoveries (max ${_gpuMaxResets}) -- it appears unstable. Let it cool and try again, or raise the limit.`);
+      _gpuResets++;
       // Adaptive backoff: if the GPU ran clean past the stability window since the
       // last recovery, this is a fresh incident -> back to the base. Otherwise the
       // failures are clustering -> double (capped).
@@ -85,9 +94,13 @@ async function _withGpuRetry(fn){
       _resetGpu();
       // Cool-down: a device loss is often thermal; retrying in 300ms just trips it
       // again. Wait _coolCurMs, ticking a status callback each second so the UI can
-      // show a countdown instead of looking hung.
+      // show a countdown -- and checking the cancel hook so Stop breaks a long
+      // cooldown promptly instead of hanging up to 30 min.
       const total = Math.max(0, _coolCurMs);
       for (let waited=0; waited<total; waited+=1000){
+        let cancelled=false; if (_gpuCancel){ try{ cancelled=!!_gpuCancel(); }catch(_){} }
+        if (cancelled){ if (_gpuStatusCb) try{ _gpuStatusCb({ cooling:false, cooldownMs:_coolCurMs, restart:_gpuResets, maxResets:_gpuMaxResets }); }catch(_){}
+          throw new Error('cancelled during GPU cooldown'); }
         if (_gpuStatusCb) try{ _gpuStatusCb({ cooling:true, remainingMs: total-waited, cooldownMs:_coolCurMs, restart:_gpuResets, maxResets:_gpuMaxResets }); }catch(_){}
         await new Promise(r=>setTimeout(r, Math.min(1000, total-waited)));
       }
@@ -547,5 +560,6 @@ window.GpuCrack = { initGpu, gpuSeeds, benchmark, crackXpub, crackAddress, MAXSA
   setGpuCooldownCap:(ms)=>{ _coolCapMs=Math.max(0, ms|0); }, getGpuCooldownCap:()=>_coolCapMs,
   setGpuCooldownStability:(ms)=>{ _coolStabilityMs=Math.max(0, ms|0); }, getGpuCooldownStability:()=>_coolStabilityMs,
   setGpuMaxResets:(n)=>{ _gpuMaxResets=Math.max(1, n|0); }, getGpuMaxResets:()=>_gpuMaxResets,
-  onGpuStatus:(fn)=>{ _gpuStatusCb = (typeof fn==='function') ? fn : null; } };
+  onGpuStatus:(fn)=>{ _gpuStatusCb = (typeof fn==='function') ? fn : null; },
+  setCancelCheck:(fn)=>{ _gpuCancel = (typeof fn==='function') ? fn : null; } };
 })();
