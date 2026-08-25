@@ -44,9 +44,10 @@ function _resetGpu(){ try{ if(_gpu&&_gpu.dev&&_gpu.dev.destroy) _gpu.dev.destroy
 // Run a GPU op; if the device was lost, re-init and retry (with backoff) so a
 // transient driver reset doesn't abort a multi-hour crack. Re-throws non-device
 // errors (real bugs) immediately, and gives up after `tries` device re-inits.
-let _gpuResets = 0;   // how many times we've recovered from a lost device this session
+let _gpuResets = 0;        // how many GPU ops we've recovered from a lost device this session
+let _gpuCooldownMs = 60000; // pause after a device loss to let the GPU cool before retrying
+let _gpuStatusCb = null;    // optional UI hook: called during cooldown + on resume
 async function _withGpuRetry(fn, tries=5){
-  let delay=300;
   for (let t=0;;t++){
     try { return await fn(); }
     catch(e){
@@ -54,7 +55,16 @@ async function _withGpuRetry(fn, tries=5){
       _gpuResets++;
       try{ console.warn(`[gpucrack] GPU op failed (${(e&&e.message)||e}); recovering device -- restart #${_gpuResets} (attempt ${t+1}/${tries})`); }catch(_){}
       _resetGpu();
-      await new Promise(r=>setTimeout(r, delay)); delay=Math.min(delay*2, 4000);
+      // Cool-down: a device loss is often thermal (a hot GPU tripping the OS
+      // watchdog); retrying in 300ms just trips it again. Wait _gpuCooldownMs
+      // (configurable), ticking a status callback each second so the UI can show
+      // a countdown instead of looking hung.
+      const total = Math.max(0, _gpuCooldownMs);
+      for (let waited=0; waited<total; waited+=1000){
+        if (_gpuStatusCb) try{ _gpuStatusCb({ cooling:true, remainingMs: total-waited, restart:_gpuResets }); }catch(_){}
+        await new Promise(r=>setTimeout(r, Math.min(1000, total-waited)));
+      }
+      if (_gpuStatusCb) try{ _gpuStatusCb({ cooling:false, restart:_gpuResets }); }catch(_){}
     }
   }
 }
@@ -501,5 +511,7 @@ async function gateWords(mnemonics, passphrase){
 window.GpuCrack = { initGpu, gpuSeeds, benchmark, crackXpub, crackAddress, MAXSALT,
   initGpuWords, gpuSeedsWords, crackWordsGpu, gateWords, getGpuInfo,
   setBatchEC:(b)=>{ BATCH_EC=!!b; }, getBatchEC:()=>BATCH_EC,
-  getGpuResets:()=>_gpuResets };
+  getGpuResets:()=>_gpuResets,
+  setGpuCooldown:(ms)=>{ _gpuCooldownMs=Math.max(0, ms|0); }, getGpuCooldown:()=>_gpuCooldownMs,
+  onGpuStatus:(fn)=>{ _gpuStatusCb = (typeof fn==='function') ? fn : null; } };
 })();
