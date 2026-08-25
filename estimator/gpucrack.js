@@ -34,10 +34,16 @@ async function initGpu(){
   return _gpu;
 }
 
-// Does this error look like a lost/invalidated GPU device (vs a real bug)?
+// Does this error look like a lost/invalidated GPU device -- or a transient
+// re-acquire failure right after a hard reset (requestAdapter() returns null for
+// a moment while the driver recovers) -- vs a real bug or WebGPU being genuinely
+// absent? "no WebGPU adapter" is retryable (the cooldown gives it time to come
+// back); "WebGPU not available" (no navigator.gpu) is permanent and is NOT.
 function _isDeviceLost(e){ const s=((e&&e.message)||String(e||'')).toLowerCase();
+  if (s.includes('webgpu not available')) return false;      // permanent: no navigator.gpu
   return s.includes('device')&&s.includes('lost') || s.includes('external instance')
-      || s.includes('destroyed') || s.includes('mapasync') || s.includes('invalid') && s.includes('device'); }
+      || s.includes('destroyed') || s.includes('mapasync') || s.includes('adapter')
+      || s.includes('invalid') && s.includes('device'); }
 // Drop the cached device/pipelines so the next initGpu*/ re-acquires fresh ones.
 function _resetGpu(){ try{ if(_gpu&&_gpu.dev&&_gpu.dev.destroy) _gpu.dev.destroy(); }catch(_){}
   _gpu=null; _gpuW=null; }
@@ -47,11 +53,12 @@ function _resetGpu(){ try{ if(_gpu&&_gpu.dev&&_gpu.dev.destroy) _gpu.dev.destroy
 let _gpuResets = 0;        // how many GPU ops we've recovered from a lost device this session
 let _gpuCooldownMs = 60000; // pause after a device loss to let the GPU cool before retrying
 let _gpuStatusCb = null;    // optional UI hook: called during cooldown + on resume
-async function _withGpuRetry(fn, tries=5){
+async function _withGpuRetry(fn, tries=8){
   for (let t=0;;t++){
     try { return await fn(); }
     catch(e){
-      if (t>=tries || !_isDeviceLost(e)) throw e;
+      if (!_isDeviceLost(e)) throw e;                 // a real bug -- surface it now
+      if (t>=tries) throw new Error(`GPU did not recover after ${tries} attempts (${(e&&e.message)||e}). The GPU may need more time to reset -- lower the load or try again later.`);
       _gpuResets++;
       try{ console.warn(`[gpucrack] GPU op failed (${(e&&e.message)||e}); recovering device -- restart #${_gpuResets} (attempt ${t+1}/${tries})`); }catch(_){}
       _resetGpu();
