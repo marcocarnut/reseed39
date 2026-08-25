@@ -68,6 +68,57 @@ function sha256(bytes) {
   return out;
 }
 
+/* ---- fast single-block SHA-256 for the CHECKSUM early-reject ------------- *
+ * The BIP39 checksum hashes only the entropy (16..32 bytes -> always ONE
+ * 64-byte block) and needs only the top CS<=8 bits, which live in the first
+ * output word (h0). This specialization hoists K to module scope, reuses the
+ * block/schedule buffers (no per-call allocation), computes a single block, and
+ * returns h0 alone -- ~3.4x the compact sha256 (measured, spike/sha256-bench.js)
+ * so one core clears the ~2.8M/s needed to keep the GPU seed kernel fed.
+ * Byte-exact with the top word of sha256() -- gated in test/test_crypto.js.
+ * Requires bytes.length <= 55 (true for every BIP39 entropy size). */
+const _K32 = new Int32Array([
+ 0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+ 0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+ 0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+ 0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+ 0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+ 0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+ 0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+ 0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2]);
+const _blk1 = new Uint8Array(64);
+const _w64  = new Int32Array(64);
+function sha256_1blk_h0(bytes) {           // bytes.length must be <= 55
+  const l = bytes.length;
+  _blk1.fill(0);
+  _blk1.set(bytes);
+  _blk1[l] = 0x80;
+  const bits = l * 8;                       // < 2^32 for l<=55 -> hi length words 0
+  _blk1[60] = (bits>>>24)&0xff; _blk1[61] = (bits>>>16)&0xff;
+  _blk1[62] = (bits>>>8)&0xff;  _blk1[63] =  bits&0xff;
+  const w = _w64;
+  for (let i=0;i<16;i++)
+    w[i]=(_blk1[4*i]<<24)|(_blk1[4*i+1]<<16)|(_blk1[4*i+2]<<8)|_blk1[4*i+3];
+  for (let i=16;i<64;i++){
+    const x=w[i-15], y=w[i-2];
+    const s0=((x>>>7)|(x<<25))^((x>>>18)|(x<<14))^(x>>>3);
+    const s1=((y>>>17)|(y<<15))^((y>>>19)|(y<<13))^(y>>>10);
+    w[i]=(w[i-16]+s0+w[i-7]+s1)|0;
+  }
+  let a=0x6a09e667|0,b=0xbb67ae85|0,c=0x3c6ef372|0,d=0xa54ff53a|0,
+      e=0x510e527f|0,f=0x9b05688c|0,g=0x1f83d9ab|0,h=0x5be0cd19|0;
+  for (let i=0;i<64;i++){
+    const S1=((e>>>6)|(e<<26))^((e>>>11)|(e<<21))^((e>>>25)|(e<<7));
+    const ch=(e&f)^(~e&g);
+    const t1=(h+S1+ch+_K32[i]+w[i])|0;
+    const S0=((a>>>2)|(a<<30))^((a>>>13)|(a<<19))^((a>>>22)|(a<<10));
+    const maj=(a&b)^(a&c)^(b&c);
+    const t2=(S0+maj)|0;
+    h=g;g=f;f=e;e=(d+t1)|0;d=c;c=b;b=a;a=(t1+t2)|0;
+  }
+  return (0x6a09e667 + a)|0;                // h0 (== big-endian bytes [0..3] of the digest)
+}
+
 /* ---- BIP39 wordlist -> checksum validator ------------------------------- */
 // Valid BIP39 mnemonic word counts and their (ENT bytes, checksum bits).
 const VALID_WORD_COUNTS = new Set([12,15,18,21,24]);
@@ -96,9 +147,11 @@ function makeValidator(words) {
     const entBytesLen = entBits/8;
     const ent = new Uint8Array(entBytesLen);
     for (let i=0;i<entBits;i++) if (bits[i]) ent[i>>3] |= (0x80 >> (i&7));
-    const hash = sha256(ent);
+    // Checksum = top csBits (<=8) of SHA256(ent), which live in the digest's
+    // first byte == top byte of h0. Use the no-alloc single-block hasher.
+    const hb0 = (sha256_1blk_h0(ent) >>> 24) & 0xff;
     for (let i=0;i<csBits;i++){
-      const hb = (hash[i>>3] >> (7-(i&7))) & 1;
+      const hb = (hb0 >> (7-i)) & 1;
       if (hb !== bits[entBits+i]) return false;
     }
     return true;
@@ -109,6 +162,6 @@ function makeValidator(words) {
     theoreticalFraction: (W) => VALID_WORD_COUNTS.has(W) ? Math.pow(2, -(W/3)) : null };
 }
 
-const _bip39Exports = { sha256, makeValidator, VALID_WORD_COUNTS };
+const _bip39Exports = { sha256, sha256_1blk_h0, makeValidator, VALID_WORD_COUNTS };
 if (typeof module !== 'undefined' && module.exports) module.exports = _bip39Exports;
 if (typeof globalThis !== 'undefined') globalThis.BIP39 = _bip39Exports; // window OR worker(self)
