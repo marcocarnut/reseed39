@@ -36,11 +36,23 @@ onmessage = async (e) => {
   if (d.type === 'derive') {
     C = C || globalThis.BIP39Crypto;
     const seeds = new Uint8Array(d.seedsBuf);
+    let hit = null;
+    // XPUB target: EC-FREE chain-code compare (accountNode). Parallelizing this
+    // off the main thread keeps the hybrid pipeline smooth (was inline before).
+    if (d.targetKind === 'xpub') {
+      const tcc = hexToBytes(d.chainCodeHex);
+      for (let i=0; i<d.n && !hit; i++) { const seed = seeds.subarray(i*64, i*64+64);
+        for (const pp of d.plan) {
+          if (C.eq(C.accountNode(seed, pp.purpose, pp.account, pp.coin).c, tcc)) { hit = { index:d.startIndex+i, path:pp }; break; } }
+      }
+      postMessage(hit ? { type:'derivehit', id:d.id, batchId:d.batchId, index:hit.index, path:hit.path }
+                      : { type:'derivedone', id:d.id, batchId:d.batchId });
+      return;
+    }
     const taddr = { type:d.addrType, program:hexToBytes(d.programHex) };
     const plan = d.plan.filter(pp => C.purposeType(pp.purpose) === taddr.type);
     const changes = (d.changes && d.changes.length) ? d.changes : [0];
     const gap = Math.max(1, d.gap || 1);
-    let hit = null;
     // BATCH EC: for the common simple derivation (1 purpose, change 0, index 0)
     // amortize the modular inverse across the whole task via Montgomery batch
     // inversion (privToPubBatch) -- ~1.7x the per-candidate privToPub.

@@ -212,16 +212,16 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b32"></script>
-<script src="../wasm/rxecore_api.js?v=b32"></script>
+<script src="../wasm/rxecore.js?v=b33"></script>
+<script src="../wasm/rxecore_api.js?v=b33"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b32"></script>
-<script src="../estimator/model.js?v=b32"></script>
-<script src="../estimator/wordset.js?v=b32"></script>
-<script src="../estimator/bip39crypto.js?v=b32"></script>
-<script src="../estimator/gpucrack.js?v=b32"></script>
-<script src="../estimator/i18n.js?v=b32"></script>
+<script src="../estimator/bip39.js?v=b33"></script>
+<script src="../estimator/model.js?v=b33"></script>
+<script src="../estimator/wordset.js?v=b33"></script>
+<script src="../estimator/bip39crypto.js?v=b33"></script>
+<script src="../estimator/gpucrack.js?v=b33"></script>
+<script src="../estimator/i18n.js?v=b33"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -265,7 +265,12 @@ const BENCH_KEY = 'bip39rxcrack.bench.v1';
 let BENCH = null;            // {gpuId, cpuKdf, cpuSweep, gpuKdf|null, ts} or null
 let HAS_GPU = false;         // set at boot
 let CUR_GPU_ID = '';         // detected current adapter id (for a mismatch hint)
-function loadBench(){ try{ const s=localStorage.getItem(BENCH_KEY); BENCH = s?JSON.parse(s):null; }catch(e){ BENCH=null; } }
+function loadBench(){ try{ const s=localStorage.getItem(BENCH_KEY); BENCH = s?JSON.parse(s):null;
+  // Pre-aggregate caches stored the sweep as a SINGLE-CORE rate; the corrected
+  // model would x cores that (perfect-scaling fiction -> optimistic ETA). Drop
+  // them so the browser re-benchmarks the real multicore/pipeline sweep rate.
+  if(BENCH && BENCH.sweepAgg==null){ BENCH=null; localStorage.removeItem(BENCH_KEY); }
+}catch(e){ BENCH=null; } }
 function saveBench(){ try{ localStorage.setItem(BENCH_KEY, JSON.stringify(BENCH)); }catch(e){} }
 // Feed the measured rates into the model's calibration slots (best-of for the estimate).
 function applyBench(){
@@ -350,7 +355,7 @@ function setLang(l){
     const txt = await (await fetch('../data/english.txt')).text();
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b32' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b33' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -554,7 +559,7 @@ async function _measCpuSweep(ms){
   }
   const per=Math.ceil(total/cores), swept=new Array(cores).fill(0), workers=[];
   for(let k=0;k<cores;k++){
-    let w; try{ w=new Worker('crackworker.js?v=b32'); }catch(e){ break; }
+    let w; try{ w=new Worker('crackworker.js?v=b33'); }catch(e){ break; }
     workers.push(w);
     w.onmessage=(e)=>{ const m=e.data; if(m&&(m.type==='cand'||m.type==='progress')) swept[m.id]=m.swept; };
     const start=k*per, end=Math.min(total,(k+1)*per);
@@ -708,7 +713,7 @@ async function onCrack(){
       if(gpu && reqCsum && typeof Worker!=='undefined')      // parallel sweep (workers) + GPU seed
         r = await crackWordsHybrid({ pattern:patStr, passphrase:passFixed, requireChecksum:reqCsum, plan, tcc, taddr, changes, gap:gapN, total, nWorkers, onProgress:common.onProgress, isCancelled:common.isCancelled });
       else if(gpu)                                            // checksum-off or no workers: double-buffered main-thread sweep + GPU seed (+ parallel-EC derive pool for address)
-        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b32'});
+        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b33'});
       else                                                    // CPU multicore
         r = await mt(()=>cpuCrackWords({...common, passphrase:passFixed, tcc, taddr, changes, gap:gapN, requireChecksum:reqCsum}));
     } else if(target==='xpub'){
@@ -716,7 +721,7 @@ async function onCrack(){
       r = gpu ? await window.GpuCrack.crackXpub(args) : await mt(()=>cpuCrack(args));
     } else {
       const args={...common, mnemonic:mnFixed, target:taddr, changes, gap:gapN, batchSize:2048,
-        nWorkers, workerUrl:'crackworker.js?v=b32' };   // parallel-EC derive pool
+        nWorkers, workerUrl:'crackworker.js?v=b33' };   // parallel-EC derive pool
       r = gpu ? await window.GpuCrack.crackAddress(args) : await mt(()=>cpuCrackAddress(args));
     }
     if(r && r.error) throw new Error(r.error);
@@ -796,7 +801,7 @@ function cpuCrackMT(o){
       const start=k*per, end=Math.min(o.total,(k+1)*per);
       if (start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b32'); }catch(e){ cleanup(); return resolve(o.single()); }
+      let w; try{ w=new Worker('crackworker.js?v=b33'); }catch(e){ cleanup(); return resolve(o.single()); }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if (m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
@@ -822,10 +827,10 @@ function cpuCrackMT(o){
 function crackWordsHybrid(o){
   const C=window.BIP39Crypto;
   const nW=Math.max(1, Math.min(o.nWorkers||1, 32));
-  const WURL='crackworker.js?v=b32';
+  const WURL='crackworker.js?v=b33';
   return new Promise(async (resolve)=>{
     try{ await window.GpuCrack.initGpuWords(); }catch(e){ return resolve({error:e.message}); }
-    const isAddr=!!o.taddr;
+    const isAddr=!!o.taddr; const isXpub=!isAddr;   // one derive pool serves both
     const plan=isAddr ? o.plan.filter(pp=>C.purposeType(pp.purpose)===o.taddr.type) : o.plan;
     const changes=(o.changes&&o.changes.length)?o.changes:[0]; const gap=Math.max(1,o.gap||1);
     const workers=[]; const sweptA=new Array(nW).fill(0);
@@ -840,13 +845,16 @@ function crackWordsHybrid(o){
     const report=()=>{ const swept=sweptA.reduce((a,b)=>a+b,0), el=(performance.now()-t0)/1000||1e-6;
       o.onProgress(swept,o.total,swept/el,{seeded:seededTotal,seedRate:seededTotal/el}); };
     const poll=setInterval(()=>{ if(o.isCancelled&&o.isCancelled()) finish({stopped:true}); },200);
-    const maybeDone=()=>{ if(allSwept && !queue.length && !seeding && (!isAddr || (dDispatched===dCompleted && !dQueue.length)) && !finished) finish({found:null}); };
-    // dispatch pending seed-batches to idle derive workers
+    const maybeDone=()=>{ if(allSwept && !queue.length && !seeding && (dDispatched===dCompleted && !dQueue.length) && !finished) finish({found:null}); };
+    // dispatch pending seed-batches to idle derive workers. Address = secp256k1
+    // EC compare; xpub = EC-free chain-code compare -- both off the main thread.
+    const deriveMsg = isAddr
+      ? { addrType:o.taddr.type, programHex:C.toHex(o.taddr.program), changes, gap }
+      : { targetKind:'xpub', chainCodeHex:C.toHex(o.tcc) };
     const drainDerive=()=>{ while(dIdle.length && dQueue.length && !finished){ const w=dIdle.shift(), task=dQueue.shift();
       dPending.set(task.batchId, task);
-      w.postMessage({ type:'derive', batchId:task.batchId, seedsBuf:task.seedsBuf, n:task.batch.length, startIndex:0,
-        plan, addrType:o.taddr.type, programHex:C.toHex(o.taddr.program), changes, gap }, [task.seedsBuf]); } };
-    if(isAddr){
+      w.postMessage(Object.assign({ type:'derive', batchId:task.batchId, seedsBuf:task.seedsBuf, n:task.batch.length, startIndex:0, plan }, deriveMsg), [task.seedsBuf]); } };
+    {
       for(let i=0;i<nW;i++){ let w; try{ w=new Worker(WURL); }catch(e){ break; } dWorkers.push(w); dIdle.push(w);
         w.onmessage=(e)=>{ const m=e.data; if(finished) return;
           if(m.type==='derivehit'){ const task=dPending.get(m.batchId); const hitc=task.batch[m.index]; finish({found:hitc.mn, path:m.path, index:hitc.index}); }
@@ -858,20 +866,14 @@ function crackWordsHybrid(o){
       if(seeding||finished) return; seeding=true;
       while(queue.length && !finished){
         // backpressure: don't seed far ahead of the derive pool
-        if(isAddr && dQueue.length > nW*3){ break; }
+        if(dQueue.length > nW*3){ break; }
         const batch=queue.splice(0,4096); const mns=batch.map(x=>x.mn);
         let seeds; try{ seeds=await window.GpuCrack.gpuSeedsWords(mns,o.passphrase); }catch(e){ finish({error:e.message}); return; }
         if(finished) return;
         seededTotal+=mns.length;
-        if(isAddr){
-          // hand the seeds to a derive worker (parallel EC); transfer zero-copy.
-          dQueue.push({ batchId:dBatchId++, seedsBuf:seeds.buffer, batch }); dDispatched++; drainDerive();
-        } else {
-          // xpub: cheap chaincode compare inline, chunked+yield to stay smooth.
-          for(let k=0;k<mns.length && !finished;k++){ const seed=seeds.subarray(k*64,k*64+64);
-            for(const pp of o.plan){ if(C.eq(C.accountNode(seed,pp.purpose,pp.account,pp.coin).c,o.tcc)){ finish({found:mns[k],path:pp,index:batch[k].index}); return; } }
-            if((k&511)===511){ await new Promise(r=>setTimeout(r,0)); if(finished) return; } }
-        }
+        // hand the seeds to a derive worker (parallel compare, off the main
+        // thread -- EC for address, chain-code for xpub); transfer zero-copy.
+        dQueue.push({ batchId:dBatchId++, seedsBuf:seeds.buffer, batch }); dDispatched++; drainDerive();
         report();
         await new Promise(r=>setTimeout(r,0));   // yield so the sweep keeps flowing
       }
