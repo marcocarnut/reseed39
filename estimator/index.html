@@ -110,6 +110,7 @@
   <span class="warn" data-i18n-html="warnbar"></span>
   <span class="langSeg" id="langSeg"><button data-l="en" class="on">EN</button><button data-l="pt">PT</button></span>
 </header>
+<div id="resumeBar" style="display:none"></div>
 
 <div class="tabs">
   <div class="tab active" data-view="est" data-i18n="tabEst">Estimator</div>
@@ -212,16 +213,16 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b40"></script>
-<script src="../wasm/rxecore_api.js?v=b40"></script>
+<script src="../wasm/rxecore.js?v=b43"></script>
+<script src="../wasm/rxecore_api.js?v=b43"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b40"></script>
-<script src="../estimator/model.js?v=b40"></script>
-<script src="../estimator/wordset.js?v=b40"></script>
-<script src="../estimator/bip39crypto.js?v=b40"></script>
-<script src="../estimator/gpucrack.js?v=b40"></script>
-<script src="../estimator/i18n.js?v=b40"></script>
+<script src="../estimator/bip39.js?v=b43"></script>
+<script src="../estimator/model.js?v=b43"></script>
+<script src="../estimator/wordset.js?v=b43"></script>
+<script src="../estimator/bip39crypto.js?v=b43"></script>
+<script src="../estimator/gpucrack.js?v=b43"></script>
+<script src="../estimator/i18n.js?v=b43"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -282,6 +283,41 @@ function applyBench(){
   calCpu = { source:(LANG==='pt'?'medido neste navegador':'measured on this browser'), cpu:{...cpu} };
   calGpu = BENCH.gpuKdf ? { source:(LANG==='pt'?'medido (WebGPU)':'measured (WebGPU)'),
              cpu:{...cpu}, gpu:{ kdf:BENCH.gpuKdf } } : null;
+}
+
+// ---- crack CHECKPOINT (localStorage; survives reload / crash / browser restart)
+// Kept on-device on purpose: the params include the mnemonic PATTERN (fragments
+// of the user's seed) -- never written to the URL. Cleared when the crack finishes
+// (found or exhausted); kept on Stop and on a crash so it can be resumed.
+const CKPT_KEY='bip39rxcrack.ckpt.v1';
+let _resumeFrom=0, _resumeSig=null, _ckptLast=0;
+function ckptSig(p){ return [p.mode,p.wordsPat,p.tseg,p.addr,p.reqChecksum?1:0,(p.changes||[]).join(','),p.gap,p.crackPass||''].join(''); }
+function ckptSave(o){ try{ localStorage.setItem(CKPT_KEY, JSON.stringify(o)); }catch(e){} }
+function ckptLoad(){ try{ const s=localStorage.getItem(CKPT_KEY); return s?JSON.parse(s):null; }catch(e){ return null; } }
+function ckptClear(){ try{ localStorage.removeItem(CKPT_KEY); }catch(e){} _resumeFrom=0; _resumeSig=null; }
+// Restore a saved crack's form inputs (so the estimator reflects the interrupted run).
+function restoreCrackParams(p){
+  try{ setMode(p.mode);
+    if(p.mode==='words'){ setSeg('#wordsModeSeg','data-wm','pattern'); $('#wordsPat').value=p.wordsPat||''; $('#reqChecksum').checked=!!p.reqChecksum; if($('#crackPass')) $('#crackPass').value=p.crackPass||''; }
+    setSeg('#targetSeg','data-t',p.tseg||'xpub'); $('#addr').value=p.addr||'';
+    if($('#change')) $('#change').value=(p.changes&&p.changes.length>1)?'2':'1';
+    if($('#gap')) $('#gap').value=String(p.gap||1);
+    onAddr(); recompute();
+  }catch(e){}
+}
+// Boot / post-crack: show a "resume interrupted crack" banner if a checkpoint survived.
+function renderResumeBar(){
+  const bar=$('#resumeBar'); if(!bar) return;
+  const ck=ckptLoad();
+  if(!ck||!ck.params||!ck.total||!(ck.frontier>0)){ bar.style.display='none'; bar.innerHTML=''; return; }
+  const pct=Math.min(100, ck.frontier/ck.total*100);
+  const prev=(ck.params.wordsPat||'').replace(/</g,'&lt;');
+  bar.setAttribute('style','display:block;margin:8px 0;padding:9px 13px;border:1px solid #ca8a04;background:rgba(202,138,4,0.13);border-radius:8px;font-size:13px');
+  bar.innerHTML=`<span>⏸ ${t('resumeFound')} <b>${fmtBig(ck.frontier)}</b> / ${fmtBig(ck.total)} (${pct.toFixed(pct<0.1?3:1)}%) · <code style="opacity:.8">${prev.slice(0,56)}${prev.length>56?'…':''}</code></span>`
+    +`<span style="float:right;white-space:nowrap"><button class="ghost" id="resumeGo">▶ ${t('resumeBtn')}</button> <button class="ghost" id="resumeDrop">${t('resumeDiscard')}</button></span>`;
+  $('#resumeGo').onclick=()=>{ _resumeFrom=ck.frontier; _resumeSig=ckptSig(ck.params); restoreCrackParams(ck.params);
+    bar.style.display='none'; openCrackModal(); onCrack(); };
+  $('#resumeDrop').onclick=()=>{ ckptClear(); renderResumeBar(); };
 }
 
 // ---- derivation catalogue (language-neutral) ----
@@ -355,7 +391,7 @@ function setLang(l){
     const txt = await (await fetch('../data/english.txt')).text();
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b40' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b43' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -368,6 +404,7 @@ function setLang(l){
     $('#booting').style.display='none';
     $('#view-est').classList.add('active');
     buildDerivs(); wireUI(); applyBackendAvail(); applyLang(); applyTargetVis(); renderBenchCard(); recompute();
+    renderResumeBar();   // offer to resume an interrupted crack (from localStorage)
   }catch(e){
     $('#booting').innerHTML = '<span class="err">failed to load wasm core: '+e.message+'</span>';
   }
@@ -559,7 +596,7 @@ async function _measCpuSweep(ms){
   }
   const per=Math.ceil(total/cores), swept=new Array(cores).fill(0), workers=[];
   for(let k=0;k<cores;k++){
-    let w; try{ w=new Worker('crackworker.js?v=b40'); }catch(e){ break; }
+    let w; try{ w=new Worker('crackworker.js?v=b43'); }catch(e){ break; }
     workers.push(w);
     w.onmessage=(e)=>{ const m=e.data; if(m&&(m.type==='cand'||m.type==='progress')) swept[m.id]=m.swept; };
     const start=k*per, end=Math.min(total,(k+1)*per);
@@ -725,13 +762,21 @@ async function onCrack(){
     window.GpuCrack.onGpuStatus((s)=>{ if(!cracking||!s.cooling) return;
       prog.innerHTML=`<div>⏸ ${esc(t('crackCooling').replace('%s',Math.ceil(s.remainingMs/1000)).replace('%n',s.restart).replace('%m',s.maxResets))}</div>`; });
   }
+  // CHECKPOINT context (words + GPU only): resume from a saved frontier, and
+  // auto-save the frontier as the crack advances so a reload/crash can resume.
+  const ckptParams={ mode, wordsPat:patStr, tseg:target, addr, reqChecksum:reqCsum, changes:(changes&&changes.length?changes:[0]), gap:gapN, crackPass:passFixed };
+  const _sig=ckptSig(ckptParams);
+  const resumeFrom=(mode==='words' && _resumeSig===_sig)?_resumeFrom:0;
+  _resumeSig=null; _resumeFrom=0;   // consume any pending resume request
+  const onCheckpoint=(gpu && mode==='words') ? (fr)=>{ const now=performance.now(); if(now-_ckptLast<2500) return; _ckptLast=now;
+    ckptSave({ v:1, ts:Date.now(), sig:_sig, frontier:fr, total, params:ckptParams }); } : null;
   try{
     let r;
     if(mode==='words'){
       if(gpu && reqCsum && typeof Worker!=='undefined')      // parallel sweep (workers) + GPU seed
-        r = await crackWordsHybrid({ pattern:patStr, passphrase:passFixed, requireChecksum:reqCsum, plan, tcc, taddr, changes, gap:gapN, total, nWorkers, onProgress:common.onProgress, isCancelled:common.isCancelled });
+        r = await crackWordsHybrid({ pattern:patStr, passphrase:passFixed, requireChecksum:reqCsum, plan, tcc, taddr, changes, gap:gapN, total, nWorkers, onProgress:common.onProgress, isCancelled:common.isCancelled, resumeFrom, onCheckpoint });
       else if(gpu)                                            // checksum-off or no workers: double-buffered main-thread sweep + GPU seed (+ parallel-EC derive pool for address)
-        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b40'});
+        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b43', resumeFrom, onCheckpoint});
       else                                                    // CPU multicore
         r = await mt(()=>cpuCrackWords({...common, passphrase:passFixed, tcc, taddr, changes, gap:gapN, requireChecksum:reqCsum}));
     } else if(target==='xpub'){
@@ -739,10 +784,14 @@ async function onCrack(){
       r = gpu ? await window.GpuCrack.crackXpub(args) : await mt(()=>cpuCrack(args));
     } else {
       const args={...common, mnemonic:mnFixed, target:taddr, changes, gap:gapN, batchSize:2048,
-        nWorkers, workerUrl:'crackworker.js?v=b40' };   // parallel-EC derive pool
+        nWorkers, workerUrl:'crackworker.js?v=b43' };   // parallel-EC derive pool
       r = gpu ? await window.GpuCrack.crackAddress(args) : await mt(()=>cpuCrackAddress(args));
     }
     if(r && r.error) throw new Error(r.error);
+    // Checkpoint lifecycle: a finished crack (found or fully swept) clears it; a
+    // Stop KEEPS it so the user can resume later (a crash never reaches here, so
+    // the last auto-saved frontier persists for the resume banner).
+    if(r && !r.stopped) ckptClear();
     if(r.stopped) res.innerHTML='<span class="note">'+t('crackStopped')+'</span>';
     else if(r.found!=null){
       const pth = (target==='xpub')
@@ -758,7 +807,8 @@ async function onCrack(){
       ? '<span class="note">'+t('crackStopped')+'</span>'          // Stop hit mid-cooldown
       : '<span class="err">'+esc(e.message)+'</span>'; }
   finally{ cracking=false; btn.textContent=t('crackBtn'); msg.textContent=''; try{set.free()}catch(e){}
-    try{ if(window.GpuCrack&&window.GpuCrack.onGpuStatus){ window.GpuCrack.onGpuStatus(null); window.GpuCrack.setCancelCheck&&window.GpuCrack.setCancelCheck(null); } }catch(e){} }
+    try{ if(window.GpuCrack&&window.GpuCrack.onGpuStatus){ window.GpuCrack.onGpuStatus(null); window.GpuCrack.setCancelCheck&&window.GpuCrack.setCancelCheck(null); } }catch(e){}
+    try{ renderResumeBar(); }catch(e){} }   // reappear after a Stop (checkpoint kept); hidden after found/exhausted
 }
 // WORDS mode: candidate mnemonics x a fixed BIP39 passphrase. CPU only -- the
 // varying mnemonic is the HMAC key, so the GPU midstate precompute (fixed key)
@@ -822,7 +872,7 @@ function cpuCrackMT(o){
       const start=k*per, end=Math.min(o.total,(k+1)*per);
       if (start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b40'); }catch(e){ cleanup(); return resolve(o.single()); }
+      let w; try{ w=new Worker('crackworker.js?v=b43'); }catch(e){ cleanup(); return resolve(o.single()); }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if (m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
@@ -848,13 +898,13 @@ function cpuCrackMT(o){
 function crackWordsHybrid(o){
   const C=window.BIP39Crypto;
   const nW=Math.max(1, Math.min(o.nWorkers||1, 32));
-  const WURL='crackworker.js?v=b40';
+  const WURL='crackworker.js?v=b43';
   return new Promise(async (resolve)=>{
     try{ await window.GpuCrack.initGpuWords(); }catch(e){ return resolve({error:e.message}); }
     const isAddr=!!o.taddr; const isXpub=!isAddr;   // one derive pool serves both
     const plan=isAddr ? o.plan.filter(pp=>C.purposeType(pp.purpose)===o.taddr.type) : o.plan;
     const changes=(o.changes&&o.changes.length)?o.changes:[0]; const gap=Math.max(1,o.gap||1);
-    const CHUNK=1<<20;              // monotonic-cursor chunk = 1,048,576 candidates
+    const CHUNK=1<<17;              // monotonic-cursor chunk = 131,072 candidates (fine checkpoints; worker caches the parsed set so re-runs are cheap)
     const workers=[];
     // MONOTONIC CURSOR: workers pull CHUNK-sized ranges in increasing order; the
     // checkpoint frontier is the highest index with EVERY chunk below it done

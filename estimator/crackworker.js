@@ -17,6 +17,7 @@ const _v = self.location.search || '';
 importScripts('../wasm/rxecore.js'+_v, '../wasm/rxecore_api.js'+_v, 'bip39.js'+_v, 'bip39crypto.js'+_v);
 
 let core = null, C = null, V = null;
+let _runSet = null, _runPat = null;   // parsed-set cache across same-pattern chunks
 async function ensureCore(wordlist){
   if (core) return;
   C = globalThis.BIP39Crypto;
@@ -90,7 +91,13 @@ onmessage = async (e) => {
   if (d.type !== 'run') return;
   try {
     await ensureCore(d.wordlist);
-    const set = core.parse(d.pattern);
+    // Cache the parsed set across chunks of the SAME pattern (the monotonic-cursor
+    // driver re-issues 'run' with successive ranges) so we parse once, not per chunk.
+    if (!(_runSet && _runPat === d.pattern)) {
+      if (_runSet) { try{ _runSet.free(); }catch(e){} }
+      _runSet = core.parse(d.pattern); _runPat = d.pattern;
+    }
+    const set = _runSet;
     const isWords = d.mode === 'words';
     const isAddr  = d.target.kind === 'address';
     const tcc   = isAddr ? null : hexToBytes(d.target.chainCodeHex);
@@ -161,11 +168,10 @@ onmessage = async (e) => {
         }
       }
       swept++;
-      if (hit) { postMessage({ type:'hit', id:d.id, index:i, candidate:(isWords?mn:pw), path:hit, swept, seeded }); set.free(); return; }
+      if (hit) { postMessage({ type:'hit', id:d.id, index:i, candidate:(isWords?mn:pw), path:hit, swept, seeded }); return; }  // set is cached (freed on pattern change)
       maybePost();
     }
     if (sweepOnly) flushCand(true);
-    set.free();
     postMessage({ type:'done', id:d.id, swept, seeded });
   } catch (err) {
     postMessage({ type:'error', id:d.id, message: String(err && err.message || err) });
