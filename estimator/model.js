@@ -31,7 +31,9 @@ const DEFAULT_RATES = {
   cpu: {
     kdfPerCore: 3000,          // PBKDF2-HMAC-SHA512(2048) cand/s/core (range ~1-5K)
     ecMultPerCore: 50000,      // fixed-base k*G mults/s/core (libsecp ~50-70K)
-    sweepPerCore: 30000,       // unrank + checksum-test cand/s/core (the words SWEEP)
+    sweepPerCore: 30000,       // unrank + checksum-test cand/s/core (fallback if uncalibrated)
+    sweepAggregate: null,      // MEASURED multicore aggregate sweep cand/s (preferred)
+    sweepCores: null,          // core count sweepAggregate was measured at
   },
   gpu: {
     kdf: 300000,               // device KDF cand/s (PLAN range 1e5-1e6)
@@ -342,13 +344,25 @@ function estimate(input, deps) {
     let sweepSec = 0, rawSweep = 0;
     if ((mode === 'words' || mode === 'joint') && survival && !survival.infinite) {
       rawSweep = Number(survival.raw);
-      // Both paths now shard the sweep across cores: CPU = multicore workers,
-      // GPU = the hybrid (workers sweep + checksum-filter, GPU seeds survivors).
-      const sweepRate = rates.cpu.sweepPerCore * cores;
+      // Both paths shard the sweep across cores: CPU = multicore workers, GPU =
+      // the hybrid (workers sweep + checksum-filter, GPU seeds survivors). Use the
+      // MEASURED aggregate multicore rate when calibrated -- real worker scaling is
+      // sublinear (~44% of cores*single-core on an 8-core box), so the old
+      // sweepPerCore*cores overshot the rate ~2x (=> an optimistic ETA). Rescale
+      // linearly if the user picks a different core count than was benchmarked.
+      const sweepRate = rates.cpu.sweepAggregate
+        ? rates.cpu.sweepAggregate * (cores / (rates.cpu.sweepCores || cores))
+        : rates.cpu.sweepPerCore * cores;
       sweepSec = rawSweep / sweepRate;
     }
-    const exhaustSec = sweepSec + seedSec + ecSec;
-    const sweepDominates = sweepSec > seedSec + ecSec;
+    // Wall-clock: on the GPU path the CPU sweep, GPU seed, and (address) EC pool
+    // run on DIFFERENT hardware and pipeline -- so the time is the slowest stage,
+    // not their sum. On the CPU path every stage runs on the same worker cores
+    // (unrank -> checksum -> KDF -> EC per candidate), so they add up.
+    const exhaustSec = backend === 'gpu'
+      ? Math.max(sweepSec, seedSec, ecSec)
+      : sweepSec + seedSec + ecSec;
+    const sweepDominates = sweepSec >= seedSec && sweepSec >= ecSec && sweepSec > 0;
     eta = {
       calibrated: rates.calibrated,
       rateSource: rates.source,
