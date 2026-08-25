@@ -50,28 +50,49 @@ function _resetGpu(){ try{ if(_gpu&&_gpu.dev&&_gpu.dev.destroy) _gpu.dev.destroy
 // Run a GPU op; if the device was lost, re-init and retry (with backoff) so a
 // transient driver reset doesn't abort a multi-hour crack. Re-throws non-device
 // errors (real bugs) immediately, and gives up after `tries` device re-inits.
-let _gpuResets = 0;        // how many GPU ops we've recovered from a lost device this session
-let _gpuCooldownMs = 60000; // pause after a device loss to let the GPU cool before retrying
-let _gpuStatusCb = null;    // optional UI hook: called during cooldown + on resume
-async function _withGpuRetry(fn, tries=8){
-  for (let t=0;;t++){
+let _gpuResets = 0;         // how many GPU ops we've recovered from a lost device this session
+// Adaptive cooldown after a device loss. Start at the base (min); DOUBLE it on
+// each consecutive failure up to a cap; RESET to the base only once the GPU has
+// run clean past a stability window (so a flaky-under-heat GPU keeps backing off,
+// but a one-off blip is forgiven). Times in ms.
+let _coolBaseMs = 60000;          // minimum / starting cooldown (configurable via UI)
+let _coolCapMs  = 30*60*1000;     // cap: 30 min
+let _coolStabilityMs = 30*60*1000;// must run clean this long to reset to the base
+let _coolCurMs  = _coolBaseMs;    // current (backed-off) cooldown
+let _lastResumeAt = 0;            // when we last resumed after a recovery (0 = never)
+let _gpuMaxResets = 20;           // give up the crack after this many recoveries
+let _gpuStatusCb = null;          // optional UI hook: called during cooldown + on resume
+// Reset the per-crack GPU recovery state (call at the start of each crack).
+function _resetGpuStats(){ _gpuResets=0; _coolCurMs=_coolBaseMs; _lastResumeAt=0; }
+async function _withGpuRetry(fn){
+  for (;;){
     try { return await fn(); }
     catch(e){
       if (!_isDeviceLost(e)) throw e;                 // a real bug -- surface it now
-      if (t>=tries) throw new Error(`GPU did not recover after ${tries} attempts (${(e&&e.message)||e}). The GPU may need more time to reset -- lower the load or try again later.`);
       _gpuResets++;
-      try{ console.warn(`[gpucrack] GPU op failed (${(e&&e.message)||e}); recovering device -- restart #${_gpuResets} (attempt ${t+1}/${tries})`); }catch(_){}
+      // Hard stop: an unstable GPU shouldn't keep a crack "alive" forever.
+      if (_gpuResets >= _gpuMaxResets)
+        throw new Error(`GPU gave up after ${_gpuResets} recoveries (max ${_gpuMaxResets}) -- it appears unstable. Let it cool and try again, or raise the limit.`);
+      // Adaptive backoff: if the GPU ran clean past the stability window since the
+      // last recovery, this is a fresh incident -> back to the base. Otherwise the
+      // failures are clustering -> double (capped).
+      const now = performance.now();
+      if (_lastResumeAt > 0){
+        if (now - _lastResumeAt > _coolStabilityMs) _coolCurMs = _coolBaseMs;
+        else _coolCurMs = Math.min(_coolCurMs*2, _coolCapMs);
+      }
+      try{ console.warn(`[gpucrack] GPU op failed (${(e&&e.message)||e}); recovering -- restart #${_gpuResets}/${_gpuMaxResets}, cooldown ${Math.round(_coolCurMs/1000)}s`); }catch(_){}
       _resetGpu();
-      // Cool-down: a device loss is often thermal (a hot GPU tripping the OS
-      // watchdog); retrying in 300ms just trips it again. Wait _gpuCooldownMs
-      // (configurable), ticking a status callback each second so the UI can show
-      // a countdown instead of looking hung.
-      const total = Math.max(0, _gpuCooldownMs);
+      // Cool-down: a device loss is often thermal; retrying in 300ms just trips it
+      // again. Wait _coolCurMs, ticking a status callback each second so the UI can
+      // show a countdown instead of looking hung.
+      const total = Math.max(0, _coolCurMs);
       for (let waited=0; waited<total; waited+=1000){
-        if (_gpuStatusCb) try{ _gpuStatusCb({ cooling:true, remainingMs: total-waited, restart:_gpuResets }); }catch(_){}
+        if (_gpuStatusCb) try{ _gpuStatusCb({ cooling:true, remainingMs: total-waited, cooldownMs:_coolCurMs, restart:_gpuResets, maxResets:_gpuMaxResets }); }catch(_){}
         await new Promise(r=>setTimeout(r, Math.min(1000, total-waited)));
       }
-      if (_gpuStatusCb) try{ _gpuStatusCb({ cooling:false, restart:_gpuResets }); }catch(_){}
+      _lastResumeAt = performance.now();   // resume time -> the "ran clean for how long?" clock
+      if (_gpuStatusCb) try{ _gpuStatusCb({ cooling:false, cooldownMs:_coolCurMs, restart:_gpuResets, maxResets:_gpuMaxResets }); }catch(_){}
     }
   }
 }
@@ -518,7 +539,13 @@ async function gateWords(mnemonics, passphrase){
 window.GpuCrack = { initGpu, gpuSeeds, benchmark, crackXpub, crackAddress, MAXSALT,
   initGpuWords, gpuSeedsWords, crackWordsGpu, gateWords, getGpuInfo,
   setBatchEC:(b)=>{ BATCH_EC=!!b; }, getBatchEC:()=>BATCH_EC,
-  getGpuResets:()=>_gpuResets,
-  setGpuCooldown:(ms)=>{ _gpuCooldownMs=Math.max(0, ms|0); }, getGpuCooldown:()=>_gpuCooldownMs,
+  getGpuResets:()=>_gpuResets, resetGpuStats:_resetGpuStats,
+  // base = minimum/starting cooldown; it doubles per consecutive failure up to
+  // the cap, and resets to base after running clean past the stability window.
+  setGpuCooldown:(ms)=>{ _coolBaseMs=Math.max(0, ms|0); _coolCurMs=_coolBaseMs; }, getGpuCooldown:()=>_coolBaseMs,
+  getGpuCooldownCurrent:()=>_coolCurMs,
+  setGpuCooldownCap:(ms)=>{ _coolCapMs=Math.max(0, ms|0); }, getGpuCooldownCap:()=>_coolCapMs,
+  setGpuCooldownStability:(ms)=>{ _coolStabilityMs=Math.max(0, ms|0); }, getGpuCooldownStability:()=>_coolStabilityMs,
+  setGpuMaxResets:(n)=>{ _gpuMaxResets=Math.max(1, n|0); }, getGpuMaxResets:()=>_gpuMaxResets,
   onGpuStatus:(fn)=>{ _gpuStatusCb = (typeof fn==='function') ? fn : null; } };
 })();
