@@ -200,16 +200,16 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b47"></script>
-<script src="../wasm/rxecore_api.js?v=b47"></script>
+<script src="../wasm/rxecore.js?v=b48"></script>
+<script src="../wasm/rxecore_api.js?v=b48"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b47"></script>
-<script src="../estimator/model.js?v=b47"></script>
-<script src="../estimator/wordset.js?v=b47"></script>
-<script src="../estimator/bip39crypto.js?v=b47"></script>
-<script src="../estimator/gpucrack.js?v=b47"></script>
-<script src="../estimator/i18n.js?v=b47"></script>
+<script src="../estimator/bip39.js?v=b48"></script>
+<script src="../estimator/model.js?v=b48"></script>
+<script src="../estimator/wordset.js?v=b48"></script>
+<script src="../estimator/bip39crypto.js?v=b48"></script>
+<script src="../estimator/gpucrack.js?v=b48"></script>
+<script src="../estimator/i18n.js?v=b48"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -385,7 +385,7 @@ function setLang(l){
     const txt = await (await fetch('../data/english.txt')).text();
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b47' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b48' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -528,6 +528,12 @@ function wireUI(){
       $('#crackStopBtn').style.display='none';
       $('#crackRes').innerHTML='<span class="note">'+t('crackStopped')+'</span>';
       try{ renderResumeBar(); }catch(e){}
+    } else {                                                     // RESET after a finished crack: clear result/progress -> fresh, ready to re-crack
+      ckptClear();
+      $('#crackRes').innerHTML=''; $('#crackProg').textContent='';
+      const b=$('#crackBtn'); b.textContent=t('crackBtn'); b.classList.remove('resuming');
+      $('#crackStopBtn').style.display='none';
+      try{ renderResumeBar(); }catch(e){}
     } };
   $('#dAdd').onclick=addDict;
   // modals
@@ -587,7 +593,7 @@ async function _measCpuSweep(ms){
   }
   const per=Math.ceil(total/cores), swept=new Array(cores).fill(0), workers=[];
   for(let k=0;k<cores;k++){
-    let w; try{ w=new Worker('crackworker.js?v=b47'); }catch(e){ break; }
+    let w; try{ w=new Worker('crackworker.js?v=b48'); }catch(e){ break; }
     workers.push(w);
     w.onmessage=(e)=>{ const m=e.data; if(m&&(m.type==='cand'||m.type==='progress')) swept[m.id]=m.swept; };
     const start=k*per, end=Math.min(total,(k+1)*per);
@@ -665,28 +671,24 @@ function renderBenchCard(){
 }
 
 // ---------- in-browser crack (xpub OR address target, known mnemonic) ------
-// Sample a few candidate strings from the set and flag whitespace that's almost
-// certainly a pattern mistake: double (or more) spaces between words, or a
-// leading/trailing space. BIP39 mnemonics are single-space-separated with none
-// on the ends -- extraneous spaces silently produce a keyspace that never
-// matches the intended phrase. Returns a human label ('double spaces', ...) or
-// null. Spacing is usually structural (same across candidates) but a pattern can
-// vary it per branch, so we probe both ends and the middle.
+// Flag whitespace in the mnemonic that would make it never match a standard
+// wallet: double (or more) spaces between words, or a leading/trailing space
+// (mnemonicToSeed hashes the raw NFKD string -- no trimming -- so any extra space
+// changes the seed). We check ONLY the CANONICAL first candidate (unrank 0): a
+// structural typo (e.g. a double space in the fixed part of the pattern) appears
+// in EVERY candidate incl. #0, so #0 catches it -- and #0 of a genuinely clean
+// pattern is clean, so this never false-flags a correct pattern (an earlier
+// multi-index probe could trip on a stray per-branch space that the winning
+// candidate never has). Returns {label, sample} or null.
 function patternWhitespaceIssue(set, card){
   if(card<=0n) return null;
-  const last=card-1n;
-  const idx=[0n, last, card>>1n, card/3n, (card*2n)/3n];
-  const seen=new Set();
-  for(const i of idx){
-    const k=i<0n?0n:(i>last?last:i);
-    if(seen.has(k.toString())) continue; seen.add(k.toString());
-    let s; try{ s=set.unrank(k); }catch(e){ continue; }
-    if(typeof s!=='string') continue;
-    if(/^ /.test(s)) return t('crackWsLead');
-    if(/ $/.test(s)) return t('crackWsTrail');
-    if(/ {2,}/.test(s)) return t('crackWsDbl');
-  }
-  return null;
+  let s; try{ s=set.unrank(0n); }catch(e){ return null; }
+  if(typeof s!=='string') return null;
+  let label=null;
+  if(/^ /.test(s)) label=t('crackWsLead');
+  else if(/ $/.test(s)) label=t('crackWsTrail');
+  else if(/ {2,}/.test(s)) label=t('crackWsDbl');
+  return label ? { label, sample:s } : null;
 }
 async function onCrack(){
   const btn=$('#crackBtn'), msg=$('#crackMsg'), prog=$('#crackProg'), res=$('#crackRes');
@@ -739,7 +741,11 @@ async function onCrack(){
   if(mode==='words' && _wsAckPat!==patStr){
     const ws=patternWhitespaceIssue(set, card);
     if(ws){ set.free(); _wsAckPat=patStr;
-      res.innerHTML='<span class="warnmsg">'+esc(t('crackWsWarn').replace('%w',ws))+'</span>'; return; }
+      // show the offending candidate with spaces made visible, so the exact spot is obvious
+      const vis=esc(ws.sample).replace(/ /g,'<span style="opacity:.55">␣</span>').slice(0,260);
+      res.innerHTML='<span class="warnmsg">'+esc(t('crackWsWarn').replace('%w',ws.label))+'</span>'
+        +'<div class="note" style="margin-top:6px;font-family:monospace;word-break:break-all">'+vis+'</div>';
+      return; }
   }
   const pmap={bip44:44,bip49:49,bip84:84,bip86:86};
   const checked=$$('#purposes input').filter(c=>c.checked).map(c=>c.dataset.p);
@@ -825,7 +831,7 @@ async function onCrack(){
       if(gpu && reqCsum && typeof Worker!=='undefined')      // parallel sweep (workers) + GPU seed
         r = await crackWordsHybrid({ pattern:patStr, passphrase:passFixed, requireChecksum:reqCsum, plan, tcc, taddr, changes, gap:gapN, total, nWorkers, onProgress:common.onProgress, isCancelled:common.isCancelled, resumeFrom, onCheckpoint });
       else if(gpu)                                            // checksum-off or no workers: double-buffered main-thread sweep + GPU seed (+ parallel-EC derive pool for address)
-        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b47', resumeFrom, onCheckpoint});
+        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b48', resumeFrom, onCheckpoint});
       else                                                    // CPU multicore
         r = await mt(()=>cpuCrackWords({...common, passphrase:passFixed, tcc, taddr, changes, gap:gapN, requireChecksum:reqCsum}));
     } else if(target==='xpub'){
@@ -833,7 +839,7 @@ async function onCrack(){
       r = gpu ? await window.GpuCrack.crackXpub(args) : await mt(()=>cpuCrack(args));
     } else {
       const args={...common, mnemonic:mnFixed, target:taddr, changes, gap:gapN, batchSize:2048,
-        nWorkers, workerUrl:'crackworker.js?v=b47' };   // parallel-EC derive pool
+        nWorkers, workerUrl:'crackworker.js?v=b48' };   // parallel-EC derive pool
       r = gpu ? await window.GpuCrack.crackAddress(args) : await mt(()=>cpuCrackAddress(args));
     }
     if(r && r.error) throw new Error(r.error);
@@ -872,8 +878,10 @@ async function onCrack(){
     else { btn.textContent=t('crackBtn'); btn.classList.remove('resuming'); }
     _crackPaused = _pausedHalt;   // let the Stop handler bail out from a paused state
     msg.textContent=''; try{set.free()}catch(e){}
-    // On a resumable pause keep Stop shown ALONGSIDE Resume (bail out vs continue); otherwise hide it.
-    { const sb=$('#crackStopBtn'); if(sb) sb.style.display = _pausedHalt ? '' : 'none'; }
+    // Second button: on a resumable pause it's "Stop" (bail out, alongside Resume);
+    // on a finished crack (found/not-found/stopped) it's "Reset" -- clears the
+    // result so you can re-crack. Always shown after a run; hidden only when fresh.
+    { const sb=$('#crackStopBtn'); if(sb){ sb.textContent = _pausedHalt ? t('crackStopBtn') : t('crackReset'); sb.style.display=''; } }
     if(_crackAbort){ try{ ckptClear(); }catch(e){} }   // Stop discards the checkpoint even on the catch path
     _crackAbort=false;
     try{ if(window.GpuCrack&&window.GpuCrack.onGpuStatus){ window.GpuCrack.onGpuStatus(null); window.GpuCrack.setCancelCheck&&window.GpuCrack.setCancelCheck(null); } }catch(e){}
@@ -941,7 +949,7 @@ function cpuCrackMT(o){
       const start=k*per, end=Math.min(o.total,(k+1)*per);
       if (start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b47'); }catch(e){ cleanup(); return resolve(o.single()); }
+      let w; try{ w=new Worker('crackworker.js?v=b48'); }catch(e){ cleanup(); return resolve(o.single()); }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if (m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
@@ -967,7 +975,7 @@ function cpuCrackMT(o){
 function crackWordsHybrid(o){
   const C=window.BIP39Crypto;
   const nW=Math.max(1, Math.min(o.nWorkers||1, 32));
-  const WURL='crackworker.js?v=b47';
+  const WURL='crackworker.js?v=b48';
   return new Promise(async (resolve)=>{
     try{ await window.GpuCrack.initGpuWords(); }catch(e){ return resolve({error:e.message}); }
     const isAddr=!!o.taddr; const isXpub=!isAddr;   // one derive pool serves both
