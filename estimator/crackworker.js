@@ -14,7 +14,7 @@
 // plain reload picks up edited modules here too (http.server sends no cache
 // headers). The main thread spawns us as new Worker('crackworker.js?v=bN').
 const _v = self.location.search || '';
-importScripts('../wasm/rxecore.js'+_v, '../wasm/rxecore_api.js'+_v, 'bip39.js'+_v, 'bip39crypto.js'+_v);
+importScripts('../wasm/rxecore.js'+_v, '../wasm/rxecore_api.js'+_v, 'bip39.js'+_v, 'bip39crypto.js'+_v, 'electrum.js'+_v);
 
 let core = null, C = null, V = null;
 let _runSet = null, _runPat = null;   // parsed-set cache across same-pattern chunks
@@ -23,7 +23,7 @@ async function ensureCore(wordlist){
   C = globalThis.BIP39Crypto;
   core = await globalThis.RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile: p => '../wasm/'+p+_v } });
   core.registerDict('bip39-en', wordlist);
-  ['bip39en','bip39','en','english'].forEach(a=>{ try{ core.registerDict(a, wordlist); }catch(e){} });
+  ['bip39en','bip39','en','english','electrum-en','electrumen','electrum'].forEach(a=>{ try{ core.registerDict(a, wordlist); }catch(e){} });
   V = globalThis.BIP39.makeValidator(wordlist);
 }
 function hexToBytes(h){ const o=new Uint8Array(h.length/2); for(let i=0;i<o.length;i++) o[i]=parseInt(h.substr(i*2,2),16); return o; }

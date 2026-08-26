@@ -89,6 +89,8 @@ const STRINGS = {
     crackStopped: "stopped.", crackVia: "via", crackTried: "tried",
     crackRedNote: "This keyspace is too large to crack in the browser — narrow it, or use the CLI tool.",
     crackElectrumNote: "Electrum paths aren't in the in-browser cracker yet — pick BIP44/49/84/86, or use the CLI.",
+    crackElectrumType: "Electrum supports a legacy (1…/xpub) or native-segwit (bc1q…/zpub) target — this address/xpub type isn't one of those.",
+    crackElectrumJointNyi: "joint Electrum (both mnemonic and passphrase varying) isn't built yet — pin one side to a single value.",
     // results
     unbounded: "unbounded keyspace", exhaustIn: "doable in up to",
     totalCandidates: "Total candidates", dimPill: "DIM-1 × path plan", unboundedShort: "unbounded",
@@ -180,6 +182,8 @@ const STRINGS = {
     crackStopped: "parado.", crackVia: "via", crackTried: "testados",
     crackRedNote: "Este espaço é grande demais para quebrar no navegador — estreite-o, ou use a CLI.",
     crackElectrumNote: "Caminhos Electrum ainda não estão no quebrador do navegador — escolha BIP44/49/84/86, ou use a CLI.",
+    crackElectrumType: "O Electrum aceita alvo legado (1…/xpub) ou segwit nativo (bc1q…/zpub) — este tipo de endereço/xpub não é um desses.",
+    crackElectrumJointNyi: "Electrum conjunto (mnemônico e frase-senha variando) ainda não foi feito — fixe um dos lados num único valor.",
     unbounded: "espaço ilimitado", exhaustIn: "dá pra fazer em até",
     totalCandidates: "Total de candidatos", dimPill: "DIM-1 × plano de caminhos", unboundedShort: "ilimitado",
     kPassSet: "conjunto da frase-senha", kMnemRaw: "conjunto bruto do mnemônico", kChecksum: "checksum-válidos",
