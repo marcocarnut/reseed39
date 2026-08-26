@@ -427,32 +427,38 @@ function buildDerivs(){
 }
 
 // ---------- presets (bilingual) ----------
+// Unified UI: each preset seeds BOTH axes; the crack strategy is inferred from
+// cardinality (fixed mnemonic + passphrase pattern => passphrase axis; mnemonic
+// pattern + blank passphrase => words; both varying => joint). Passphrase presets
+// carry a concrete known mnemonic (replace it with yours); the target address/xpub
+// is left for you to paste.
+const _KNOWN_MN='abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 const PRESETS = [
   { title:{en:'Passphrase: prefix + case + digits',pt:'Frase-senha: prefixo + caixa + dígitos'},
-    sub:{en:'known 12-word mnemonic, address (BIP84)',pt:'mnemônico de 12 conhecido, endereço (BIP84)'},
-    mode:'passphrase', pass:'Correct(horse|Horse)?[0-9]{0,2}', target:'address', purposes:['bip84'], gap:'1' },
+    sub:{en:'known mnemonic, passphrase varies (BIP84)',pt:'mnemônico conhecido, frase-senha varia (BIP84)'},
+    words:_KNOWN_MN, pass:'Correct(horse|Horse)?[0-9]{0,2}', target:'address', purposes:['bip84'], gap:'1' },
   { title:{en:'Passphrase: word + optional year',pt:'Frase-senha: palavra + ano opcional'},
-    sub:{en:'address target, wider gap',pt:'alvo endereço, gap maior'},
-    mode:'passphrase', pass:'[Tt]rezor(2019|2020|2021)?', target:'address', purposes:['bip84'], gap:'3' },
+    sub:{en:'known mnemonic, passphrase + optional year',pt:'mnemônico conhecido, frase-senha + ano opcional'},
+    words:_KNOWN_MN, pass:'[Tt]rezor(2019|2020|2021)?', target:'address', purposes:['bip84'], gap:'3' },
   { title:{en:'12-word: one missing word',pt:'12 palavras: uma faltando'},
     sub:{en:'dictionary at last position, xpub (BIP44)',pt:'dicionário na última posição, xpub (BIP44)'},
-    mode:'words', wordsMode:'pattern', words:'legal winner thank year wave sausage worth useful legal winner thank [:bip39-en:]',
-    target:'xpub', purposes:['bip44'] },
+    words:'legal winner thank year wave sausage worth useful legal winner thank [:bip39-en:]',
+    pass:'', target:'xpub', purposes:['bip44'] },
   { title:{en:'12-word: two missing words',pt:'12 palavras: duas faltando'},
     sub:{en:'sampled checksum survival, xpub (BIP84)',pt:'sobrevivência de checksum amostrada, xpub (BIP84)'},
-    mode:'words', wordsMode:'pattern', words:'legal winner thank year wave sausage worth useful legal winner [:bip39-en:] [:bip39-en:]',
-    target:'xpub', purposes:['bip84'] },
+    words:'legal winner thank year wave sausage worth useful legal winner [:bip39-en:] [:bip39-en:]',
+    pass:'', target:'xpub', purposes:['bip84'] },
   { title:{en:'Words: known set, unknown order',pt:'Palavras: conjunto conhecido, ordem desconhecida'},
-    sub:{en:'12 words permuted + checksum, xpub',pt:'12 palavras permutadas + checksum, xpub'},
-    mode:'words', wordsMode:'anyorder',
-    words:'legal winner thank year wave sausage worth useful abandon ability able about',
-    target:'xpub', purposes:['bip84'] },
-  { title:{en:'Electrum-style path',pt:'Caminho estilo Electrum'},
-    sub:{en:'BIP39 seed used with Electrum paths',pt:'seed BIP39 usada com caminhos do Electrum'},
-    mode:'passphrase', pass:'[Tt]rezor[0-9]{0,2}', target:'address', purposes:['electrum'], gap:'5' },
+    sub:{en:'12 known words permuted (12!) + checksum, xpub',pt:'12 palavras conhecidas permutadas (12!) + checksum, xpub'},
+    words:'((legal|winner|thank|year|wave|sausage|worth|useful|abandon|ability|able|about) ){{12!?}}',
+    pass:'', target:'xpub', purposes:['bip84'] },
+  { title:{en:'Electrum: missing word',pt:'Electrum: palavra faltando'},
+    sub:{en:'Electrum segwit seed, one unknown word (bc1q…)',pt:'seed segwit Electrum, uma palavra desconhecida (bc1q…)'},
+    words:'bitter grass shiver impose acquire brush forget axis eager alone wine [:electrum-en:]',
+    pass:'', target:'address', purposes:['electrum'] },
   { title:{en:'Joint (longshot): words × passphrase',pt:'Conjunto (tiro longo): palavras × frase-senha'},
-    sub:{en:'product keyspace, xpub',pt:'espaço produto, xpub'},
-    mode:'joint', wordsMode:'pattern', words:'legal winner thank year wave sausage worth useful legal winner thank [:bip39-en:]',
+    sub:{en:'product keyspace, both axes vary, xpub',pt:'espaço produto, os dois eixos variam, xpub'},
+    words:'legal winner thank year wave sausage worth useful legal winner thank [:bip39-en:]',
     pass:'[a-z]{1,3}', target:'xpub', purposes:['bip84'] },
 ];
 function buildPresets(){
