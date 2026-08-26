@@ -1327,8 +1327,23 @@ function recompute(){
            gap:parseInt($('#gap').value,10)||1 },
     exactThreshold:50000, sampleSize:5000, exactFallbackCap:1000000,
   };
+  // ELECTRUM survival: when the Electrum purpose is selected, a candidate is a
+  // valid seed iff its "Seed version" HMAC prefix matches -- 1/256 (standard) or
+  // 1/4096 (segwit), NOT BIP39's checksum. Swap in an Electrum validator so the
+  // estimate's candidate count + ETA match what the crack actually seeds. The
+  // prefix comes from the target (address script type / xpub version); default
+  // to segwit when no decodable target is present yet.
+  const electrumSel = purposes.includes('electrum');
+  let validator = VALIDATOR;
+  if(electrumSel && window.Electrum){
+    const a=$('#addr').value.trim(); let pfx=null;
+    try{ if(target==='xpub'){ const v=Number(BIP39Crypto.decodeXpub(a).version); pfx=v===0x04b24746?'100':v===0x0488b21e?'01':null; }
+         else { const ty=BIP39Crypto.decodeAddress(a).type; pfx=ty==='p2wpkh'?'100':ty==='p2pkh'?'01':null; } }catch(e){}
+    const prefix = pfx || '100';   // default segwit (modern common) until a target pins it
+    validator = { isValid:mn=>window.Electrum.isNewSeed(mn,prefix), theoreticalFraction:()=>1/(prefix==='100'?4096:256) };
+  }
   let r;
-  try{ r = BIP39Estimator.estimate(input,{rxe:RXE,validator:VALIDATOR}); }
+  try{ r = BIP39Estimator.estimate(input,{rxe:RXE,validator}); }
   catch(e){ $('#results').innerHTML='<div class="card"><h3>parse error</h3><div class="err">'+esc(e.message)+'</div></div>'; $('#strategyLine').innerHTML=''; return; }
   render(r, input);
   $('#strategyLine').innerHTML = strategyText(r);
