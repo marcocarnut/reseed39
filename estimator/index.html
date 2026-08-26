@@ -132,39 +132,24 @@
   <div class="pane form">
     <h2 data-i18n="searchShape">Search shape</h2>
 
-    <label class="f" data-i18n="whatSearch">What are you searching for?</label>
-    <div class="seg" id="modeSeg">
-      <button data-mode="words" data-i18n="mWords">Mnemonic (12/24 words)</button>
-      <button data-mode="passphrase" class="on" data-i18n="mPass">Passphrase (Extra Words)</button>
-      <button data-mode="joint" data-i18n="mJoint">Both</button>
-    </div>
-
-    <div id="passBox">
-      <label class="f" data-i18n="passLabel">Passphrase pattern</label>
-      <textarea id="passPat" rows="2">Correct(horse|Horse)?[0-9]{0,2}</textarea>
-    </div>
-
-    <div id="wordsBox" style="display:none">
+    <div id="wordsBox">
       <label class="f" data-i18n="mnemonic">Mnemonic</label>
-      <div class="seg" id="wordsModeSeg">
-        <button data-wm="pattern" class="on" data-i18n="wmPattern">Pattern (regex)</button>
-        <button data-wm="anyorder" data-i18n="wmAny">Known words, any order</button>
-      </div>
       <textarea id="wordsPat" rows="3">legal winner thank year wave sausage worth useful legal winner thank [:bip39-en:]</textarea>
       <div class="hint" id="wordsHint" data-i18n-html="wordsHint"></div>
-      <div id="anyorderOpts" style="display:none">
-        <label class="f" data-i18n-html="anyLabel"></label>
-        <div class="row">
-          <div style="flex:0 0 120px"><label class="f" data-i18n="chooseK">choose k</label><input id="wordsK" class="num" type="text" placeholder="all"></div>
-          <div class="hint" style="align-self:end" data-i18n-html="anyHint"></div>
-        </div>
-      </div>
       <label class="derivrow" style="cursor:pointer;margin-top:8px">
         <input type="checkbox" id="reqChecksum" checked>
         <span><b data-i18n="reqCsum">Require BIP39 checksum</b>
           <span class="hint" data-i18n="reqCsumHint" style="display:block;margin-top:2px">On: only wordlist mnemonics that pass the checksum are hashed (≈256× fewer). Off: every candidate is hashed — check this if you may have used off-dictionary / custom words.</span></span>
       </label>
     </div>
+
+    <div id="passBox">
+      <label class="f" data-i18n="passLabel">Passphrase pattern</label>
+      <textarea id="passPat" rows="2"></textarea>
+      <div class="hint" id="passHint" data-i18n="passHint"></div>
+    </div>
+
+    <div class="hint" id="strategyLine" style="margin:6px 0 2px"></div>
 
     <fieldset>
       <legend data-i18n="target">Target</legend>
@@ -215,16 +200,16 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b46"></script>
-<script src="../wasm/rxecore_api.js?v=b46"></script>
+<script src="../wasm/rxecore.js?v=b47"></script>
+<script src="../wasm/rxecore_api.js?v=b47"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b46"></script>
-<script src="../estimator/model.js?v=b46"></script>
-<script src="../estimator/wordset.js?v=b46"></script>
-<script src="../estimator/bip39crypto.js?v=b46"></script>
-<script src="../estimator/gpucrack.js?v=b46"></script>
-<script src="../estimator/i18n.js?v=b46"></script>
+<script src="../estimator/bip39.js?v=b47"></script>
+<script src="../estimator/model.js?v=b47"></script>
+<script src="../estimator/wordset.js?v=b47"></script>
+<script src="../estimator/bip39crypto.js?v=b47"></script>
+<script src="../estimator/gpucrack.js?v=b47"></script>
+<script src="../estimator/i18n.js?v=b47"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -302,8 +287,12 @@ function ckptLoad(){ try{ const s=localStorage.getItem(CKPT_KEY); return s?JSON.
 function ckptClear(){ try{ localStorage.removeItem(CKPT_KEY); }catch(e){} _resumeFrom=0; _resumeSig=null; }
 // Restore a saved crack's form inputs (so the estimator reflects the interrupted run).
 function restoreCrackParams(p){
-  try{ setMode(p.mode);
-    if(p.mode==='words'){ setSeg('#wordsModeSeg','data-wm','pattern'); $('#wordsPat').value=p.wordsPat||''; $('#reqChecksum').checked=!!p.reqChecksum; if($('#crackPass')) $('#crackPass').value=p.crackPass||''; }
+  // Checkpoints are only taken for words+GPU, so a restore always repopulates the
+  // unified fields as a words-axis search: mnemonic pattern + the fixed passphrase.
+  try{
+    $('#wordsPat').value=p.wordsPat||'';
+    $('#passPat').value=p.crackPass||'';         // the fixed passphrase (may be blank)
+    $('#reqChecksum').checked=!!p.reqChecksum;
     setSeg('#targetSeg','data-t',p.tseg||'xpub'); $('#addr').value=p.addr||'';
     if($('#change')) $('#change').value=(p.changes&&p.changes.length>1)?'2':'1';
     if($('#gap')) $('#gap').value=String(p.gap||1);
@@ -396,7 +385,7 @@ function setLang(l){
     const txt = await (await fetch('../data/english.txt')).text();
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b46' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b47' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -470,11 +459,11 @@ function buildPresets(){
   });
 }
 function applyPreset(p){
-  setMode(p.mode);
-  setWordsMode(p.wordsMode||'pattern');
-  if(p.pass!=null) $('#passPat').value=p.pass;
-  if(p.words!=null) $('#wordsPat').value=p.words;
-  $('#wordsK').value='';
+  // Unified UI: a preset just seeds both axes; the tool infers the crack strategy
+  // from cardinality (a fixed mnemonic + a passphrase pattern => passphrase axis,
+  // a mnemonic pattern + blank passphrase => words axis, both varying => joint).
+  $('#wordsPat').value = p.words!=null ? p.words : '';
+  $('#passPat').value  = p.pass!=null  ? p.pass  : '';
   setSeg('#targetSeg','data-t',p.target||'address');
   $$('#purposes input').forEach(c=>c.checked=(p.purposes||['bip84']).includes(c.dataset.p));
   $('#accts').value=p.accounts||'1';
@@ -487,16 +476,6 @@ function applyPreset(p){
 // ---------- UI wiring ----------
 function setSeg(sel,attr,val){ $$(sel+' button').forEach(b=>b.classList.toggle('on',b.getAttribute(attr)===val)); }
 function segVal(sel,attr){ const b=$(sel+' button.on'); return b?b.getAttribute(attr):null; }
-function setMode(m){
-  setSeg('#modeSeg','data-mode',m);
-  $('#passBox').style.display=(m==='passphrase'||m==='joint')?'':'none';
-  $('#wordsBox').style.display=(m==='words'||m==='joint')?'':'none';
-}
-function setWordsMode(wm){
-  setSeg('#wordsModeSeg','data-wm',wm);
-  $('#anyorderOpts').style.display=wm==='anyorder'?'':'none';
-  $('#wordsHint').style.display=wm==='anyorder'?'none':'';
-}
 function applyTargetVis(){
   const xpub = segVal('#targetSeg','data-t')==='xpub';
   $('#gapWrap').style.display = xpub?'none':'';
@@ -534,11 +513,9 @@ function applyBackendAvail(){
 }
 function wireUI(){
   $$('#langSeg button').forEach(b=>b.onclick=()=>setLang(b.dataset.l));
-  $$('#modeSeg button').forEach(b=>b.onclick=()=>{setMode(b.dataset.mode);recompute();});
-  $$('#wordsModeSeg button').forEach(b=>b.onclick=()=>{setWordsMode(b.dataset.wm);recompute();});
   $$('#targetSeg button').forEach(b=>b.onclick=()=>{setSeg('#targetSeg','data-t',b.dataset.t);applyTargetVis();recompute();});
   $$('#backendSeg button').forEach(b=>b.onclick=()=>{ if(b.disabled) return; setSeg('#backendSeg','data-b',b.dataset.b); });
-  ['#passPat','#wordsPat','#wordsK','#accts','#gap','#cores'].forEach(s=>$(s).addEventListener('input',schedule));
+  ['#passPat','#wordsPat','#accts','#gap','#cores'].forEach(s=>$(s).addEventListener('input',schedule));
   $('#change').addEventListener('change',recompute);
   $('#reqChecksum').addEventListener('change',recompute);
   $('#addr').addEventListener('input',()=>{clearTimeout(debounce);debounce=setTimeout(onAddr,250);});
@@ -610,7 +587,7 @@ async function _measCpuSweep(ms){
   }
   const per=Math.ceil(total/cores), swept=new Array(cores).fill(0), workers=[];
   for(let k=0;k<cores;k++){
-    let w; try{ w=new Worker('crackworker.js?v=b46'); }catch(e){ break; }
+    let w; try{ w=new Worker('crackworker.js?v=b47'); }catch(e){ break; }
     workers.push(w);
     w.onmessage=(e)=>{ const m=e.data; if(m&&(m.type==='cand'||m.type==='progress')) swept[m.id]=m.swept; };
     const start=k*per, end=Math.min(total,(k+1)*per);
@@ -715,26 +692,42 @@ async function onCrack(){
   const btn=$('#crackBtn'), msg=$('#crackMsg'), prog=$('#crackProg'), res=$('#crackRes');
   if(cracking){ cracking=false; return; }          // Stop toggles the flag; the loop checks it
   const C=window.BIP39Crypto;
-  const mode = segVal('#modeSeg','data-mode');
   const target = segVal('#targetSeg','data-t');
   const addr=$('#addr').value.trim();
   // decode the target: xpub -> 32-byte chain code (EC-free); address -> {type,program} (needs EC)
   let tcc=null, taddr=null;
   if(target==='xpub'){ try{ tcc=C.decodeXpub(addr).chainCode; }catch(e){ msg.textContent=t('crackNeedXpub'); return; } }
   else { try{ taddr=C.decodeAddress(addr); }catch(e){ msg.textContent=t('crackNeedAddr'); return; } }
-  // The candidate set + what stays fixed differ by mode:
-  //  passphrase -> fixed mnemonic (#crackMn) x candidate passphrases (#passPat)   [GPU-able]
-  //  words      -> candidate mnemonics (#wordsPat, checksum-filtered) x fixed passphrase (#crackPass)  [CPU]
-  let set, mnFixed=null, passFixed='', patStr='';
-  if(mode==='words'){
-    try{ patStr=currentMnemonicPattern('words'); }catch(e){ msg.textContent='pattern: '+e.message; return; }
-    passFixed = $('#crackPass').value;
-    try{ set=RXE.parse(patStr); }catch(e){ msg.textContent='pattern: '+e.message; return; }
-  } else {
-    mnFixed=$('#crackMn').value.trim().replace(/\s+/g,' ');
-    if(!mnFixed){ msg.textContent=t('crackNeedMn'); return; }
-    patStr=$('#passPat').value.trim();
-    try{ set=RXE.parse(patStr); }catch(e){ msg.textContent='pattern: '+e.message; return; }
+  // UNIFIED dispatch: parse both axes and pick the crack strategy by CARDINALITY.
+  //  words axis      -> candidate mnemonics (#wordsPat, checksum-filtered) x fixed passphrase  [CPU]
+  //  passphrase axis -> fixed mnemonic x candidate passphrases (#passPat)                       [GPU]
+  //  both vary       -> JOINT (not yet implemented -> estimate-only; e comes later)
+  // A blank passphrase = the single empty string (card 1), so "one missing word,
+  // no passphrase" lands on the words axis.
+  const wordsPat=$('#wordsPat').value.trim(), passPat=$('#passPat').value.trim();
+  let wSet=null, pSet=null, wCard=1n, pCard=1n;
+  try{ if(wordsPat){ wSet=RXE.parse(wordsPat); wCard=wSet.isInfinite()?null:wSet.cardinality(); } }
+  catch(e){ msg.textContent='mnemonic: '+e.message; return; }
+  try{ if(passPat){ pSet=RXE.parse(passPat); pCard=pSet.isInfinite()?null:pSet.cardinality(); } }
+  catch(e){ if(wSet)wSet.free(); msg.textContent='passphrase: '+e.message; return; }
+  const wVaries = wCard===null || wCard>1n;
+  const pVaries = pCard===null || pCard>1n;
+  let mode, set, mnFixed=null, passFixed='', patStr='';
+  if(wVaries && pVaries){                       // both open -> joint (not yet crackable)
+    if(wSet)wSet.free(); if(pSet)pSet.free();
+    msg.textContent=t('stratJointNyi'); return;
+  } else if(wVaries){                           // WORDS axis: vary mnemonic, fixed passphrase
+    mode='words'; set=wSet; patStr=wordsPat;
+    passFixed = pSet ? (pSet.unrank(0n)||'') : '';
+    if(pSet) pSet.free();
+  } else {                                      // PASSPHRASE axis: fixed mnemonic, vary passphrase
+    mode='passphrase';
+    if(!wSet){ if(pSet)pSet.free(); msg.textContent=t('crackNeedMn'); return; }   // need a concrete known mnemonic
+    mnFixed=(wSet.unrank(0n)||'').trim().replace(/\s+/g,' '); wSet.free();
+    if(!mnFixed){ if(pSet)pSet.free(); msg.textContent=t('crackNeedMn'); return; }
+    patStr=passPat;
+    if(pSet) set=pSet;
+    else { try{ set=RXE.parse(''); }catch(e){ msg.textContent=t('crackAllFixed'); return; } }   // both fixed -> single verify (empty passphrase)
   }
   if(set.isInfinite()){ set.free(); res.innerHTML='<span class="warnmsg">'+esc(t('crackRedNote'))+'</span>'; return; }
   const card=set.cardinality();   // no size cap -- large keyspaces allowed (Stop to abort)
@@ -832,7 +825,7 @@ async function onCrack(){
       if(gpu && reqCsum && typeof Worker!=='undefined')      // parallel sweep (workers) + GPU seed
         r = await crackWordsHybrid({ pattern:patStr, passphrase:passFixed, requireChecksum:reqCsum, plan, tcc, taddr, changes, gap:gapN, total, nWorkers, onProgress:common.onProgress, isCancelled:common.isCancelled, resumeFrom, onCheckpoint });
       else if(gpu)                                            // checksum-off or no workers: double-buffered main-thread sweep + GPU seed (+ parallel-EC derive pool for address)
-        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b46', resumeFrom, onCheckpoint});
+        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b47', resumeFrom, onCheckpoint});
       else                                                    // CPU multicore
         r = await mt(()=>cpuCrackWords({...common, passphrase:passFixed, tcc, taddr, changes, gap:gapN, requireChecksum:reqCsum}));
     } else if(target==='xpub'){
@@ -840,7 +833,7 @@ async function onCrack(){
       r = gpu ? await window.GpuCrack.crackXpub(args) : await mt(()=>cpuCrack(args));
     } else {
       const args={...common, mnemonic:mnFixed, target:taddr, changes, gap:gapN, batchSize:2048,
-        nWorkers, workerUrl:'crackworker.js?v=b46' };   // parallel-EC derive pool
+        nWorkers, workerUrl:'crackworker.js?v=b47' };   // parallel-EC derive pool
       r = gpu ? await window.GpuCrack.crackAddress(args) : await mt(()=>cpuCrackAddress(args));
     }
     if(r && r.error) throw new Error(r.error);
@@ -948,7 +941,7 @@ function cpuCrackMT(o){
       const start=k*per, end=Math.min(o.total,(k+1)*per);
       if (start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b46'); }catch(e){ cleanup(); return resolve(o.single()); }
+      let w; try{ w=new Worker('crackworker.js?v=b47'); }catch(e){ cleanup(); return resolve(o.single()); }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if (m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
@@ -974,7 +967,7 @@ function cpuCrackMT(o){
 function crackWordsHybrid(o){
   const C=window.BIP39Crypto;
   const nW=Math.max(1, Math.min(o.nWorkers||1, 32));
-  const WURL='crackworker.js?v=b46';
+  const WURL='crackworker.js?v=b47';
   return new Promise(async (resolve)=>{
     try{ await window.GpuCrack.initGpuWords(); }catch(e){ return resolve({error:e.message}); }
     const isAddr=!!o.taddr; const isXpub=!isAddr;   // one derive pool serves both
@@ -1103,29 +1096,22 @@ async function cpuCrackAddress(a){
 
 // ---------- recompute ----------
 function freeLive(){ liveSets.forEach(s=>{try{s.free()}catch(e){}}); liveSets=[]; }
-function currentMnemonicPattern(mode){
-  if(!(mode==='words'||mode==='joint')) return null;
-  const wm = segVal('#wordsModeSeg','data-wm');
-  if(wm==='anyorder'){
-    const kRaw = parseInt($('#wordsK').value,10);
-    const k = (Number.isFinite(kRaw) && kRaw>0) ? kRaw : null;
-    return WordSet.buildWordSetPattern($('#wordsPat').value, { k, ordered:true });
-  }
-  return $('#wordsPat').value.trim();
-}
 function recompute(){
   freeLive();
-  const mode = segVal('#modeSeg','data-mode');
   const target = segVal('#targetSeg','data-t');
   // The ESTIMATE uses the BEST measured rates (GPU if benchmarked, else CPU) --
   // the backend SELECTOR only chooses what the actual crack runs on.
   const backend = calGpu ? 'gpu' : 'cpu';
   $('#targetNote').textContent = target==='xpub' ? t('noteXpub') : t('noteAddr');
   const purposes = $$('#purposes input').filter(c=>c.checked).map(c=>c.dataset.p);
+  // Unified UI: always pass BOTH axes; the model infers the mode from cardinality
+  // (fixed mnemonic + passphrase pattern => passphrase; mnemonic pattern + blank
+  // passphrase => words; both varying => joint). A blank passphrase = card-1 empty
+  // string, so the common "one missing word, no passphrase" case lands on words.
+  const passPat = $('#passPat').value.trim();
   const input = {
-    passphrasePattern: (mode==='passphrase'||mode==='joint') ? $('#passPat').value.trim() : null,
-    mnemonicKnown: mode==='passphrase',
-    mnemonicPattern: currentMnemonicPattern(mode),
+    passphrasePattern: passPat || null,
+    mnemonicPattern: $('#wordsPat').value.trim() || null,
     targetType: target, backend,
     requireChecksum: $('#reqChecksum').checked,
     cores: parseInt($('#cores').value,10)||1,
@@ -1138,16 +1124,19 @@ function recompute(){
   };
   let r;
   try{ r = BIP39Estimator.estimate(input,{rxe:RXE,validator:VALIDATOR}); }
-  catch(e){ $('#results').innerHTML='<div class="card"><h3>parse error</h3><div class="err">'+esc(e.message)+'</div></div>'; return; }
+  catch(e){ $('#results').innerHTML='<div class="card"><h3>parse error</h3><div class="err">'+esc(e.message)+'</div></div>'; $('#strategyLine').innerHTML=''; return; }
   render(r, input);
+  $('#strategyLine').innerHTML = strategyText(r);
   liveSets = [r._sets.passSet, r._sets.wordsSet].filter(Boolean);
-  updateCrackVis(mode, target);
 }
-function updateCrackVis(mode, target){
-  // Which crack input the modal shows; the modal open/close is separate.
-  const mnW=$('#crackMnWrap'), pW=$('#crackPassWrap');
-  if(mnW) mnW.style.display = mode==='passphrase' ? '' : 'none';
-  if(pW)  pW.style.display  = mode==='words' ? '' : 'none';
+// One-line "which axis are we cracking, and why" -- replaces the old mode tab as
+// the transparency signal (the strategy is now inferred, not chosen).
+function strategyText(r){
+  const m = r.mode;
+  if(m==='words')      return '🧩 '+t('stratWords');
+  if(m==='passphrase') return '🔑 '+t('stratPass');
+  if(m==='joint')      return '✳️ '+t('stratJoint')+' <span class="warnmsg" style="display:inline">'+t('stratJointNyi')+'</span>';
+  return '';
 }
 
 // ---------- render ----------
@@ -1213,7 +1202,7 @@ function render(r, input){
   const ss=$('#showSample'); if(ss) ss.onclick=openSampleModal;
   const oc=$('#openCrack'); if(oc) oc.onclick=openCrackModal;
 }
-function openCrackModal(){ updateCrackVis(segVal('#modeSeg','data-mode'), segVal('#targetSeg','data-t')); $('#crackOverlay').classList.add('on'); }
+function openCrackModal(){ $('#crackSummary').innerHTML = lastR ? strategyText(lastR) : ''; $('#crackOverlay').classList.add('on'); }
 function openSampleModal(){
   if(!lastR) return;
   $('#sampleBody').innerHTML = sampleHTML(lastR);
@@ -1288,15 +1277,7 @@ function renderDictList(){
   <div class="modal">
     <h3>🔓 <span data-i18n="crackTitle">Crack in your browser</span> <button class="x" id="crackClose">✕</button></h3>
     <div class="body">
-      <div id="crackMnWrap">
-        <label class="f" data-i18n="crackMnLabel">Your 12/24-word mnemonic — stays in this browser</label>
-        <textarea id="crackMn" rows="2" placeholder="abandon abandon abandon … about"></textarea>
-      </div>
-      <div id="crackPassWrap" style="display:none">
-        <label class="f" data-i18n="crackPassLabel">BIP39 passphrase (the 25th word) — leave blank if none</label>
-        <input id="crackPass" type="text" placeholder="(usually blank)" style="max-width:320px">
-        <div class="hint" data-i18n="crackWordsHint" style="margin-top:6px"></div>
-      </div>
+      <div class="hint" id="crackSummary" style="margin-bottom:10px"></div>
       <div class="row" style="margin-top:12px;align-items:center;gap:12px">
         <div class="seg" id="backendSeg" title="engine">
           <button data-b="cpu">CPU</button>

@@ -230,49 +230,57 @@ function estimate(input, deps) {
   const backend = input.backend === 'gpu' ? 'gpu' : 'cpu';
   const cores = Math.max(1, Number(input.cores || 1));
 
-  // ---- mode inference (PLAN §11 table) ----
-  const hasPass = !!(input.passphrasePattern && String(input.passphrasePattern).length);
-  const hasWordsPattern = !!(input.mnemonicPattern && String(input.mnemonicPattern).length);
-  let mode;
-  if (input.mnemonicKnown && hasPass) mode = 'passphrase';
-  else if (hasWordsPattern && hasPass) mode = 'joint';
-  else if (hasWordsPattern && !hasPass) mode = 'words';
-  else if (input.mnemonicKnown && !hasPass) mode = 'passphrase'; // empty passphrase, degenerate
-  else if (hasPass) mode = 'passphrase';                          // implicit known mnemonic
-  else mode = 'unknown';
-
   const notes = [];
   const warnings = [];
+  const requireChecksum = input.requireChecksum !== false;
 
-  // ---- DIM 1: passphrase set ----
+  // ---- parse BOTH axes up front so the mode follows from CARDINALITY, not a UI
+  //      toggle: whichever side has >1 candidate is the axis being searched. A
+  //      fixed non-empty passphrase is card 1 -> words mode (not joint). ----
+  const hasPass = !!(input.passphrasePattern && String(input.passphrasePattern).length);
+  const hasWordsPattern = !!(input.mnemonicPattern && String(input.mnemonicPattern).length);
+
+  // DIM 1: passphrase set
   let passSet = null, passCard = 1n, passInfinite = false;
   if (hasPass) {
     passSet = rxe.parse(String(input.passphrasePattern));
     if (passSet.isInfinite()) { passInfinite = true; passCard = null; }
     else passCard = passSet.cardinality();
   }
-
-  // ---- DIM 1: mnemonic set + checksum survival ----
-  let wordsSet = null, survival = null, validMnemonicCount = 1n;
-  // requireChecksum defaults to true (standard BIP39 wallets enforce it). When
-  // the user may have used off-dictionary / custom words, they turn it off and
-  // EVERY candidate must be hashed -- so the candidate count is the raw set and
-  // the checksum filter is skipped (both here and in the cracker).
-  const requireChecksum = input.requireChecksum !== false;
-  if (hasWordsPattern && !requireChecksum) {
+  // DIM 1: mnemonic set (raw cardinality here; checksum survival computed below)
+  let wordsSet = null, wordsRaw = 1n, wordsInfinite = false;
+  if (hasWordsPattern) {
     wordsSet = rxe.parse(String(input.mnemonicPattern));
-    const raw = wordsSet.cardinality();
-    if (raw === null) {
+    wordsRaw = wordsSet.cardinality();
+    if (wordsRaw === null) wordsInfinite = true;
+  }
+
+  // ---- mode inference by CARDINALITY (PLAN §11) ----
+  const passVaries  = passInfinite  || (passCard !== null && passCard > 1n);
+  const wordsVaries = wordsInfinite || (wordsRaw !== null && wordsRaw > 1n);
+  let mode;
+  if (!hasPass && !hasWordsPattern) mode = 'unknown';
+  else if (wordsVaries && passVaries) mode = 'joint';   // both axes open -> product
+  else if (wordsVaries) mode = 'words';                 // only the mnemonic varies
+  else mode = 'passphrase';                             // only the passphrase varies, or both fixed (single verify)
+
+  // ---- DIM 1: mnemonic checksum survival (only when the mnemonic is a search
+  //      axis; a fixed mnemonic is already valid, so the filter is a no-op). The
+  //      requireChecksum default is true (standard BIP39 wallets enforce it); off
+  //      => every candidate is hashed (off-dictionary/custom words allowed). ----
+  let survival = null, validMnemonicCount = 1n;
+  const wordsIsAxis = (mode === 'words' || mode === 'joint');
+  if (wordsIsAxis && !requireChecksum) {
+    if (wordsInfinite) {
       warnings.push('mnemonic pattern is unbounded/infinite -- bound it (no * or {n,} tails).');
       validMnemonicCount = null;
     } else {
-      validMnemonicCount = raw;
-      survival = { infinite:false, method:'none', raw, validCount:raw, fraction:1,
+      validMnemonicCount = wordsRaw;
+      survival = { infinite:false, method:'none', raw:wordsRaw, validCount:wordsRaw, fraction:1,
                    wordCount:null, theoreticalFraction:null, checksumOff:true };
       notes.push('checksum filter OFF: every candidate is hashed (off-dictionary / custom words allowed) -- candidate count = the full raw set, so expect it to be ~256x slower than with the checksum on.');
     }
-  } else if (hasWordsPattern) {
-    wordsSet = rxe.parse(String(input.mnemonicPattern));
+  } else if (wordsIsAxis) {
     survival = checksumSurvival(wordsSet, validator, {
       exactThreshold: input.exactThreshold, sampleSize: input.sampleSize,
       exactFallbackCap: input.exactFallbackCap,
@@ -293,7 +301,7 @@ function estimate(input, deps) {
       if (survival.belowSampleResolution)
         warnings.push('the sample found no checksum-valid mnemonic and the set is too big to count exactly -- the true count is small but non-zero (the cracker still tests all candidates). Prefer [:bip39en:] for the unknown word(s) over [a-z]{n} so candidates stay real words.');
     }
-  } else if (mode === 'passphrase') {
+  } else {
     notes.push('passphrase mode: mnemonic is fixed & already checksum-valid -- checksum filter is a no-op here (PLAN §7).');
   }
 
