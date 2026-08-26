@@ -232,16 +232,21 @@ async function initGpuWords(){
 // Over-long mnemonic/salt fall back to the JS reference per candidate.
 let _wordsK = null;   // device-independent SHA-512 K schedule (built once)
 function _getWordsK(C){ return _wordsK || (_wordsK=(()=>{ const K=new Uint32Array(160); for(let i=0;i<80;i++){K[i*2]=C.gpuK.hi[i];K[i*2+1]=C.gpuK.lo[i];} return K; })()); }
-async function gpuSeedsWords(mnemonics, passphrase){
+async function gpuSeedsWords(mnemonics, passphrase, saltPrefix){
   const C = window.BIP39Crypto;
-  const salt = C.utf8('mnemonic' + C.nfkd(passphrase||''));
+  // BIP39 salt = "mnemonic"+pass; Electrum = "electrum"+pass. The mnemonic (the
+  // per-lane HMAC key) is candidate-varied either way; only this salt differs.
+  const pre = saltPrefix || 'mnemonic';
+  const salt = C.utf8(pre + C.nfkd(passphrase||''));
+  const seedFn = (pre==='electrum' && window.Electrum) ? (mn)=>window.Electrum.toSeed(mn, passphrase||'')
+                                                       : (mn)=>C.mnemonicToSeed(mn, passphrase||'');
   const n = mnemonics.length;
   const out = new Uint8Array(n*64);
   const idxGpu=[], mnBytes=[];
   for (let i=0;i<n;i++){
     const b = C.utf8(C.nfkd(mnemonics[i]));
     if (b.length<=WMAXMN && salt.length<=107) { idxGpu.push(i); mnBytes.push(b); }
-    else out.set(C.mnemonicToSeed(mnemonics[i], passphrase||''), i*64);   // fallback
+    else out.set(seedFn(mnemonics[i]), i*64);   // fallback (long mnemonic/salt): host PBKDF2, scheme-correct
   }
   const m = idxGpu.length;
   if (m>0){

@@ -44,5 +44,23 @@ ok(E.seedType('legal winner thank year wave sausage worth useful legal winner th
   ok(C.eq(C.decodeXpub(zpub).chainCode, E.accountNode(s,'segwit').c), 'segwit zpub chain code == accountNode(m/0\').c');
 }
 
+// 5) JOINT composition (mirrors crackElectrum's joint loop): filter candidate
+//    mnemonics by the version prefix, then for each valid one sweep passphrases,
+//    derive, compare. Confirms the passphrase-in-derivation + version-filter path.
+{
+  const trueMn='bitter grass shiver impose acquire brush forget axis eager alone wine silver';
+  const tgt=E.addressTarget(E.toSeed(trueMn,'5'),'segwit',0,0);   // the (silver, "5") p2wpkh
+  const cands=[trueMn.replace('silver','abandon'), trueMn.replace('silver','zoo'), trueMn];
+  const passes=['0','5','9'];
+  let found=null;
+  for(const mn of cands){ if(!E.isNewSeed(mn,'100')) continue;          // OUTER version-prefix filter
+    for(const p of passes){ const tg=E.addressTarget(E.toSeed(mn,p),'segwit',0,0);   // INNER passphrase sweep
+      if(tg.type===tgt.type && C.eq(tg.program,tgt.program)){ found={mn,p}; break; } } if(found)break; }
+  ok(found && found.mn===trueMn && found.p==='5', 'joint-electrum composition finds (…silver, "5")');
+  // and the version filter is discriminating: a standard seed must NOT pass the segwit prefix
+  ok(!E.isNewSeed('cycle rocket west magnet parrot shuffle foot correct salt library feed song','100'),
+     'standard seed rejected by the segwit (100) prefix filter');
+}
+
 console.log(`\n==== ELECTRUM: ${pass} passed, ${fail} failed ====`);
 process.exit(fail? 1 : 0);

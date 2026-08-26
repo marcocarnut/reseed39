@@ -201,17 +201,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b52"></script>
-<script src="../wasm/rxecore_api.js?v=b52"></script>
+<script src="../wasm/rxecore.js?v=b53"></script>
+<script src="../wasm/rxecore_api.js?v=b53"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b52"></script>
-<script src="../estimator/model.js?v=b52"></script>
-<script src="../estimator/wordset.js?v=b52"></script>
-<script src="../estimator/bip39crypto.js?v=b52"></script>
-<script src="../estimator/electrum.js?v=b52"></script>
-<script src="../estimator/gpucrack.js?v=b52"></script>
-<script src="../estimator/i18n.js?v=b52"></script>
+<script src="../estimator/bip39.js?v=b53"></script>
+<script src="../estimator/model.js?v=b53"></script>
+<script src="../estimator/wordset.js?v=b53"></script>
+<script src="../estimator/bip39crypto.js?v=b53"></script>
+<script src="../estimator/electrum.js?v=b53"></script>
+<script src="../estimator/gpucrack.js?v=b53"></script>
+<script src="../estimator/i18n.js?v=b53"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -389,7 +389,7 @@ function setLang(l){
     const txt = await (await fetch('../data/english.txt')).text();
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b52' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b53' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -594,7 +594,7 @@ async function _measCpuSweep(ms){
   }
   const per=Math.ceil(total/cores), swept=new Array(cores).fill(0), workers=[];
   for(let k=0;k<cores;k++){
-    let w; try{ w=new Worker('crackworker.js?v=b52'); }catch(e){ break; }
+    let w; try{ w=new Worker('crackworker.js?v=b53'); }catch(e){ break; }
     workers.push(w);
     w.onmessage=(e)=>{ const m=e.data; if(m&&(m.type==='cand'||m.type==='progress')) swept[m.id]=m.swept; };
     const start=k*per, end=Math.min(total,(k+1)*per);
@@ -759,9 +759,6 @@ async function onCrack(){
     if(pSet) set=pSet;
     else { try{ set=RXE.parse(''); }catch(e){ msg.textContent=t('crackAllFixed'); return; } }   // both fixed -> single verify (empty passphrase)
   }
-  if(electrumSel && mode==='joint'){   // joint Electrum not built yet -> estimate-only
-    set.free(); if(jointW){try{jointW.free()}catch(e){}} msg.textContent=t('crackElectrumJointNyi'); return;
-  }
   if(set.isInfinite()){ set.free(); if(jointW){try{jointW.free()}catch(e){}} res.innerHTML='<span class="warnmsg">'+esc(t('crackRedNote'))+'</span>'; return; }
   const card=set.cardinality();   // no size cap -- large keyspaces allowed (Stop to abort)
   const total=Number(card);
@@ -803,7 +800,8 @@ async function onCrack(){
     ? { kind:'xpub', chainCodeHex:C.toHex(tcc) }
     : { kind:'address', addrType:taddr.type, programHex:C.toHex(taddr.program) };
   const crackStart=performance.now();
-  const engLabel = (electrumSel || !gpu) ? 'CPU' : 'GPU';   // Electrum crack is CPU-only for now
+  const elecGpu = electrumSel && mode==='words' && gpu;   // Electrum GPU-seed path exists for the WORDS axis
+  const engLabel = elecGpu ? 'GPU' : (electrumSel || !gpu) ? 'CPU' : 'GPU';   // Electrum passphrase/joint stay CPU
   const common={ plan, total, unrank:i=>set.unrank(BigInt(i)),
     unrankBatch:(start,count)=>set.unrankBatch(start,count),   // batched sweep (null on old core)
     onProgress:(done,tot,rate,extra)=>{
@@ -853,8 +851,8 @@ async function onCrack(){
   const _sig=ckptSig(ckptParams);
   const resumeFrom=(mode==='words' && _resumeSig===_sig)?_resumeFrom:0;
   _resumeSig=null; _resumeFrom=0;   // consume any pending resume request
-  const onCheckpoint=(gpu && mode==='words') ? (fr)=>{ const now=performance.now(); if(now-_ckptLast<2500) return; _ckptLast=now;
-    ckptSave({ v:1, ts:Date.now(), sig:_sig, frontier:fr, total, params:ckptParams }); } : null;
+  const onCheckpoint=(gpu && mode==='words' && !electrumSel) ? (fr)=>{ const now=performance.now(); if(now-_ckptLast<2500) return; _ckptLast=now;
+    ckptSave({ v:1, ts:Date.now(), sig:_sig, frontier:fr, total, params:ckptParams }); } : null;   // Electrum has no checkpoint yet
   // A halt is a RESUMABLE pause only where we actually checkpoint a frontier
   // (words + GPU). Elsewhere (passphrase/xpub/address, words+CPU) a "resume"
   // would silently restart from 0, so we label those halts "stopped" instead of
@@ -869,17 +867,19 @@ async function onCrack(){
     ? ((lastR && lastR.dim1!=null) ? Number(lastR.dim1) : (Number(wCard||1n)*total)) : total;
   try{
     let r;
-    if(electrumSel){                                           // ELECTRUM scheme (CPU): version-prefix filter + "electrum" salt + root/m-0' derive
-      r = await crackElectrum({ mode, total, unrank:common.unrank, unrankBatch:common.unrankBatch,
+    if(electrumSel){                                           // ELECTRUM scheme: version-prefix filter + "electrum" salt + root/m-0' derive
+      const eArgs={ mode, total, unrank:common.unrank, unrankBatch:common.unrankBatch,
         mnFixed, passFixed, type:elType, prefix:elPrefix, reqFilter:reqCsum, tcc, taddr, changes, gap:gapN,
-        onProgress:common.onProgress, isCancelled:common.isCancelled });
+        jointW, jointWCard:wCard, jointTotal,   // joint: outer mnemonic set (filtered) x inner passphrase
+        onProgress:common.onProgress, isCancelled:common.isCancelled };
+      r = elecGpu ? await crackElectrumGpu(eArgs) : await crackElectrum(eArgs);   // words+GPU -> GPU-seeded; else CPU
     } else if(mode==='joint'){                                 // both axes vary: outer mnemonic x inner passphrase sweep
       r = await crackJoint({ jointW, wCard, reqCsum, gpu, target, tcc, taddr, common, changes, gap:gapN, nWorkers, jointTotal });
     } else if(mode==='words'){
       if(gpu && reqCsum && typeof Worker!=='undefined')      // parallel sweep (workers) + GPU seed
         r = await crackWordsHybrid({ pattern:patStr, passphrase:passFixed, requireChecksum:reqCsum, plan, tcc, taddr, changes, gap:gapN, total, nWorkers, onProgress:common.onProgress, isCancelled:common.isCancelled, resumeFrom, onCheckpoint });
       else if(gpu)                                            // checksum-off or no workers: double-buffered main-thread sweep + GPU seed (+ parallel-EC derive pool for address)
-        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b52', resumeFrom, onCheckpoint});
+        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b53', resumeFrom, onCheckpoint});
       else                                                    // CPU multicore
         r = await mt(()=>cpuCrackWords({...common, passphrase:passFixed, tcc, taddr, changes, gap:gapN, requireChecksum:reqCsum}));
     } else if(target==='xpub'){
@@ -887,7 +887,7 @@ async function onCrack(){
       r = gpu ? await window.GpuCrack.crackXpub(args) : await mt(()=>cpuCrack(args));
     } else {
       const args={...common, mnemonic:mnFixed, target:taddr, changes, gap:gapN, batchSize:2048,
-        nWorkers, workerUrl:'crackworker.js?v=b52' };   // parallel-EC derive pool
+        nWorkers, workerUrl:'crackworker.js?v=b53' };   // parallel-EC derive pool
       r = gpu ? await window.GpuCrack.crackAddress(args) : await mt(()=>cpuCrackAddress(args));
     }
     if(r && r.error) throw new Error(r.error);
@@ -966,7 +966,7 @@ async function crackJoint(o){
       const args={...o.common, onProgress:innerProg, mnemonic:mn, targetChainCode:o.tcc, batchSize:4096};
       r = o.gpu ? await window.GpuCrack.crackXpub(args) : await cpuCrack(args);
     } else {
-      const args={...o.common, onProgress:innerProg, mnemonic:mn, target:o.taddr, changes:o.changes, gap:o.gap, batchSize:2048, nWorkers:o.nWorkers, workerUrl:'crackworker.js?v=b52'};
+      const args={...o.common, onProgress:innerProg, mnemonic:mn, target:o.taddr, changes:o.changes, gap:o.gap, batchSize:2048, nWorkers:o.nWorkers, workerUrl:'crackworker.js?v=b53'};
       r = o.gpu ? await window.GpuCrack.crackAddress(args) : await cpuCrackAddress(args);
     }
     if(r && r.error) return r;
@@ -986,33 +986,87 @@ async function crackJoint(o){
 function _elecPath(type,ch,idx){ return (type==='segwit'||type==='2fa_segwit') ? `m/0'/${ch}/${idx}` : `m/${ch}/${idx}`; }
 async function crackElectrum(o){
   const E=window.Electrum, C=window.BIP39Crypto, t0=performance.now();
-  const isAddr=!!o.taddr, isWords=o.mode==='words';
-  const changes=(o.changes&&o.changes.length)?o.changes:[0], gap=Math.max(1,o.gap||1);
+  const isAddr=!!o.taddr, changes=(o.changes&&o.changes.length)?o.changes:[0], gap=Math.max(1,o.gap||1);
   const reqFilter=o.reqFilter!==false;
+  // derive+compare one seed -> hit {ch,idx[,xpub]} or null
+  const compare=(seed)=>{
+    if(isAddr){ for(const ch of changes) for(let idx=0;idx<gap;idx++){ const tg=E.addressTarget(seed,o.type,ch,idx);
+      if(tg.type===o.taddr.type&&C.eq(tg.program,o.taddr.program)) return {ch,idx}; } return null; }
+    return C.eq(E.accountNode(seed,o.type).c,o.tcc) ? {ch:0,idx:0,xpub:true} : null;
+  };
+  const pathOf=h=> h.xpub?(o.type==='segwit'?"m/0'":"m"):_elecPath(o.type,h.ch,h.idx);
   let seeded=0;
+  if(o.mode==='joint'){
+    // JOINT: OUTER mnemonic (version-prefix filtered) x INNER passphrase sweep.
+    const wN=Number(o.jointWCard), pN=o.total, denom=o.jointTotal||wN*pN;
+    let validOuter=0;
+    for(let mi=0;mi<wN;mi++){
+      if(o.isCancelled&&o.isCancelled()) return {stopped:true};
+      const mn=o.jointW.unrank(BigInt(mi));
+      if(reqFilter && !(mn && E.isNewSeed(mn,o.prefix))){
+        if((mi&2047)===2047){ const el=(performance.now()-t0)/1000||1e-6; o.onProgress(Math.min(validOuter*pN,denom),denom,seeded/el,{seeded,seedRate:seeded/el}); await new Promise(r=>setTimeout(r,0)); }
+        continue;
+      }
+      for(let pj=0;pj<pN;pj++){ const pass=o.unrank(pj); seeded++;
+        const hit=compare(E.toSeed(mn,pass));
+        if(hit) return { found:mn, jointPass:pass, electrumPath:pathOf(hit), index:mi }; }
+      validOuter++;
+      const el=(performance.now()-t0)/1000||1e-6; o.onProgress(Math.min(validOuter*pN,denom),denom,seeded/el,{seeded,seedRate:seeded/el});
+      await new Promise(r=>setTimeout(r,0));
+    }
+    return {found:null};
+  }
+  // SINGLE AXIS: words (vary mnemonic, version-prefix filter) or passphrase (fixed mnemonic).
+  const isWords=o.mode==='words';
   for(let start=0;start<o.total;start+=1024){
     if(o.isCancelled&&o.isCancelled()) return {stopped:true};
     const n=Math.min(1024,o.total-start), cb=o.unrankBatch?o.unrankBatch(start,n):null;
     for(let i=0;i<n;i++){
       const cand=cb?cb[i]:o.unrank(start+i);
       let mn,pass;
-      if(isWords){ mn=cand; pass=o.passFixed||'';
-        if(reqFilter && !(mn && E.isNewSeed(mn,o.prefix))) continue;   // version-prefix filter (~256x/4096x fewer)
-      } else { pass=cand; mn=o.mnFixed; }
+      if(isWords){ mn=cand; pass=o.passFixed||''; if(reqFilter && !(mn && E.isNewSeed(mn,o.prefix))) continue; }
+      else { pass=cand; mn=o.mnFixed; }
       seeded++;
-      const seed=E.toSeed(mn,pass);
-      let hit=null;
-      if(isAddr){
-        for(const ch of changes){ for(let idx=0;idx<gap;idx++){ const tg=E.addressTarget(seed,o.type,ch,idx);
-          if(tg.type===o.taddr.type && C.eq(tg.program,o.taddr.program)){ hit={ch,idx}; break; } } if(hit)break; }
-      } else if(C.eq(E.accountNode(seed,o.type).c, o.tcc)){ hit={ch:0,idx:0,xpub:true}; }
-      if(hit) return { found: isWords?mn:pass, electrumPath: hit.xpub?(o.type==='segwit'?"m/0'":"m"):_elecPath(o.type,hit.ch,hit.idx), index:start+i };
+      const hit=compare(E.toSeed(mn,pass));
+      if(hit) return { found:isWords?mn:pass, electrumPath:pathOf(hit), index:start+i };
     }
-    const el=(performance.now()-t0)/1000;
+    const el=(performance.now()-t0)/1000||1e-6;
     o.onProgress(start+n,o.total,(start+n)/el,{seeded,seedRate:seeded/el});
     await new Promise(r=>setTimeout(r,0));
   }
   return {found:null};
+}
+// GPU-accelerated ELECTRUM words crack: same double-buffer as crackWordsGpu, but
+// the sweep filter is is_new_seed (version prefix), the GPU seed uses the
+// "electrum" salt, and the compare uses Electrum's root/m-0' derivation. The GPU
+// carries the PBKDF2 (the bottleneck); the derive stays on the host (chain-code
+// for xpub, secp256k1 for address). Device-loss recovery is inherited from
+// gpuSeedsWords. No checkpoint yet (like the CPU Electrum path).
+async function crackElectrumGpu(o){
+  const E=window.Electrum, C=window.BIP39Crypto, t0=performance.now();
+  const isAddr=!!o.taddr, changes=(o.changes&&o.changes.length)?o.changes:[0], gap=Math.max(1,o.gap||1);
+  const reqFilter=o.reqFilter!==false, total=o.total, B=16384;
+  try{ await window.GpuCrack.initGpuWords(); }catch(e){ return {error:e.message}; }
+  const compare=(seed)=>{ if(isAddr){ for(const ch of changes) for(let idx=0;idx<gap;idx++){ const tg=E.addressTarget(seed,o.type,ch,idx);
+      if(tg.type===o.taddr.type&&C.eq(tg.program,o.taddr.program)) return {ch,idx}; } return null; }
+    return C.eq(E.accountNode(seed,o.type).c,o.tcc)?{ch:0,idx:0,xpub:true}:null; };
+  const pathOf=h=> h.xpub?(o.type==='segwit'?"m/0'":"m"):_elecPath(o.type,h.ch,h.idx);
+  const sweepFilter=(start)=>{ const n=Math.min(B,total-start), cands=o.unrankBatch?o.unrankBatch(start,n):null; const mns=[],gidx=[];
+    for(let i=0;i<n;i++){ const mn=cands?cands[i]:o.unrank(start+i); if(mn==null)continue; if(reqFilter&&!E.isNewSeed(mn,o.prefix))continue; mns.push(mn); gidx.push(start+i); } return {n,mns,gidx}; };
+  const seed=(b)=> b.mns.length ? window.GpuCrack.gpuSeedsWords(b.mns, o.passFixed||'', 'electrum') : Promise.resolve(new Uint8Array(0));
+  let done=0, seeded=0, cur=sweepFilter(0), curSeedP=seed(cur), start=B;
+  while(cur && !(o.isCancelled&&o.isCancelled())){
+    const next = start<total ? sweepFilter(start) : null; start+=B;
+    let seeds; try{ seeds=await curSeedP; }catch(e){ return {error:e.message}; }
+    const nextSeedP = next ? seed(next) : null;
+    for(let k=0;k<cur.mns.length;k++){ const hit=compare(seeds.subarray(k*64,k*64+64));
+      if(hit) return { found:cur.mns[k], electrumPath:pathOf(hit), index:cur.gidx[k] };
+      if((k&4095)===4095) await Promise.resolve(); }
+    seeded+=cur.mns.length; done+=cur.n;
+    const el=(performance.now()-t0)/1000||1e-6; o.onProgress(Math.min(done,total),total,done/el,{seeded,seedRate:seeded/el});
+    cur=next; curSeedP=nextSeedP;
+  }
+  return cur ? {stopped:true} : {found:null};
 }
 // WORDS mode: candidate mnemonics x a fixed BIP39 passphrase. CPU only -- the
 // varying mnemonic is the HMAC key, so the GPU midstate precompute (fixed key)
@@ -1076,7 +1130,7 @@ function cpuCrackMT(o){
       const start=k*per, end=Math.min(o.total,(k+1)*per);
       if (start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b52'); }catch(e){ cleanup(); return resolve(o.single()); }
+      let w; try{ w=new Worker('crackworker.js?v=b53'); }catch(e){ cleanup(); return resolve(o.single()); }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if (m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
@@ -1102,7 +1156,7 @@ function cpuCrackMT(o){
 function crackWordsHybrid(o){
   const C=window.BIP39Crypto;
   const nW=Math.max(1, Math.min(o.nWorkers||1, 32));
-  const WURL='crackworker.js?v=b52';
+  const WURL='crackworker.js?v=b53';
   return new Promise(async (resolve)=>{
     try{ await window.GpuCrack.initGpuWords(); }catch(e){ return resolve({error:e.message}); }
     const isAddr=!!o.taddr; const isXpub=!isAddr;   // one derive pool serves both
