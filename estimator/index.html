@@ -213,16 +213,16 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b43"></script>
-<script src="../wasm/rxecore_api.js?v=b43"></script>
+<script src="../wasm/rxecore.js?v=b44"></script>
+<script src="../wasm/rxecore_api.js?v=b44"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b43"></script>
-<script src="../estimator/model.js?v=b43"></script>
-<script src="../estimator/wordset.js?v=b43"></script>
-<script src="../estimator/bip39crypto.js?v=b43"></script>
-<script src="../estimator/gpucrack.js?v=b43"></script>
-<script src="../estimator/i18n.js?v=b43"></script>
+<script src="../estimator/bip39.js?v=b44"></script>
+<script src="../estimator/model.js?v=b44"></script>
+<script src="../estimator/wordset.js?v=b44"></script>
+<script src="../estimator/bip39crypto.js?v=b44"></script>
+<script src="../estimator/gpucrack.js?v=b44"></script>
+<script src="../estimator/i18n.js?v=b44"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -233,6 +233,8 @@ let liveSets = [];
 let debounce;
 let calCpu = null, calGpu = null;   // measured rates per backend (in-browser benchmark)
 let cracking = false;        // in-browser crack in progress
+let _crackAbort = false;     // Stop (discard checkpoint) vs Pause (keep it) -- see onCrack
+let _wsAckPat = null;        // pattern the user already OK'd past the whitespace warning
 let lastR = null;            // last estimate result (for the dry-run modal)
 let LANG = 'en';
 let t = EstI18N.makeT('en');
@@ -391,7 +393,7 @@ function setLang(l){
     const txt = await (await fetch('../data/english.txt')).text();
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b43' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b44' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -537,7 +539,8 @@ function wireUI(){
   $('#change').addEventListener('change',recompute);
   $('#reqChecksum').addEventListener('change',recompute);
   $('#addr').addEventListener('input',()=>{clearTimeout(debounce);debounce=setTimeout(onAddr,250);});
-  $('#crackBtn').onclick=onCrack;
+  $('#crackBtn').onclick=onCrack;    // while running this button reads "Pause" -> onCrack toggles cracking off, keeping the checkpoint
+  $('#crackStopBtn').onclick=()=>{ if(cracking){ _crackAbort=true; cracking=false; } };  // Stop: halt AND discard the checkpoint
   $('#dAdd').onclick=addDict;
   // modals
   $('#benchRun').onclick=runBenchAll;
@@ -596,7 +599,7 @@ async function _measCpuSweep(ms){
   }
   const per=Math.ceil(total/cores), swept=new Array(cores).fill(0), workers=[];
   for(let k=0;k<cores;k++){
-    let w; try{ w=new Worker('crackworker.js?v=b43'); }catch(e){ break; }
+    let w; try{ w=new Worker('crackworker.js?v=b44'); }catch(e){ break; }
     workers.push(w);
     w.onmessage=(e)=>{ const m=e.data; if(m&&(m.type==='cand'||m.type==='progress')) swept[m.id]=m.swept; };
     const start=k*per, end=Math.min(total,(k+1)*per);
@@ -674,6 +677,29 @@ function renderBenchCard(){
 }
 
 // ---------- in-browser crack (xpub OR address target, known mnemonic) ------
+// Sample a few candidate strings from the set and flag whitespace that's almost
+// certainly a pattern mistake: double (or more) spaces between words, or a
+// leading/trailing space. BIP39 mnemonics are single-space-separated with none
+// on the ends -- extraneous spaces silently produce a keyspace that never
+// matches the intended phrase. Returns a human label ('double spaces', ...) or
+// null. Spacing is usually structural (same across candidates) but a pattern can
+// vary it per branch, so we probe both ends and the middle.
+function patternWhitespaceIssue(set, card){
+  if(card<=0n) return null;
+  const last=card-1n;
+  const idx=[0n, last, card>>1n, card/3n, (card*2n)/3n];
+  const seen=new Set();
+  for(const i of idx){
+    const k=i<0n?0n:(i>last?last:i);
+    if(seen.has(k.toString())) continue; seen.add(k.toString());
+    let s; try{ s=set.unrank(k); }catch(e){ continue; }
+    if(typeof s!=='string') continue;
+    if(/^ /.test(s)) return t('crackWsLead');
+    if(/ $/.test(s)) return t('crackWsTrail');
+    if(/ {2,}/.test(s)) return t('crackWsDbl');
+  }
+  return null;
+}
 async function onCrack(){
   const btn=$('#crackBtn'), msg=$('#crackMsg'), prog=$('#crackProg'), res=$('#crackRes');
   if(cracking){ cracking=false; return; }          // Stop toggles the flag; the loop checks it
@@ -702,6 +728,15 @@ async function onCrack(){
   if(set.isInfinite()){ set.free(); res.innerHTML='<span class="warnmsg">'+esc(t('crackRedNote'))+'</span>'; return; }
   const card=set.cardinality();   // no size cap -- large keyspaces allowed (Stop to abort)
   const total=Number(card);
+  // Whitespace sanity check (words mode): warn once per pattern if it emits
+  // mnemonics with double/leading/trailing spaces -- almost always a typo that
+  // yields a keyspace that can never match. The user may override by clicking
+  // Crack again (we remember the acknowledged pattern).
+  if(mode==='words' && _wsAckPat!==patStr){
+    const ws=patternWhitespaceIssue(set, card);
+    if(ws){ set.free(); _wsAckPat=patStr;
+      res.innerHTML='<span class="warnmsg">'+esc(t('crackWsWarn').replace('%w',ws))+'</span>'; return; }
+  }
   const pmap={bip44:44,bip49:49,bip84:84,bip86:86};
   const checked=$$('#purposes input').filter(c=>c.checked).map(c=>c.dataset.p);
   const nacct=Math.max(1,parseInt($('#accts').value,10)||1);
@@ -711,7 +746,9 @@ async function onCrack(){
   if(target==='address' && !plan.some(pp=>C.purposeType(pp.purpose)===taddr.type)){
     set.free(); msg.textContent=t('crackTypeMismatch').replace('%t',taddr.type); return;
   }
-  cracking=true; btn.textContent=t('crackStop'); msg.textContent=t('crackRunning'); res.innerHTML=''; prog.textContent='';
+  cracking=true; _crackAbort=false; btn.textContent=t('crackPause');
+  { const sb=$('#crackStopBtn'); if(sb){ sb.textContent=t('crackStopBtn'); sb.style.display=''; } }
+  msg.textContent=t('crackRunning'); res.innerHTML=''; prog.textContent='';
   const gpu = segVal('#backendSeg','data-b')==='gpu' && window.GpuCrack && navigator.gpu;
   const nchange=Math.max(1,parseInt($('#change').value,10)||1);
   const changes=nchange>=2?[0,1]:[0];
@@ -776,7 +813,7 @@ async function onCrack(){
       if(gpu && reqCsum && typeof Worker!=='undefined')      // parallel sweep (workers) + GPU seed
         r = await crackWordsHybrid({ pattern:patStr, passphrase:passFixed, requireChecksum:reqCsum, plan, tcc, taddr, changes, gap:gapN, total, nWorkers, onProgress:common.onProgress, isCancelled:common.isCancelled, resumeFrom, onCheckpoint });
       else if(gpu)                                            // checksum-off or no workers: double-buffered main-thread sweep + GPU seed (+ parallel-EC derive pool for address)
-        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b43', resumeFrom, onCheckpoint});
+        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b44', resumeFrom, onCheckpoint});
       else                                                    // CPU multicore
         r = await mt(()=>cpuCrackWords({...common, passphrase:passFixed, tcc, taddr, changes, gap:gapN, requireChecksum:reqCsum}));
     } else if(target==='xpub'){
@@ -784,15 +821,16 @@ async function onCrack(){
       r = gpu ? await window.GpuCrack.crackXpub(args) : await mt(()=>cpuCrack(args));
     } else {
       const args={...common, mnemonic:mnFixed, target:taddr, changes, gap:gapN, batchSize:2048,
-        nWorkers, workerUrl:'crackworker.js?v=b43' };   // parallel-EC derive pool
+        nWorkers, workerUrl:'crackworker.js?v=b44' };   // parallel-EC derive pool
       r = gpu ? await window.GpuCrack.crackAddress(args) : await mt(()=>cpuCrackAddress(args));
     }
     if(r && r.error) throw new Error(r.error);
-    // Checkpoint lifecycle: a finished crack (found or fully swept) clears it; a
-    // Stop KEEPS it so the user can resume later (a crash never reaches here, so
-    // the last auto-saved frontier persists for the resume banner).
-    if(r && !r.stopped) ckptClear();
-    if(r.stopped) res.innerHTML='<span class="note">'+t('crackStopped')+'</span>';
+    // Checkpoint lifecycle: a finished crack (found or fully swept) clears it.
+    // A halt was either Pause (keep the checkpoint so it can resume -- via the
+    // resume banner or reload) or Stop (_crackAbort: discard it entirely). A
+    // crash never reaches here, so the last auto-saved frontier persists.
+    if(r && (!r.stopped || _crackAbort)) ckptClear();
+    if(r.stopped) res.innerHTML='<span class="note">'+t(_crackAbort?'crackStopped':'crackPaused')+'</span>';
     else if(r.found!=null){
       const pth = (target==='xpub')
         ? `m/${r.path.purpose}'/${r.path.coin}'/${r.path.account}'`
@@ -804,11 +842,14 @@ async function onCrack(){
                    +`<div class="note">${t('crackVia')} ${esc(pth)}, index ${fmtBig(r.index)} · ${elapsed} (${engLabel})</div>`;
     } else res.innerHTML='<span class="warnmsg">'+t('crackNotFound')+'</span>';
   }catch(e){ res.innerHTML = /cancelled during GPU cooldown/.test(e.message||'')
-      ? '<span class="note">'+t('crackStopped')+'</span>'          // Stop hit mid-cooldown
+      ? '<span class="note">'+t(_crackAbort?'crackStopped':'crackPaused')+'</span>'   // Pause/Stop hit mid-cooldown
       : '<span class="err">'+esc(e.message)+'</span>'; }
   finally{ cracking=false; btn.textContent=t('crackBtn'); msg.textContent=''; try{set.free()}catch(e){}
+    { const sb=$('#crackStopBtn'); if(sb) sb.style.display='none'; }
+    if(_crackAbort){ try{ ckptClear(); }catch(e){} }   // Stop discards the checkpoint even on the catch path
+    _crackAbort=false;
     try{ if(window.GpuCrack&&window.GpuCrack.onGpuStatus){ window.GpuCrack.onGpuStatus(null); window.GpuCrack.setCancelCheck&&window.GpuCrack.setCancelCheck(null); } }catch(e){}
-    try{ renderResumeBar(); }catch(e){} }   // reappear after a Stop (checkpoint kept); hidden after found/exhausted
+    try{ renderResumeBar(); }catch(e){} }   // reappear after a Pause (checkpoint kept); hidden after Stop/found/exhausted
 }
 // WORDS mode: candidate mnemonics x a fixed BIP39 passphrase. CPU only -- the
 // varying mnemonic is the HMAC key, so the GPU midstate precompute (fixed key)
@@ -872,7 +913,7 @@ function cpuCrackMT(o){
       const start=k*per, end=Math.min(o.total,(k+1)*per);
       if (start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b43'); }catch(e){ cleanup(); return resolve(o.single()); }
+      let w; try{ w=new Worker('crackworker.js?v=b44'); }catch(e){ cleanup(); return resolve(o.single()); }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if (m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
@@ -898,7 +939,7 @@ function cpuCrackMT(o){
 function crackWordsHybrid(o){
   const C=window.BIP39Crypto;
   const nW=Math.max(1, Math.min(o.nWorkers||1, 32));
-  const WURL='crackworker.js?v=b43';
+  const WURL='crackworker.js?v=b44';
   return new Promise(async (resolve)=>{
     try{ await window.GpuCrack.initGpuWords(); }catch(e){ return resolve({error:e.message}); }
     const isAddr=!!o.taddr; const isXpub=!isAddr;   // one derive pool serves both
@@ -1237,6 +1278,7 @@ function renderDictList(){
         <span id="maxResetWrap" title="stop the crack after this many GPU recoveries"><label class="f" style="display:inline" data-i18n="gpuMaxResets">max recoveries</label>
           <input id="gpuMaxResets" class="num" type="text" value="20" style="display:inline;width:40px"></span>
         <button class="act" id="crackBtn" data-i18n="crackBtn" style="margin-top:0">🔓 Crack here</button>
+        <button class="act" id="crackStopBtn" data-i18n="crackStopBtn" style="margin-top:0;display:none">■ Stop</button>
         <span class="hint" id="crackMsg"></span>
       </div>
       <div class="hint" id="crackProg" style="margin-top:8px"></div>
