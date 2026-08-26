@@ -201,16 +201,16 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b49"></script>
-<script src="../wasm/rxecore_api.js?v=b49"></script>
+<script src="../wasm/rxecore.js?v=b50"></script>
+<script src="../wasm/rxecore_api.js?v=b50"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b49"></script>
-<script src="../estimator/model.js?v=b49"></script>
-<script src="../estimator/wordset.js?v=b49"></script>
-<script src="../estimator/bip39crypto.js?v=b49"></script>
-<script src="../estimator/gpucrack.js?v=b49"></script>
-<script src="../estimator/i18n.js?v=b49"></script>
+<script src="../estimator/bip39.js?v=b50"></script>
+<script src="../estimator/model.js?v=b50"></script>
+<script src="../estimator/wordset.js?v=b50"></script>
+<script src="../estimator/bip39crypto.js?v=b50"></script>
+<script src="../estimator/gpucrack.js?v=b50"></script>
+<script src="../estimator/i18n.js?v=b50"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -388,7 +388,7 @@ function setLang(l){
     const txt = await (await fetch('../data/english.txt')).text();
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b49' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b50' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -591,7 +591,7 @@ async function _measCpuSweep(ms){
   }
   const per=Math.ceil(total/cores), swept=new Array(cores).fill(0), workers=[];
   for(let k=0;k<cores;k++){
-    let w; try{ w=new Worker('crackworker.js?v=b49'); }catch(e){ break; }
+    let w; try{ w=new Worker('crackworker.js?v=b50'); }catch(e){ break; }
     workers.push(w);
     w.onmessage=(e)=>{ const m=e.data; if(m&&(m.type==='cand'||m.type==='progress')) swept[m.id]=m.swept; };
     const start=k*per, end=Math.min(total,(k+1)*per);
@@ -728,10 +728,9 @@ async function onCrack(){
   catch(e){ if(wSet)wSet.free(); msg.textContent='passphrase: '+e.message; return; }
   const wVaries = wCard===null || wCard>1n;
   const pVaries = pCard===null || pCard>1n;
-  let mode, set, mnFixed=null, passFixed='', patStr='';
-  if(wVaries && pVaries){                       // both open -> joint (not yet crackable)
-    if(wSet)wSet.free(); if(pSet)pSet.free();
-    msg.textContent=t('stratJointNyi'); return;
+  let mode, set, mnFixed=null, passFixed='', patStr='', jointW=null;
+  if(wVaries && pVaries){                       // JOINT: outer mnemonic sweep x inner passphrase sweep
+    mode='joint'; jointW=wSet; set=pSet; patStr=wordsPat;   // `set` is the INNER (passphrase) set; jointW is the mnemonic set
   } else if(wVaries){                           // WORDS axis: vary mnemonic, fixed passphrase
     mode='words'; set=wSet; patStr=wordsPat;
     passFixed = pSet ? (pSet.unrank(0n)||'') : '';
@@ -752,9 +751,10 @@ async function onCrack(){
   // mnemonics with double/leading/trailing spaces -- almost always a typo that
   // yields a keyspace that can never match. The user may override by clicking
   // Crack again (we remember the acknowledged pattern).
-  if(mode==='words' && _wsAckPat!==patStr){
-    const ws=patternWhitespaceIssue(set, card);
-    if(ws){ set.free(); _wsAckPat=patStr;
+  if((mode==='words'||mode==='joint') && _wsAckPat!==patStr){
+    const mnSet = mode==='joint' ? jointW : set;   // the varying-MNEMONIC set (joint's is separate from `set`)
+    const ws=patternWhitespaceIssue(mnSet, mnSet.cardinality());
+    if(ws){ set.free(); if(jointW){try{jointW.free()}catch(e){}} _wsAckPat=patStr;
       // show the offending candidate with spaces made visible, so the exact spot is obvious
       const vis=esc(ws.sample).replace(/ /g,'<span style="opacity:.55">␣</span>').slice(0,260);
       res.innerHTML='<span class="warnmsg">'+esc(t('crackWsWarn').replace('%w',ws.label))+'</span>'
@@ -766,9 +766,9 @@ async function onCrack(){
   const nacct=Math.max(1,parseInt($('#accts').value,10)||1);
   const plan=[]; let electrum=false;
   checked.forEach(p=>{ if(p==='electrum'){electrum=true;return;} if(pmap[p]!==undefined) for(let a=0;a<nacct;a++) plan.push({purpose:pmap[p],account:a,coin:0}); });
-  if(!plan.length){ set.free(); msg.textContent = electrum ? t('crackElectrumNote') : 'select a BIP44/49/84/86 path'; return; }
+  if(!plan.length){ set.free(); if(jointW)try{jointW.free()}catch(e){} msg.textContent = electrum ? t('crackElectrumNote') : 'select a BIP44/49/84/86 path'; return; }
   if(target==='address' && !plan.some(pp=>C.purposeType(pp.purpose)===taddr.type)){
-    set.free(); msg.textContent=t('crackTypeMismatch').replace('%t',taddr.type); return;
+    set.free(); if(jointW)try{jointW.free()}catch(e){} msg.textContent=t('crackTypeMismatch').replace('%t',taddr.type); return;
   }
   cracking=true; _crackAbort=false; _crackPaused=false; btn.textContent=t('crackPause'); btn.classList.remove('resuming');
   { const sb=$('#crackStopBtn'); if(sb){ sb.textContent=t('crackStopBtn'); sb.style.display=''; } }
@@ -839,13 +839,19 @@ async function onCrack(){
   // a visible affordance while cracking).
   const resumable = !!onCheckpoint;
   let _pausedHalt = false;
+  // JOINT progress denominator = the product (checksum-valid mnemonics x passphrases),
+  // taken from the estimate (lastR.dim1) so % lines up with the estimator.
+  const jointTotal = (mode==='joint')
+    ? ((lastR && lastR.dim1!=null) ? Number(lastR.dim1) : (Number(wCard||1n)*total)) : total;
   try{
     let r;
-    if(mode==='words'){
+    if(mode==='joint'){                                        // both axes vary: outer mnemonic x inner passphrase sweep
+      r = await crackJoint({ jointW, wCard, reqCsum, gpu, target, tcc, taddr, common, changes, gap:gapN, nWorkers, jointTotal });
+    } else if(mode==='words'){
       if(gpu && reqCsum && typeof Worker!=='undefined')      // parallel sweep (workers) + GPU seed
         r = await crackWordsHybrid({ pattern:patStr, passphrase:passFixed, requireChecksum:reqCsum, plan, tcc, taddr, changes, gap:gapN, total, nWorkers, onProgress:common.onProgress, isCancelled:common.isCancelled, resumeFrom, onCheckpoint });
       else if(gpu)                                            // checksum-off or no workers: double-buffered main-thread sweep + GPU seed (+ parallel-EC derive pool for address)
-        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b49', resumeFrom, onCheckpoint});
+        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b50', resumeFrom, onCheckpoint});
       else                                                    // CPU multicore
         r = await mt(()=>cpuCrackWords({...common, passphrase:passFixed, tcc, taddr, changes, gap:gapN, requireChecksum:reqCsum}));
     } else if(target==='xpub'){
@@ -853,7 +859,7 @@ async function onCrack(){
       r = gpu ? await window.GpuCrack.crackXpub(args) : await mt(()=>cpuCrack(args));
     } else {
       const args={...common, mnemonic:mnFixed, target:taddr, changes, gap:gapN, batchSize:2048,
-        nWorkers, workerUrl:'crackworker.js?v=b49' };   // parallel-EC derive pool
+        nWorkers, workerUrl:'crackworker.js?v=b50' };   // parallel-EC derive pool
       r = gpu ? await window.GpuCrack.crackAddress(args) : await mt(()=>cpuCrackAddress(args));
     }
     if(r && r.error) throw new Error(r.error);
@@ -874,10 +880,12 @@ async function onCrack(){
       const pth = (target==='xpub')
         ? `m/${r.path.purpose}'/${r.path.coin}'/${r.path.account}'`
         : `m/${r.path.purpose}'/${r.path.coin}'/${r.path.account}'/${r.path.change}/${r.path.index}`;
-      const label = mode==='words' ? t('crackFoundMn') : t('crackFound');
+      const label = (mode==='words'||mode==='joint') ? t('crackFoundMn') : t('crackFound');
       const elapsed = humanElapsed((performance.now()-crackStart)/1000);
+      // joint: r.found is the mnemonic, r.jointPass the passphrase -> show both.
+      const pass = (mode==='joint') ? `<div class="note">${t('crackPlusPass')}: <b>${esc(r.jointPass||'(none)')}</b></div>` : '';
       res.innerHTML=`<div class="verdict green" style="margin:0"><span class="dot"></span>${label}</div>`
-                   +`<div class="foundname">${esc(r.found)}</div>`
+                   +`<div class="foundname">${esc(r.found)}</div>`+pass
                    +`<div class="note">${t('crackVia')} ${esc(pth)}, index ${fmtBig(r.index)} · ${elapsed} (${engLabel})</div>`;
     } else res.innerHTML='<span class="warnmsg">'+t('crackNotFound')+'</span>';
   }catch(e){ if(/cancelled during GPU cooldown/.test(e.message||'')){   // Pause/Stop hit mid-cooldown
@@ -891,7 +899,7 @@ async function onCrack(){
     if(_pausedHalt){ btn.textContent=t('crackResume'); btn.classList.add('resuming'); }
     else { btn.textContent=t('crackBtn'); btn.classList.remove('resuming'); }
     _crackPaused = _pausedHalt;   // let the Stop handler bail out from a paused state
-    msg.textContent=''; try{set.free()}catch(e){}
+    msg.textContent=''; try{set.free()}catch(e){} if(jointW){try{jointW.free()}catch(e){}}   // joint keeps a second (mnemonic) set
     // Second button: on a resumable pause it's "Stop" (bail out, alongside Resume);
     // on a finished crack (found/not-found/stopped) it's "Reset" -- clears the
     // result so you can re-crack. Always shown after a run; hidden only when fresh.
@@ -900,6 +908,44 @@ async function onCrack(){
     _crackAbort=false;
     try{ if(window.GpuCrack&&window.GpuCrack.onGpuStatus){ window.GpuCrack.onGpuStatus(null); window.GpuCrack.setCancelCheck&&window.GpuCrack.setCancelCheck(null); } }catch(e){}
     try{ renderResumeBar(); }catch(e){} }   // reappear after a Pause (checkpoint kept); hidden after Stop/found/exhausted
+}
+// JOINT mode: BOTH the mnemonic and the passphrase vary. The keyspace is the
+// PRODUCT, and efficiency fixes the nesting: the mnemonic is the (varying) HMAC
+// key, so the GPU fixed-key midstate precompute can't span mnemonics -- but for
+// ONE fixed mnemonic the passphrase sweep IS the fast GPU path. So we loop the
+// checksum-valid mnemonics on the OUTER (host, ~256x-filtered) and hand each to
+// the existing passphrase cracker (crackXpub/crackAddress) as the INNER sweep.
+// First hit anywhere wins. No checkpoint yet (like the other non-words paths).
+// Only practical when the product is small -- the estimator's verdict warns when
+// it isn't; Stop aborts. A huge outer mnemonic set would sweep slowly on the host
+// (that axis isn't worker-parallelised here), but such a joint is RED anyway.
+async function crackJoint(o){
+  const pTotal=o.common.total, t0=performance.now();
+  const wN = o.wCard===null ? Infinity : Number(o.wCard);
+  let completedValid=0;   // valid mnemonics fully swept with no hit (for the aggregate progress base)
+  for(let mi=0; mi<wN; mi++){
+    if(!cracking) return {stopped:true};
+    const mn=o.jointW.unrank(BigInt(mi));
+    if(o.reqCsum && !(mn && VALIDATOR.isValid(mn))) continue;   // checksum-filter the OUTER mnemonic axis
+    // inner passphrase sweep for THIS fixed mnemonic; aggregate progress across mnemonics
+    const innerProg=(done,tot,rate,extra)=>{
+      const seedsDone=completedValid*pTotal+done, el=(performance.now()-t0)/1000, agg=el>0?seedsDone/el:0;
+      o.common.onProgress(seedsDone, o.jointTotal, agg, { seeded: extra?extra.seeded:seedsDone, seedRate: extra?extra.seedRate:agg });
+    };
+    let r;
+    if(o.target==='xpub'){
+      const args={...o.common, onProgress:innerProg, mnemonic:mn, targetChainCode:o.tcc, batchSize:4096};
+      r = o.gpu ? await window.GpuCrack.crackXpub(args) : await cpuCrack(args);
+    } else {
+      const args={...o.common, onProgress:innerProg, mnemonic:mn, target:o.taddr, changes:o.changes, gap:o.gap, batchSize:2048, nWorkers:o.nWorkers, workerUrl:'crackworker.js?v=b50'};
+      r = o.gpu ? await window.GpuCrack.crackAddress(args) : await cpuCrackAddress(args);
+    }
+    if(r && r.error) return r;
+    if(r && r.stopped) return {stopped:true};
+    if(r && r.found!=null) return { found:mn, jointPass:r.found, path:r.path, index:mi };   // r.found = the passphrase
+    completedValid++;
+  }
+  return {found:null};
 }
 // WORDS mode: candidate mnemonics x a fixed BIP39 passphrase. CPU only -- the
 // varying mnemonic is the HMAC key, so the GPU midstate precompute (fixed key)
@@ -963,7 +1009,7 @@ function cpuCrackMT(o){
       const start=k*per, end=Math.min(o.total,(k+1)*per);
       if (start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b49'); }catch(e){ cleanup(); return resolve(o.single()); }
+      let w; try{ w=new Worker('crackworker.js?v=b50'); }catch(e){ cleanup(); return resolve(o.single()); }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if (m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
@@ -989,7 +1035,7 @@ function cpuCrackMT(o){
 function crackWordsHybrid(o){
   const C=window.BIP39Crypto;
   const nW=Math.max(1, Math.min(o.nWorkers||1, 32));
-  const WURL='crackworker.js?v=b49';
+  const WURL='crackworker.js?v=b50';
   return new Promise(async (resolve)=>{
     try{ await window.GpuCrack.initGpuWords(); }catch(e){ return resolve({error:e.message}); }
     const isAddr=!!o.taddr; const isXpub=!isAddr;   // one derive pool serves both
@@ -1171,7 +1217,7 @@ function strategyText(r){
   const m = r.mode;
   if(m==='words')      return '🧩 '+t('stratWords');
   if(m==='passphrase') return '🔑 '+t('stratPass');
-  if(m==='joint')      return '✳️ '+t('stratJoint')+' <span class="warnmsg" style="display:inline">'+t('stratJointNyi')+'</span>';
+  if(m==='joint')      return '✳️ '+t('stratJoint');
   return '';
 }
 
@@ -1180,7 +1226,7 @@ function bigVal(b){ if(b===null||b===undefined) return '∞ '+t('unboundedShort'
 function render(r, input){
   lastR = r;
   let html = '';
-  const crackable = (r.mode==='passphrase'||r.mode==='words');
+  const crackable = (r.mode==='passphrase'||r.mode==='words'||r.mode==='joint');
   // Timings (prognosis + ETA) only after a benchmark; before that, sizes only.
   // The prognosis pane holds its own title and the Crack button (right-flushed),
   // so cracking is only offered once benchmarked -- which is fine.
