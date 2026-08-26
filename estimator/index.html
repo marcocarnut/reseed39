@@ -150,6 +150,7 @@
     </div>
 
     <div class="hint" id="strategyLine" style="margin:6px 0 2px"></div>
+    <div id="boxWarn" style="margin:2px 0"></div>
 
     <fieldset>
       <legend data-i18n="target">Target</legend>
@@ -200,16 +201,16 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b48"></script>
-<script src="../wasm/rxecore_api.js?v=b48"></script>
+<script src="../wasm/rxecore.js?v=b49"></script>
+<script src="../wasm/rxecore_api.js?v=b49"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b48"></script>
-<script src="../estimator/model.js?v=b48"></script>
-<script src="../estimator/wordset.js?v=b48"></script>
-<script src="../estimator/bip39crypto.js?v=b48"></script>
-<script src="../estimator/gpucrack.js?v=b48"></script>
-<script src="../estimator/i18n.js?v=b48"></script>
+<script src="../estimator/bip39.js?v=b49"></script>
+<script src="../estimator/model.js?v=b49"></script>
+<script src="../estimator/wordset.js?v=b49"></script>
+<script src="../estimator/bip39crypto.js?v=b49"></script>
+<script src="../estimator/gpucrack.js?v=b49"></script>
+<script src="../estimator/i18n.js?v=b49"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -222,6 +223,7 @@ let calCpu = null, calGpu = null;   // measured rates per backend (in-browser be
 let cracking = false;        // in-browser crack in progress
 let _crackAbort = false;     // Stop (discard checkpoint) vs Pause (keep it) -- see onCrack
 let _crackPaused = false;    // module mirror of a resumable pause, so the Stop handler (a separate closure) can bail out from paused
+let _restoring = false;      // true while restoreCrackParams repopulates fields -> suppresses the edit auto-reset (which would wipe the checkpoint we're resuming)
 let _wsAckPat = null;        // pattern the user already OK'd past the whitespace warning
 let lastR = null;            // last estimate result (for the dry-run modal)
 let LANG = 'en';
@@ -289,7 +291,7 @@ function ckptClear(){ try{ localStorage.removeItem(CKPT_KEY); }catch(e){} _resum
 function restoreCrackParams(p){
   // Checkpoints are only taken for words+GPU, so a restore always repopulates the
   // unified fields as a words-axis search: mnemonic pattern + the fixed passphrase.
-  try{
+  try{ _restoring=true;   // suppress the edit auto-reset so the checkpoint we're resuming survives
     $('#wordsPat').value=p.wordsPat||'';
     $('#passPat').value=p.crackPass||'';         // the fixed passphrase (may be blank)
     $('#reqChecksum').checked=!!p.reqChecksum;
@@ -298,6 +300,7 @@ function restoreCrackParams(p){
     if($('#gap')) $('#gap').value=String(p.gap||1);
     onAddr(); recompute();
   }catch(e){}
+  finally{ _restoring=false; }
 }
 // Boot / post-crack: show a "resume interrupted crack" banner if a checkpoint survived.
 function renderResumeBar(){
@@ -385,7 +388,7 @@ function setLang(l){
     const txt = await (await fetch('../data/english.txt')).text();
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b48' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b49' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -528,13 +531,8 @@ function wireUI(){
       $('#crackStopBtn').style.display='none';
       $('#crackRes').innerHTML='<span class="note">'+t('crackStopped')+'</span>';
       try{ renderResumeBar(); }catch(e){}
-    } else {                                                     // RESET after a finished crack: clear result/progress -> fresh, ready to re-crack
-      ckptClear();
-      $('#crackRes').innerHTML=''; $('#crackProg').textContent='';
-      const b=$('#crackBtn'); b.textContent=t('crackBtn'); b.classList.remove('resuming');
-      $('#crackStopBtn').style.display='none';
-      try{ renderResumeBar(); }catch(e){}
-    } };
+    } else { resetCrackUI(); }                                   // RESET after a finished crack: clear result/progress -> fresh, ready to re-crack
+  };
   $('#dAdd').onclick=addDict;
   // modals
   $('#benchRun').onclick=runBenchAll;
@@ -593,7 +591,7 @@ async function _measCpuSweep(ms){
   }
   const per=Math.ceil(total/cores), swept=new Array(cores).fill(0), workers=[];
   for(let k=0;k<cores;k++){
-    let w; try{ w=new Worker('crackworker.js?v=b48'); }catch(e){ break; }
+    let w; try{ w=new Worker('crackworker.js?v=b49'); }catch(e){ break; }
     workers.push(w);
     w.onmessage=(e)=>{ const m=e.data; if(m&&(m.type==='cand'||m.type==='progress')) swept[m.id]=m.swept; };
     const start=k*per, end=Math.min(total,(k+1)*per);
@@ -689,6 +687,22 @@ function patternWhitespaceIssue(set, card){
   else if(/ $/.test(s)) label=t('crackWsTrail');
   else if(/ {2,}/.test(s)) label=t('crackWsDbl');
   return label ? { label, sample:s } : null;
+}
+// Clear the crack modal back to a fresh, ready-to-crack state (used by the Reset
+// button and by the auto-reset when inputs change).
+function resetCrackUI(){
+  ckptClear(); _crackPaused=false;
+  $('#crackRes').innerHTML=''; $('#crackProg').textContent='';
+  const b=$('#crackBtn'); b.textContent=t('crackBtn'); b.classList.remove('resuming');
+  $('#crackStopBtn').style.display='none';
+  try{ renderResumeBar(); }catch(e){}
+}
+// Editing any search input invalidates a FINISHED crack result -> clear it so a
+// stale answer never lingers next to changed params. Skips a running crack and a
+// PAUSED one (its checkpoint is still wanted), and the programmatic restore path.
+function autoResetCrack(){
+  if(_restoring || cracking || _crackPaused) return;
+  if($('#crackRes').innerHTML!=='') resetCrackUI();
 }
 async function onCrack(){
   const btn=$('#crackBtn'), msg=$('#crackMsg'), prog=$('#crackProg'), res=$('#crackRes');
@@ -831,7 +845,7 @@ async function onCrack(){
       if(gpu && reqCsum && typeof Worker!=='undefined')      // parallel sweep (workers) + GPU seed
         r = await crackWordsHybrid({ pattern:patStr, passphrase:passFixed, requireChecksum:reqCsum, plan, tcc, taddr, changes, gap:gapN, total, nWorkers, onProgress:common.onProgress, isCancelled:common.isCancelled, resumeFrom, onCheckpoint });
       else if(gpu)                                            // checksum-off or no workers: double-buffered main-thread sweep + GPU seed (+ parallel-EC derive pool for address)
-        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b48', resumeFrom, onCheckpoint});
+        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b49', resumeFrom, onCheckpoint});
       else                                                    // CPU multicore
         r = await mt(()=>cpuCrackWords({...common, passphrase:passFixed, tcc, taddr, changes, gap:gapN, requireChecksum:reqCsum}));
     } else if(target==='xpub'){
@@ -839,7 +853,7 @@ async function onCrack(){
       r = gpu ? await window.GpuCrack.crackXpub(args) : await mt(()=>cpuCrack(args));
     } else {
       const args={...common, mnemonic:mnFixed, target:taddr, changes, gap:gapN, batchSize:2048,
-        nWorkers, workerUrl:'crackworker.js?v=b48' };   // parallel-EC derive pool
+        nWorkers, workerUrl:'crackworker.js?v=b49' };   // parallel-EC derive pool
       r = gpu ? await window.GpuCrack.crackAddress(args) : await mt(()=>cpuCrackAddress(args));
     }
     if(r && r.error) throw new Error(r.error);
@@ -949,7 +963,7 @@ function cpuCrackMT(o){
       const start=k*per, end=Math.min(o.total,(k+1)*per);
       if (start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b48'); }catch(e){ cleanup(); return resolve(o.single()); }
+      let w; try{ w=new Worker('crackworker.js?v=b49'); }catch(e){ cleanup(); return resolve(o.single()); }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if (m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
@@ -975,7 +989,7 @@ function cpuCrackMT(o){
 function crackWordsHybrid(o){
   const C=window.BIP39Crypto;
   const nW=Math.max(1, Math.min(o.nWorkers||1, 32));
-  const WURL='crackworker.js?v=b48';
+  const WURL='crackworker.js?v=b49';
   return new Promise(async (resolve)=>{
     try{ await window.GpuCrack.initGpuWords(); }catch(e){ return resolve({error:e.message}); }
     const isAddr=!!o.taddr; const isXpub=!isAddr;   // one derive pool serves both
@@ -1104,7 +1118,17 @@ async function cpuCrackAddress(a){
 
 // ---------- recompute ----------
 function freeLive(){ liveSets.forEach(s=>{try{s.free()}catch(e){}}); liveSets=[]; }
+// Flag a target (address / [xyz]pub) pasted into the mnemonic or passphrase box --
+// it belongs in Target. Real BIP39 words are short lowercase; an extended key or
+// address is one long base58/bech32 token, so this won't trip on normal patterns.
+function looksLikeTargetPaste(text){
+  const s=(text||'').trim(); if(!s) return false;
+  return /(?:^|\s)[xyztuv]pub[1-9A-HJ-NP-Za-km-z]{40,}/i.test(s)   // extended pubkey
+      || /(?:^|\s)bc1[02-9ac-hj-np-z]{20,}/i.test(s)               // bech32 / bech32m address
+      || /(?:^|\s)[13][1-9A-HJ-NP-Za-km-z]{24,}(?:\s|$)/.test(s);  // base58 P2PKH / P2SH
+}
 function recompute(){
+  autoResetCrack();   // editing a search input clears a finished crack result (see fn)
   freeLive();
   const target = segVal('#targetSeg','data-t');
   // The ESTIMATE uses the BEST measured rates (GPU if benchmarked, else CPU) --
@@ -1135,6 +1159,10 @@ function recompute(){
   catch(e){ $('#results').innerHTML='<div class="card"><h3>parse error</h3><div class="err">'+esc(e.message)+'</div></div>'; $('#strategyLine').innerHTML=''; return; }
   render(r, input);
   $('#strategyLine').innerHTML = strategyText(r);
+  // Wrong-box guard: an address/xpub pasted into the mnemonic or passphrase box.
+  const mnBad=looksLikeTargetPaste($('#wordsPat').value), passBad=looksLikeTargetPaste($('#passPat').value);
+  $('#boxWarn').innerHTML = (mnBad||passBad)
+    ? '<span class="warnmsg">'+t(mnBad?'wrongBoxMn':'wrongBoxPass')+'</span>' : '';
   liveSets = [r._sets.passSet, r._sets.wordsSet].filter(Boolean);
 }
 // One-line "which axis are we cracking, and why" -- replaces the old mode tab as
