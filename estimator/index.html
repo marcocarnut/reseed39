@@ -55,6 +55,7 @@
   .derivrow code{color:var(--accent);font-size:11.5px;font-family:var(--mono)}
   .derivrow .apps{color:var(--dim);font-size:11px;margin-left:auto;text-align:right;max-width:46%}
   .hint{color:var(--dim);font-size:11.5px;margin:4px 0 0}
+  .tip{margin:5px 0 0;padding:7px 11px;border-left:3px solid var(--accent);background:rgba(56,132,255,.09);border-radius:0 6px 6px 0;font-size:12.5px;color:var(--ink)}
   .verdict{display:flex;align-items:center;gap:10px;font-size:15px;font-weight:650;padding:11px 13px;border-radius:9px;margin-bottom:14px}
   .verdict .dot{width:13px;height:13px;border-radius:50%}
   .verdict.green{background:rgba(46,193,107,.13);color:var(--green)} .verdict.green .dot{background:var(--green)}
@@ -110,6 +111,7 @@
   <h1>bip39rxcrack <span class="muted" style="font-weight:400">effort estimator</span></h1>
   <span class="motto" data-i18n="tagline">Cracking hard is alright, but smart is better.</span>
   <span class="warn" data-i18n-html="warnbar"></span>
+  <button class="ghost" id="shareBtn" style="margin-left:10px" data-i18n="shareBtn">🔗 Share</button>
   <span class="langSeg" id="langSeg"><button data-l="en" class="on">EN</button><button data-l="pt">PT</button></span>
 </header>
 <div id="resumeBar" style="display:none"></div>
@@ -135,6 +137,7 @@
     <div id="wordsBox">
       <label class="f" data-i18n="mnemonic">Mnemonic</label>
       <textarea id="wordsPat" rows="3">legal winner thank year wave sausage worth useful legal winner thank [:bip39-en:]</textarea>
+      <div class="tip" id="mnTip" style="display:none"></div>
       <div class="hint" id="wordsHint" data-i18n-html="wordsHint"></div>
       <label class="derivrow" style="cursor:pointer;margin-top:8px">
         <input type="checkbox" id="reqChecksum" checked>
@@ -146,6 +149,7 @@
     <div id="passBox">
       <label class="f" data-i18n="passLabel">Passphrase pattern</label>
       <textarea id="passPat" rows="2"></textarea>
+      <div class="tip" id="passTip" style="display:none"></div>
       <div class="hint" id="passHint" data-i18n="passHint"></div>
     </div>
 
@@ -201,17 +205,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b53"></script>
-<script src="../wasm/rxecore_api.js?v=b53"></script>
+<script src="../wasm/rxecore.js?v=b54"></script>
+<script src="../wasm/rxecore_api.js?v=b54"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b53"></script>
-<script src="../estimator/model.js?v=b53"></script>
-<script src="../estimator/wordset.js?v=b53"></script>
-<script src="../estimator/bip39crypto.js?v=b53"></script>
-<script src="../estimator/electrum.js?v=b53"></script>
-<script src="../estimator/gpucrack.js?v=b53"></script>
-<script src="../estimator/i18n.js?v=b53"></script>
+<script src="../estimator/bip39.js?v=b54"></script>
+<script src="../estimator/model.js?v=b54"></script>
+<script src="../estimator/wordset.js?v=b54"></script>
+<script src="../estimator/bip39crypto.js?v=b54"></script>
+<script src="../estimator/electrum.js?v=b54"></script>
+<script src="../estimator/gpucrack.js?v=b54"></script>
+<script src="../estimator/i18n.js?v=b54"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -389,7 +393,7 @@ function setLang(l){
     const txt = await (await fetch('../data/english.txt')).text();
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b53' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b54' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -404,6 +408,8 @@ function setLang(l){
     $('#booting').style.display='none';
     $('#view-est').classList.add('active');
     buildDerivs(); wireUI(); applyBackendAvail(); applyLang(); applyTargetVis(); renderBenchCard(); recompute();
+    // A #hash share-link reproduces every control (see the Share button).
+    try{ if(location.hash.length>1){ applyShareState(JSON.parse(_b64urlDec(location.hash.slice(1)))); } }catch(e){}
     renderResumeBar();   // offer to resume an interrupted crack (from localStorage)
   }catch(e){
     $('#booting').innerHTML = '<span class="err">failed to load wasm core: '+e.message+'</span>';
@@ -481,8 +487,64 @@ function applyPreset(p){
   $('#accts').value=p.accounts||'1';
   $('#change').value=p.change||'1';
   $('#gap').value=p.gap||'1';
+  setTip('mn',''); setTip('pass','');   // presets carry no shared note
   applyTargetVis();
   recompute();
+}
+
+// ---------- share / bookmark: encode ALL controls into a #hash link ----------
+// URL-safe base64 of the state JSON. This is the EXPLICIT-share path (a button
+// the user clicks); we never AUTO-write the pattern to the URL -- and the modal
+// warns the link carries the mnemonic/passphrase boxes, so a real seed isn't
+// shared by accident.
+function _b64urlEnc(s){ return btoa(unescape(encodeURIComponent(s))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
+function _b64urlDec(b){ b=b.replace(/-/g,'+').replace(/_/g,'/'); while(b.length%4)b+='='; return decodeURIComponent(escape(atob(b))); }
+function setTip(which,text){
+  const box = which==='mn'?$('#wordsPat'):$('#passPat');
+  const el  = which==='mn'?$('#mnTip'):$('#passTip');
+  if(!box||!el) return;
+  box.title = text||'';                                  // native hover tooltip
+  if(text){ el.textContent='💡 '+text; el.style.display=''; } else { el.textContent=''; el.style.display='none'; }
+}
+function buildShareState(){
+  return { v:1,
+    wp:$('#wordsPat').value, pp:$('#passPat').value,
+    ad:$('#addr').value.trim(), tg:segVal('#targetSeg','data-t'),
+    pu:$$('#purposes input').filter(c=>c.checked).map(c=>c.dataset.p),
+    ac:$('#accts').value, ch:$('#change').value, gp:$('#gap').value,
+    rc:$('#reqChecksum').checked?1:0, bk:segVal('#backendSeg','data-b'), lg:LANG,
+    tm:(($('#shareMnTip')&&$('#shareMnTip').value.trim())||$('#wordsPat').title||''),
+    tpp:(($('#sharePassTip')&&$('#sharePassTip').value.trim())||$('#passPat').title||'') };
+}
+function shareLink(){ return location.origin+location.pathname+'#'+_b64urlEnc(JSON.stringify(buildShareState())); }
+function applyShareState(s){
+  if(!s || s.v!==1) return false;
+  try{ _restoring=true;
+    if(s.wp!=null) $('#wordsPat').value=s.wp;
+    if(s.pp!=null) $('#passPat').value=s.pp;
+    if(s.ad!=null){ $('#addr').value=s.ad; onAddr(); }        // updates the "detected → …" line (+ auto target/purposes)
+    if(s.tg) setSeg('#targetSeg','data-t',s.tg);              // then override with the SAVED target/purposes (authoritative)
+    if(Array.isArray(s.pu)) $$('#purposes input').forEach(c=>c.checked=s.pu.includes(c.dataset.p));
+    if(s.ac!=null) $('#accts').value=s.ac;
+    if(s.ch!=null && $('#change')) $('#change').value=s.ch;
+    if(s.gp!=null && $('#gap')) $('#gap').value=s.gp;
+    if(s.rc!=null) $('#reqChecksum').checked=!!s.rc;
+    if(s.bk){ const b=$('#backendSeg button[data-b="'+s.bk+'"]'); if(b && !b.disabled) setSeg('#backendSeg','data-b',s.bk); }
+    if(s.lg && s.lg!==LANG) setLang(s.lg);
+    setTip('mn',s.tm||''); setTip('pass',s.tpp||'');
+    applyTargetVis();
+  }catch(e){}
+  finally{ _restoring=false; }
+  recompute();
+  return true;
+}
+function openShareModal(){
+  $('#shareMnTip').value = $('#wordsPat').title||'';
+  $('#sharePassTip').value = $('#passPat').title||'';
+  const upd=()=>{ setTip('mn',$('#shareMnTip').value.trim()); setTip('pass',$('#sharePassTip').value.trim()); $('#shareUrl').value=shareLink(); };
+  $('#shareMnTip').oninput=upd; $('#sharePassTip').oninput=upd;
+  upd();
+  $('#shareOverlay').classList.add('on');
 }
 
 // ---------- UI wiring ----------
@@ -547,6 +609,9 @@ function wireUI(){
   $('#benchRun').onclick=runBenchAll;
   $('#benchClose').onclick=$('#benchCancel').onclick=closeBenchModal;
   $('#sampleClose').onclick=$('#sampleCloseB').onclick=()=>$('#sampleOverlay').classList.remove('on');
+  $('#shareBtn').onclick=openShareModal;
+  $('#shareClose').onclick=$('#shareCloseB').onclick=()=>$('#shareOverlay').classList.remove('on');
+  $('#shareCopy').onclick=async()=>{ try{ await navigator.clipboard.writeText($('#shareUrl').value); const b=$('#shareCopy'); b.textContent='✓ '+t('shareCopied'); setTimeout(()=>b.textContent='📋 '+t('shareCopy'),1600); }catch(e){ $('#shareUrl').select(); } };
   $('#crackClose').onclick=()=>{ if(cracking) cracking=false; $('#crackOverlay').classList.remove('on'); };
   [$('#benchOverlay'),$('#sampleOverlay'),$('#crackOverlay')].forEach(o=>o.addEventListener('click',e=>{ if(e.target===o){ if(o.id==='crackOverlay'&&cracking) cracking=false; o.classList.remove('on'); } }));
 }
@@ -600,7 +665,7 @@ async function _measCpuSweep(ms){
   }
   const per=Math.ceil(total/cores), swept=new Array(cores).fill(0), workers=[];
   for(let k=0;k<cores;k++){
-    let w; try{ w=new Worker('crackworker.js?v=b53'); }catch(e){ break; }
+    let w; try{ w=new Worker('crackworker.js?v=b54'); }catch(e){ break; }
     workers.push(w);
     w.onmessage=(e)=>{ const m=e.data; if(m&&(m.type==='cand'||m.type==='progress')) swept[m.id]=m.swept; };
     const start=k*per, end=Math.min(total,(k+1)*per);
@@ -885,7 +950,7 @@ async function onCrack(){
       if(gpu && reqCsum && typeof Worker!=='undefined')      // parallel sweep (workers) + GPU seed
         r = await crackWordsHybrid({ pattern:patStr, passphrase:passFixed, requireChecksum:reqCsum, plan, tcc, taddr, changes, gap:gapN, total, nWorkers, onProgress:common.onProgress, isCancelled:common.isCancelled, resumeFrom, onCheckpoint });
       else if(gpu)                                            // checksum-off or no workers: double-buffered main-thread sweep + GPU seed (+ parallel-EC derive pool for address)
-        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b53', resumeFrom, onCheckpoint});
+        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b54', resumeFrom, onCheckpoint});
       else                                                    // CPU multicore
         r = await mt(()=>cpuCrackWords({...common, passphrase:passFixed, tcc, taddr, changes, gap:gapN, requireChecksum:reqCsum}));
     } else if(target==='xpub'){
@@ -893,7 +958,7 @@ async function onCrack(){
       r = gpu ? await window.GpuCrack.crackXpub(args) : await mt(()=>cpuCrack(args));
     } else {
       const args={...common, mnemonic:mnFixed, target:taddr, changes, gap:gapN, batchSize:2048,
-        nWorkers, workerUrl:'crackworker.js?v=b53' };   // parallel-EC derive pool
+        nWorkers, workerUrl:'crackworker.js?v=b54' };   // parallel-EC derive pool
       r = gpu ? await window.GpuCrack.crackAddress(args) : await mt(()=>cpuCrackAddress(args));
     }
     if(r && r.error) throw new Error(r.error);
@@ -972,7 +1037,7 @@ async function crackJoint(o){
       const args={...o.common, onProgress:innerProg, mnemonic:mn, targetChainCode:o.tcc, batchSize:4096};
       r = o.gpu ? await window.GpuCrack.crackXpub(args) : await cpuCrack(args);
     } else {
-      const args={...o.common, onProgress:innerProg, mnemonic:mn, target:o.taddr, changes:o.changes, gap:o.gap, batchSize:2048, nWorkers:o.nWorkers, workerUrl:'crackworker.js?v=b53'};
+      const args={...o.common, onProgress:innerProg, mnemonic:mn, target:o.taddr, changes:o.changes, gap:o.gap, batchSize:2048, nWorkers:o.nWorkers, workerUrl:'crackworker.js?v=b54'};
       r = o.gpu ? await window.GpuCrack.crackAddress(args) : await cpuCrackAddress(args);
     }
     if(r && r.error) return r;
@@ -1136,7 +1201,7 @@ function cpuCrackMT(o){
       const start=k*per, end=Math.min(o.total,(k+1)*per);
       if (start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b53'); }catch(e){ cleanup(); return resolve(o.single()); }
+      let w; try{ w=new Worker('crackworker.js?v=b54'); }catch(e){ cleanup(); return resolve(o.single()); }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if (m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
@@ -1162,7 +1227,7 @@ function cpuCrackMT(o){
 function crackWordsHybrid(o){
   const C=window.BIP39Crypto;
   const nW=Math.max(1, Math.min(o.nWorkers||1, 32));
-  const WURL='crackworker.js?v=b53';
+  const WURL='crackworker.js?v=b54';
   return new Promise(async (resolve)=>{
     try{ await window.GpuCrack.initGpuWords(); }catch(e){ return resolve({error:e.message}); }
     const isAddr=!!o.taddr; const isXpub=!isAddr;   // one derive pool serves both
@@ -1532,6 +1597,27 @@ function renderDictList(){
     <h3>🎲 <span data-i18n="dryRun">Dry-run sample</span> <span class="pill" data-i18n="viaUnrank">via librxe unrank</span> <button class="x" id="sampleClose">✕</button></h3>
     <div class="body sample" id="sampleBody"></div>
     <div class="foot"><button class="ghost" id="sampleCloseB" data-i18n="close">Close</button></div>
+  </div>
+</div>
+<!-- Share / bookmark modal -->
+<div class="overlay" id="shareOverlay">
+  <div class="modal">
+    <h3>🔗 <span data-i18n="shareTitle">Share this setup</span> <button class="x" id="shareClose">✕</button></h3>
+    <div class="body">
+      <div class="hint" data-i18n="shareIntro" style="margin-top:0">A link that reproduces every control on this page — paste it into WhatsApp, email, etc.</div>
+      <label class="f" data-i18n="shareUrlLabel" style="margin-top:12px">Shareable link</label>
+      <textarea id="shareUrl" rows="3" readonly style="width:100%;font-family:monospace;font-size:12px"></textarea>
+      <button class="act" id="shareCopy" data-i18n="shareCopy" style="margin-top:6px">📋 Copy link</button>
+      <div style="margin-top:14px;border-top:1px solid var(--edge);padding-top:12px">
+        <div class="hint" data-i18n="shareTipsIntro" style="margin-top:0">Optional: attach a note to the Mnemonic / Passphrase boxes (shown to whoever opens the link).</div>
+        <label class="f" data-i18n="shareMnTip" style="margin-top:8px">Mnemonic note</label>
+        <input id="shareMnTip" type="text" style="width:100%" placeholder="e.g. one unknown word at the end">
+        <label class="f" data-i18n="sharePassTip" style="margin-top:8px">Passphrase note</label>
+        <input id="sharePassTip" type="text" style="width:100%" placeholder="e.g. blank — no passphrase">
+      </div>
+      <div class="warnmsg" data-i18n="sharePrivacy" style="margin-top:14px">⚠ This link encodes your inputs, including the Mnemonic and Passphrase boxes. Don't share a link built from a REAL seed — use it for example/placeholder patterns.</div>
+    </div>
+    <div class="foot"><button class="ghost" id="shareCloseB" data-i18n="close">Close</button></div>
   </div>
 </div>
 </body>
