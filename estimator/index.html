@@ -205,17 +205,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b54"></script>
-<script src="../wasm/rxecore_api.js?v=b54"></script>
+<script src="../wasm/rxecore.js?v=b55"></script>
+<script src="../wasm/rxecore_api.js?v=b55"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b54"></script>
-<script src="../estimator/model.js?v=b54"></script>
-<script src="../estimator/wordset.js?v=b54"></script>
-<script src="../estimator/bip39crypto.js?v=b54"></script>
-<script src="../estimator/electrum.js?v=b54"></script>
-<script src="../estimator/gpucrack.js?v=b54"></script>
-<script src="../estimator/i18n.js?v=b54"></script>
+<script src="../estimator/bip39.js?v=b55"></script>
+<script src="../estimator/model.js?v=b55"></script>
+<script src="../estimator/wordset.js?v=b55"></script>
+<script src="../estimator/bip39crypto.js?v=b55"></script>
+<script src="../estimator/electrum.js?v=b55"></script>
+<script src="../estimator/gpucrack.js?v=b55"></script>
+<script src="../estimator/i18n.js?v=b55"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -393,7 +393,7 @@ function setLang(l){
     const txt = await (await fetch('../data/english.txt')).text();
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b54' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b55' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -544,6 +544,7 @@ function openShareModal(){
   const upd=()=>{ setTip('mn',$('#shareMnTip').value.trim()); setTip('pass',$('#sharePassTip').value.trim()); $('#shareUrl').value=shareLink(); };
   $('#shareMnTip').oninput=upd; $('#sharePassTip').oninput=upd;
   upd();
+  $('#shareNative').style.display = (navigator.share) ? '' : 'none';   // native OS share sheet (mobile / supported browsers)
   $('#shareOverlay').classList.add('on');
 }
 
@@ -612,6 +613,7 @@ function wireUI(){
   $('#shareBtn').onclick=openShareModal;
   $('#shareClose').onclick=$('#shareCloseB').onclick=()=>$('#shareOverlay').classList.remove('on');
   $('#shareCopy').onclick=async()=>{ try{ await navigator.clipboard.writeText($('#shareUrl').value); const b=$('#shareCopy'); b.textContent='✓ '+t('shareCopied'); setTimeout(()=>b.textContent='📋 '+t('shareCopy'),1600); }catch(e){ $('#shareUrl').select(); } };
+  $('#shareNative').onclick=async()=>{ try{ await navigator.share({ title:'bip39rxcrack', text:t('shareNativeText'), url:$('#shareUrl').value }); }catch(e){} };   // native OS share sheet (mobile)
   $('#crackClose').onclick=()=>{ if(cracking) cracking=false; $('#crackOverlay').classList.remove('on'); };
   [$('#benchOverlay'),$('#sampleOverlay'),$('#crackOverlay')].forEach(o=>o.addEventListener('click',e=>{ if(e.target===o){ if(o.id==='crackOverlay'&&cracking) cracking=false; o.classList.remove('on'); } }));
 }
@@ -665,7 +667,7 @@ async function _measCpuSweep(ms){
   }
   const per=Math.ceil(total/cores), swept=new Array(cores).fill(0), workers=[];
   for(let k=0;k<cores;k++){
-    let w; try{ w=new Worker('crackworker.js?v=b54'); }catch(e){ break; }
+    let w; try{ w=new Worker('crackworker.js?v=b55'); }catch(e){ break; }
     workers.push(w);
     w.onmessage=(e)=>{ const m=e.data; if(m&&(m.type==='cand'||m.type==='progress')) swept[m.id]=m.swept; };
     const start=k*per, end=Math.min(total,(k+1)*per);
@@ -950,7 +952,7 @@ async function onCrack(){
       if(gpu && reqCsum && typeof Worker!=='undefined')      // parallel sweep (workers) + GPU seed
         r = await crackWordsHybrid({ pattern:patStr, passphrase:passFixed, requireChecksum:reqCsum, plan, tcc, taddr, changes, gap:gapN, total, nWorkers, onProgress:common.onProgress, isCancelled:common.isCancelled, resumeFrom, onCheckpoint });
       else if(gpu)                                            // checksum-off or no workers: double-buffered main-thread sweep + GPU seed (+ parallel-EC derive pool for address)
-        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b54', resumeFrom, onCheckpoint});
+        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b55', resumeFrom, onCheckpoint});
       else                                                    // CPU multicore
         r = await mt(()=>cpuCrackWords({...common, passphrase:passFixed, tcc, taddr, changes, gap:gapN, requireChecksum:reqCsum}));
     } else if(target==='xpub'){
@@ -958,7 +960,7 @@ async function onCrack(){
       r = gpu ? await window.GpuCrack.crackXpub(args) : await mt(()=>cpuCrack(args));
     } else {
       const args={...common, mnemonic:mnFixed, target:taddr, changes, gap:gapN, batchSize:2048,
-        nWorkers, workerUrl:'crackworker.js?v=b54' };   // parallel-EC derive pool
+        nWorkers, workerUrl:'crackworker.js?v=b55' };   // parallel-EC derive pool
       r = gpu ? await window.GpuCrack.crackAddress(args) : await mt(()=>cpuCrackAddress(args));
     }
     if(r && r.error) throw new Error(r.error);
@@ -1037,7 +1039,7 @@ async function crackJoint(o){
       const args={...o.common, onProgress:innerProg, mnemonic:mn, targetChainCode:o.tcc, batchSize:4096};
       r = o.gpu ? await window.GpuCrack.crackXpub(args) : await cpuCrack(args);
     } else {
-      const args={...o.common, onProgress:innerProg, mnemonic:mn, target:o.taddr, changes:o.changes, gap:o.gap, batchSize:2048, nWorkers:o.nWorkers, workerUrl:'crackworker.js?v=b54'};
+      const args={...o.common, onProgress:innerProg, mnemonic:mn, target:o.taddr, changes:o.changes, gap:o.gap, batchSize:2048, nWorkers:o.nWorkers, workerUrl:'crackworker.js?v=b55'};
       r = o.gpu ? await window.GpuCrack.crackAddress(args) : await cpuCrackAddress(args);
     }
     if(r && r.error) return r;
@@ -1201,7 +1203,7 @@ function cpuCrackMT(o){
       const start=k*per, end=Math.min(o.total,(k+1)*per);
       if (start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b54'); }catch(e){ cleanup(); return resolve(o.single()); }
+      let w; try{ w=new Worker('crackworker.js?v=b55'); }catch(e){ cleanup(); return resolve(o.single()); }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if (m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
@@ -1227,7 +1229,7 @@ function cpuCrackMT(o){
 function crackWordsHybrid(o){
   const C=window.BIP39Crypto;
   const nW=Math.max(1, Math.min(o.nWorkers||1, 32));
-  const WURL='crackworker.js?v=b54';
+  const WURL='crackworker.js?v=b55';
   return new Promise(async (resolve)=>{
     try{ await window.GpuCrack.initGpuWords(); }catch(e){ return resolve({error:e.message}); }
     const isAddr=!!o.taddr; const isXpub=!isAddr;   // one derive pool serves both
@@ -1607,7 +1609,10 @@ function renderDictList(){
       <div class="hint" data-i18n="shareIntro" style="margin-top:0">A link that reproduces every control on this page — paste it into WhatsApp, email, etc.</div>
       <label class="f" data-i18n="shareUrlLabel" style="margin-top:12px">Shareable link</label>
       <textarea id="shareUrl" rows="3" readonly style="width:100%;font-family:monospace;font-size:12px"></textarea>
-      <button class="act" id="shareCopy" data-i18n="shareCopy" style="margin-top:6px">📋 Copy link</button>
+      <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
+        <button class="act" id="shareNative" data-i18n="shareNative" style="margin-top:0;display:none">📲 Share…</button>
+        <button class="act" id="shareCopy" data-i18n="shareCopy" style="margin-top:0">📋 Copy link</button>
+      </div>
       <div style="margin-top:14px;border-top:1px solid var(--edge);padding-top:12px">
         <div class="hint" data-i18n="shareTipsIntro" style="margin-top:0">Optional: attach a note to the Mnemonic / Passphrase boxes (shown to whoever opens the link).</div>
         <label class="f" data-i18n="shareMnTip" style="margin-top:8px">Mnemonic note</label>
