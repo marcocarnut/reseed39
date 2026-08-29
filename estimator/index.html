@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>bip39rxcrack — keyspace / effort estimator</title>
+<title>(re)seed39 — BIP39 / Electrum seed recovery</title>
 <link rel="icon" href="data:,">
 <style>
   :root{
@@ -14,9 +14,15 @@
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
   header{padding:12px 18px;border-bottom:1px solid var(--edge);display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
-  header h1{font-size:17px;margin:0;font-weight:650}
+  header h1{font-size:19px;margin:0;font-weight:700;letter-spacing:-.2px}
+  header h1 .re{color:var(--accent)}
   header .motto{color:var(--dim);font-style:italic;font-size:12.5px}
   header .warn{margin-left:auto;color:var(--yellow);font-size:12px;max-width:340px;text-align:right}
+  /* pre-title network banner: warn while online, reassure while offline */
+  .netbar{padding:9px 18px;font-size:13px;line-height:1.4;border-bottom:1px solid var(--edge)}
+  .netbar.online{background:rgba(202,138,4,.16);color:#f2d38a;border-bottom-color:#7a5c10}
+  .netbar.offline{background:rgba(22,163,74,.15);color:#8fe0aa;border-bottom-color:#1c5a34}
+  .netbar b{color:inherit}
   .langSeg{display:inline-flex;border:1px solid var(--edge);border-radius:6px;overflow:hidden;margin-left:10px}
   .langSeg button{background:#0c1120;color:var(--dim);border:0;padding:3px 9px;cursor:pointer;font-size:11.5px}
   .langSeg button.on{background:var(--accent);color:#04102a;font-weight:600}
@@ -107,11 +113,11 @@
 </style>
 </head>
 <body>
+<div id="onlineBanner" class="netbar"></div>
 <header>
-  <h1>bip39rxcrack <span class="muted" style="font-weight:400">effort estimator</span></h1>
+  <h1><span class="re">(re)</span>seed39</h1>
   <span class="motto" data-i18n="tagline">Cracking hard is alright, but smart is better.</span>
-  <span class="warn" data-i18n-html="warnbar"></span>
-  <button class="ghost" id="shareBtn" style="margin-left:10px" data-i18n="shareBtn">🔗 Share</button>
+  <button class="ghost" id="shareBtn" style="margin-left:auto" data-i18n="shareBtn">🔗 Share</button>
   <span class="langSeg" id="langSeg"><button data-l="en" class="on">EN</button><button data-l="pt">PT</button></span>
 </header>
 <div id="resumeBar" style="display:none"></div>
@@ -205,17 +211,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b55"></script>
-<script src="../wasm/rxecore_api.js?v=b55"></script>
+<script src="../wasm/rxecore.js?v=b56"></script>
+<script src="../wasm/rxecore_api.js?v=b56"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b55"></script>
-<script src="../estimator/model.js?v=b55"></script>
-<script src="../estimator/wordset.js?v=b55"></script>
-<script src="../estimator/bip39crypto.js?v=b55"></script>
-<script src="../estimator/electrum.js?v=b55"></script>
-<script src="../estimator/gpucrack.js?v=b55"></script>
-<script src="../estimator/i18n.js?v=b55"></script>
+<script src="../estimator/bip39.js?v=b56"></script>
+<script src="../estimator/model.js?v=b56"></script>
+<script src="../estimator/wordset.js?v=b56"></script>
+<script src="../estimator/bip39crypto.js?v=b56"></script>
+<script src="../estimator/electrum.js?v=b56"></script>
+<script src="../estimator/gpucrack.js?v=b56"></script>
+<script src="../estimator/i18n.js?v=b56"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -380,6 +386,7 @@ function applyLang(){
   $$('[data-i18n-ph]').forEach(el=>{ el.placeholder = t(el.getAttribute('data-i18n-ph')); });
   buildPresets();
   renderDictList();
+  renderOnlineBanner();   // re-render the pre-title banner in the new language
 }
 function setLang(l){
   LANG = l; t = EstI18N.makeT(l);
@@ -393,7 +400,7 @@ function setLang(l){
     const txt = await (await fetch('../data/english.txt')).text();
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b55' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b56' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -547,6 +554,16 @@ function openShareModal(){
   $('#shareNative').style.display = (navigator.share) ? '' : 'none';   // native OS share sheet (mobile / supported browsers)
   $('#shareOverlay').classList.add('on');
 }
+// Pre-title network banner: warn while online (fine for testing/learning, but a
+// real recovery belongs offline in a safe place), reassure while offline. Live-
+// updates on the online/offline events. navigator.onLine is a hint, not a proof
+// of an air-gap -- the copy says so.
+function renderOnlineBanner(){
+  const el=$('#onlineBanner'); if(!el) return;
+  const online = navigator.onLine!==false;
+  el.className = 'netbar '+(online?'online':'offline');
+  el.innerHTML = (online?'⚠ ':'🔒 ') + t(online?'onlineWarn':'offlineNote');
+}
 
 // ---------- UI wiring ----------
 function setSeg(sel,attr,val){ $$(sel+' button').forEach(b=>b.classList.toggle('on',b.getAttribute(attr)===val)); }
@@ -611,9 +628,11 @@ function wireUI(){
   $('#benchClose').onclick=$('#benchCancel').onclick=closeBenchModal;
   $('#sampleClose').onclick=$('#sampleCloseB').onclick=()=>$('#sampleOverlay').classList.remove('on');
   $('#shareBtn').onclick=openShareModal;
+  window.addEventListener('online', renderOnlineBanner);
+  window.addEventListener('offline', renderOnlineBanner);
   $('#shareClose').onclick=$('#shareCloseB').onclick=()=>$('#shareOverlay').classList.remove('on');
   $('#shareCopy').onclick=async()=>{ try{ await navigator.clipboard.writeText($('#shareUrl').value); const b=$('#shareCopy'); b.textContent='✓ '+t('shareCopied'); setTimeout(()=>b.textContent='📋 '+t('shareCopy'),1600); }catch(e){ $('#shareUrl').select(); } };
-  $('#shareNative').onclick=async()=>{ try{ await navigator.share({ title:'bip39rxcrack', text:t('shareNativeText'), url:$('#shareUrl').value }); }catch(e){} };   // native OS share sheet (mobile)
+  $('#shareNative').onclick=async()=>{ try{ await navigator.share({ title:'(re)seed39', text:t('shareNativeText'), url:$('#shareUrl').value }); }catch(e){} };   // native OS share sheet (mobile)
   $('#crackClose').onclick=()=>{ if(cracking) cracking=false; $('#crackOverlay').classList.remove('on'); };
   [$('#benchOverlay'),$('#sampleOverlay'),$('#crackOverlay')].forEach(o=>o.addEventListener('click',e=>{ if(e.target===o){ if(o.id==='crackOverlay'&&cracking) cracking=false; o.classList.remove('on'); } }));
 }
@@ -667,7 +686,7 @@ async function _measCpuSweep(ms){
   }
   const per=Math.ceil(total/cores), swept=new Array(cores).fill(0), workers=[];
   for(let k=0;k<cores;k++){
-    let w; try{ w=new Worker('crackworker.js?v=b55'); }catch(e){ break; }
+    let w; try{ w=new Worker('crackworker.js?v=b56'); }catch(e){ break; }
     workers.push(w);
     w.onmessage=(e)=>{ const m=e.data; if(m&&(m.type==='cand'||m.type==='progress')) swept[m.id]=m.swept; };
     const start=k*per, end=Math.min(total,(k+1)*per);
@@ -952,7 +971,7 @@ async function onCrack(){
       if(gpu && reqCsum && typeof Worker!=='undefined')      // parallel sweep (workers) + GPU seed
         r = await crackWordsHybrid({ pattern:patStr, passphrase:passFixed, requireChecksum:reqCsum, plan, tcc, taddr, changes, gap:gapN, total, nWorkers, onProgress:common.onProgress, isCancelled:common.isCancelled, resumeFrom, onCheckpoint });
       else if(gpu)                                            // checksum-off or no workers: double-buffered main-thread sweep + GPU seed (+ parallel-EC derive pool for address)
-        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b55', resumeFrom, onCheckpoint});
+        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b56', resumeFrom, onCheckpoint});
       else                                                    // CPU multicore
         r = await mt(()=>cpuCrackWords({...common, passphrase:passFixed, tcc, taddr, changes, gap:gapN, requireChecksum:reqCsum}));
     } else if(target==='xpub'){
@@ -960,7 +979,7 @@ async function onCrack(){
       r = gpu ? await window.GpuCrack.crackXpub(args) : await mt(()=>cpuCrack(args));
     } else {
       const args={...common, mnemonic:mnFixed, target:taddr, changes, gap:gapN, batchSize:2048,
-        nWorkers, workerUrl:'crackworker.js?v=b55' };   // parallel-EC derive pool
+        nWorkers, workerUrl:'crackworker.js?v=b56' };   // parallel-EC derive pool
       r = gpu ? await window.GpuCrack.crackAddress(args) : await mt(()=>cpuCrackAddress(args));
     }
     if(r && r.error) throw new Error(r.error);
@@ -1039,7 +1058,7 @@ async function crackJoint(o){
       const args={...o.common, onProgress:innerProg, mnemonic:mn, targetChainCode:o.tcc, batchSize:4096};
       r = o.gpu ? await window.GpuCrack.crackXpub(args) : await cpuCrack(args);
     } else {
-      const args={...o.common, onProgress:innerProg, mnemonic:mn, target:o.taddr, changes:o.changes, gap:o.gap, batchSize:2048, nWorkers:o.nWorkers, workerUrl:'crackworker.js?v=b55'};
+      const args={...o.common, onProgress:innerProg, mnemonic:mn, target:o.taddr, changes:o.changes, gap:o.gap, batchSize:2048, nWorkers:o.nWorkers, workerUrl:'crackworker.js?v=b56'};
       r = o.gpu ? await window.GpuCrack.crackAddress(args) : await cpuCrackAddress(args);
     }
     if(r && r.error) return r;
@@ -1203,7 +1222,7 @@ function cpuCrackMT(o){
       const start=k*per, end=Math.min(o.total,(k+1)*per);
       if (start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b55'); }catch(e){ cleanup(); return resolve(o.single()); }
+      let w; try{ w=new Worker('crackworker.js?v=b56'); }catch(e){ cleanup(); return resolve(o.single()); }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if (m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
@@ -1229,7 +1248,7 @@ function cpuCrackMT(o){
 function crackWordsHybrid(o){
   const C=window.BIP39Crypto;
   const nW=Math.max(1, Math.min(o.nWorkers||1, 32));
-  const WURL='crackworker.js?v=b55';
+  const WURL='crackworker.js?v=b56';
   return new Promise(async (resolve)=>{
     try{ await window.GpuCrack.initGpuWords(); }catch(e){ return resolve({error:e.message}); }
     const isAddr=!!o.taddr; const isXpub=!isAddr;   // one derive pool serves both
