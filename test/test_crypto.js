@@ -99,6 +99,8 @@ for (const [purpose,addr] of [[84,'bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu'],
   const d=C.decodeAddress(addr);
   const built=C.pubToTarget(C.privToPub(C.addressNode(aseed,purpose,0,0,0,0).k), purpose);
   ok(d.type===built.type && C.eq(d.program, built.program), `decodeAddress == pubToTarget for BIP${purpose} (${d.type})`);
+  // encodeAddress is the inverse of decodeAddress (round-trips to the exact string).
+  ok(C.encodeAddress(d)===addr, `encodeAddress round-trips BIP${purpose} (${d.type})`);
 }
 
 // 11) END-TO-END address-target crack: unknown passphrase, known BIP84 address.

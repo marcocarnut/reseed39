@@ -212,17 +212,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b58"></script>
-<script src="../wasm/rxecore_api.js?v=b58"></script>
+<script src="../wasm/rxecore.js?v=b59"></script>
+<script src="../wasm/rxecore_api.js?v=b59"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b58"></script>
-<script src="../estimator/model.js?v=b58"></script>
-<script src="../estimator/wordset.js?v=b58"></script>
-<script src="../estimator/bip39crypto.js?v=b58"></script>
-<script src="../estimator/electrum.js?v=b58"></script>
-<script src="../estimator/gpucrack.js?v=b58"></script>
-<script src="../estimator/i18n.js?v=b58"></script>
+<script src="../estimator/bip39.js?v=b59"></script>
+<script src="../estimator/model.js?v=b59"></script>
+<script src="../estimator/wordset.js?v=b59"></script>
+<script src="../estimator/bip39crypto.js?v=b59"></script>
+<script src="../estimator/electrum.js?v=b59"></script>
+<script src="../estimator/gpucrack.js?v=b59"></script>
+<script src="../estimator/i18n.js?v=b59"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -401,7 +401,7 @@ function setLang(l){
     const txt = await (await fetch('../data/english.txt')).text();
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b58' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b59' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -702,7 +702,7 @@ async function _measCpuSweep(ms){
   }
   const per=Math.ceil(total/cores), swept=new Array(cores).fill(0), workers=[];
   for(let k=0;k<cores;k++){
-    let w; try{ w=new Worker('crackworker.js?v=b58'); }catch(e){ break; }
+    let w; try{ w=new Worker('crackworker.js?v=b59'); }catch(e){ break; }
     workers.push(w);
     w.onmessage=(e)=>{ const m=e.data; if(m&&(m.type==='cand'||m.type==='progress')) swept[m.id]=m.swept; };
     const start=k*per, end=Math.min(total,(k+1)*per);
@@ -901,9 +901,9 @@ async function onCrack(){
   if(ckMode.generate){
     if(!ckMode.ok){ set.free(); if(jointW)try{jointW.free()}catch(e){}
       msg.textContent=t(ckMode.warn)+(ckMode.warn==='ckLen'?` (${ckMode.W}≠${ckMode.N})`:''); return; }
-    if(mode!=='words' || electrumSel){ set.free(); if(jointW)try{jointW.free()}catch(e){}
-      msg.textContent=t('ckWordsOnly'); return; }
-    generate=true;
+    if(electrumSel){ set.free(); if(jointW)try{jointW.free()}catch(e){}
+      msg.textContent=t('ckWordsOnly'); return; }   // Electrum uses a version prefix, not a BIP39 checksum
+    generate=true;   // words OR joint (the mnemonic is the OUTER axis in joint)
   }
   cracking=true; _crackAbort=false; _crackPaused=false; btn.textContent=t('crackPause'); btn.classList.remove('resuming');
   { const sb=$('#crackStopBtn'); if(sb){ sb.textContent=t('crackStopBtn'); sb.style.display=''; } }
@@ -994,12 +994,12 @@ async function onCrack(){
         onProgress:common.onProgress, isCancelled:common.isCancelled };
       r = elecGpu ? await crackElectrumGpu(eArgs) : await crackElectrum(eArgs);   // words+GPU -> GPU-seeded; else CPU
     } else if(mode==='joint'){                                 // both axes vary: outer mnemonic x inner passphrase sweep
-      r = await crackJoint({ jointW, wCard, reqCsum, gpu, target, tcc, taddr, common, changes, gap:gapN, nWorkers, jointTotal });
+      r = await crackJoint({ jointW, wCard, reqCsum, generate, gpu, target, tcc, taddr, common, changes, gap:gapN, nWorkers, jointTotal });
     } else if(mode==='words'){
       if(gpu && (reqCsum||generate) && typeof Worker!=='undefined')  // parallel sweep (workers, generate rewrites the last word) + GPU seed
         r = await crackWordsHybrid({ pattern:patStr, passphrase:passFixed, requireChecksum:reqCsum, generate, plan, tcc, taddr, changes, gap:gapN, total, nWorkers, onProgress:common.onProgress, isCancelled:common.isCancelled, resumeFrom, onCheckpoint });
       else if(gpu)                                            // checksum-off or no workers: double-buffered main-thread sweep + GPU seed (+ parallel-EC derive pool for address)
-        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b58', resumeFrom, onCheckpoint});
+        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b59', resumeFrom, onCheckpoint});
       else                                                    // CPU multicore
         r = await mt(()=>cpuCrackWords({...common, passphrase:passFixed, generate, tcc, taddr, changes, gap:gapN, requireChecksum:reqCsum}));
     } else if(target==='xpub'){
@@ -1007,7 +1007,7 @@ async function onCrack(){
       r = gpu ? await window.GpuCrack.crackXpub(args) : await mt(()=>cpuCrack(args));
     } else {
       const args={...common, mnemonic:mnFixed, target:taddr, changes, gap:gapN, batchSize:2048,
-        nWorkers, workerUrl:'crackworker.js?v=b58' };   // parallel-EC derive pool
+        nWorkers, workerUrl:'crackworker.js?v=b59' };   // parallel-EC derive pool
       r = gpu ? await window.GpuCrack.crackAddress(args) : await mt(()=>cpuCrackAddress(args));
     }
     if(r && r.error) throw new Error(r.error);
@@ -1074,8 +1074,9 @@ async function crackJoint(o){
   let completedValid=0;   // valid mnemonics fully swept with no hit (for the aggregate progress base)
   for(let mi=0; mi<wN; mi++){
     if(!cracking) return {stopped:true};
-    const mn=o.jointW.unrank(BigInt(mi));
-    if(o.reqCsum && !(mn && VALIDATOR.isValid(mn))) continue;   // checksum-filter the OUTER mnemonic axis
+    let mn=o.jointW.unrank(BigInt(mi));
+    if(o.generate){ mn = mn ? VALIDATOR.complete(mn) : null; if(mn===null) continue; }   // GENERATE: rewrite the outer last word -> valid
+    else if(o.reqCsum && !(mn && VALIDATOR.isValid(mn))) continue;   // checksum-filter the OUTER mnemonic axis
     // inner passphrase sweep for THIS fixed mnemonic; aggregate progress across mnemonics
     const innerProg=(done,tot,rate,extra)=>{
       const seedsDone=completedValid*pTotal+done, el=(performance.now()-t0)/1000, agg=el>0?seedsDone/el:0;
@@ -1086,7 +1087,7 @@ async function crackJoint(o){
       const args={...o.common, onProgress:innerProg, mnemonic:mn, targetChainCode:o.tcc, batchSize:4096};
       r = o.gpu ? await window.GpuCrack.crackXpub(args) : await cpuCrack(args);
     } else {
-      const args={...o.common, onProgress:innerProg, mnemonic:mn, target:o.taddr, changes:o.changes, gap:o.gap, batchSize:2048, nWorkers:o.nWorkers, workerUrl:'crackworker.js?v=b58'};
+      const args={...o.common, onProgress:innerProg, mnemonic:mn, target:o.taddr, changes:o.changes, gap:o.gap, batchSize:2048, nWorkers:o.nWorkers, workerUrl:'crackworker.js?v=b59'};
       r = o.gpu ? await window.GpuCrack.crackAddress(args) : await cpuCrackAddress(args);
     }
     if(r && r.error) return r;
@@ -1251,7 +1252,7 @@ function cpuCrackMT(o){
       const start=k*per, end=Math.min(o.total,(k+1)*per);
       if (start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b58'); }catch(e){ cleanup(); return resolve(o.single()); }
+      let w; try{ w=new Worker('crackworker.js?v=b59'); }catch(e){ cleanup(); return resolve(o.single()); }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if (m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
@@ -1277,7 +1278,7 @@ function cpuCrackMT(o){
 function crackWordsHybrid(o){
   const C=window.BIP39Crypto;
   const nW=Math.max(1, Math.min(o.nWorkers||1, 32));
-  const WURL='crackworker.js?v=b58';
+  const WURL='crackworker.js?v=b59';
   return new Promise(async (resolve)=>{
     try{ await window.GpuCrack.initGpuWords(); }catch(e){ return resolve({error:e.message}); }
     const isAddr=!!o.taddr; const isXpub=!isAddr;   // one derive pool serves both

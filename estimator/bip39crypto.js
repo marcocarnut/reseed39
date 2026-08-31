@@ -613,6 +613,17 @@ function pubToTarget(pub33, purpose){
   }
   throw new Error('unsupported purpose '+purpose);
 }
+// Encode a {type, program} target back to an address string -- the inverse of
+// decodeAddress (mainnet hrp 'bc' by default). Handy for planting test targets.
+function encodeAddress(target, hrp){
+  const t=target.type, prog=target.program;
+  hrp = hrp || 'bc';
+  if (t==='p2pkh')  return b58checkEncode(concat(Uint8Array.of(0x00), prog));
+  if (t==='p2sh')   return b58checkEncode(concat(Uint8Array.of(0x05), prog));
+  if (t==='p2wpkh'){ if(prog.length!==20) throw new Error('p2wpkh program must be 20 bytes'); return segwitEncode(hrp, 0, prog); }
+  if (t==='p2tr'){   if(prog.length!==32) throw new Error('p2tr program must be 32 bytes'); return segwitEncode(hrp, 1, prog); }
+  throw new Error('unsupported address type '+t);
+}
 // Full: seed + path -> {type, program} for comparison to a decoded address.
 function addressTarget(seed, purpose, account, coin, change, index){
   const node=addressNode(seed, purpose, account, coin, change, index);
@@ -639,7 +650,7 @@ const _exports = {
   ckdNormal, ckdNormalPub, addressNode,
   ripemd160, hash160,
   bech32Encode, bech32Decode, segwitEncode,
-  decodeAddress, purposeType, pubToTarget, addressTarget,
+  decodeAddress, encodeAddress, purposeType, pubToTarget, addressTarget,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = _exports;
 if (typeof globalThis !== 'undefined') globalThis.BIP39Crypto = _exports; // window OR worker(self)
