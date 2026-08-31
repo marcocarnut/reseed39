@@ -42,6 +42,26 @@
   .preset:hover{border-color:var(--accent)}
   .preset b{display:block;font-size:13px}
   .preset span{display:block;color:var(--dim);font-size:11.5px;margin-top:2px}
+  /* collapsible examples pane (like jsrxe): the header toggles the list */
+  .pane.presets h2{cursor:pointer;user-select:none;display:flex;align-items:center;gap:7px}
+  .pane.presets h2::before{content:'▾';font-size:9px;color:var(--accent);transition:transform .15s}
+  .pane.presets.collapsed h2::before{transform:rotate(-90deg)}
+  .pane.presets.collapsed #presets{display:none}
+  /* --- responsive: stack the three columns on phones/narrow windows --- */
+  @media (max-width:860px){
+    .cols{grid-template-columns:1fr;min-height:0}
+    .pane{overflow:visible;padding:14px;min-width:0}   /* min-width:0 lets the grid item shrink below its content */
+    .pane.presets,.pane.form{border-right:none;border-bottom:1px solid var(--edge)}
+    .rightbtns{flex-wrap:wrap}
+    .hint,.note,.netbar,.preset span{overflow-wrap:anywhere}   /* break long tokens instead of overflowing */
+  }
+  @media (max-width:480px){
+    header{padding:10px 14px;gap:8px}
+    header h1{font-size:20px}
+    header .motto{display:none}
+    .tabs{padding:0 10px}
+    .netbar{font-size:11.5px;padding:7px 12px}
+  }
   label.f{display:block;margin:12px 0 4px;color:var(--dim);font-size:12px}
   input[type=text],textarea,select{width:100%;background:#0c1120;border:1px solid var(--edge);color:var(--ink);
           border-radius:7px;padding:8px 10px;font-family:var(--mono);font-size:13px}
@@ -52,7 +72,7 @@
   .seg button{background:#0c1120;color:var(--dim);border:0;padding:6px 12px;cursor:pointer;font-size:12.5px}
   .seg button.on{background:var(--accent);color:#04102a;font-weight:600}
   .num{width:70px}
-  fieldset{border:1px solid var(--edge);border-radius:9px;margin:14px 0 0;padding:12px}
+  fieldset{border:1px solid var(--edge);border-radius:9px;margin:14px 0 0;padding:12px;min-width:0}
   legend{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.07em;padding:0 6px}
   .derivlist{max-height:200px;overflow:auto;border:1px solid var(--edge);border-radius:8px;padding:4px;background:#0c1120}
   .derivrow{display:flex;align-items:baseline;gap:8px;padding:6px 7px;border-radius:6px;cursor:pointer}
@@ -429,7 +449,7 @@ function setLang(l){
     if(HAS_GPU && window.GpuCrack){ try{ CUR_GPU_ID = (await window.GpuCrack.getGpuInfo())||''; }catch(e){} }
     $('#booting').style.display='none';
     $('#view-est').classList.add('active');
-    buildDerivs(); wireUI(); applyBackendAvail(); applyLang(); applyTargetVis(); renderBenchCard(); recompute();
+    buildDerivs(); wireUI(); initExamplesToggle(); applyBackendAvail(); applyLang(); applyTargetVis(); renderBenchCard(); recompute();
     // A #hash share-link reproduces every control (see the Share button).
     try{ if(location.hash.length>1){ applyShareState(JSON.parse(_b64urlDec(location.hash.slice(1)))); } }catch(e){}
     renderResumeBar();   // offer to resume an interrupted crack (from localStorage)
@@ -501,6 +521,19 @@ function buildPresets(){
     b.onclick=()=>applyPreset(p);
     host.appendChild(b);
   });
+}
+// Collapsible examples pane (jsrxe-style): the "Common cases" header toggles the
+// list; the choice is remembered. Default = collapsed on a narrow/phone screen
+// (so the form is visible first), expanded on desktop.
+function initExamplesToggle(){
+  const pane = document.querySelector('.pane.presets'); if(!pane) return;
+  const h = pane.querySelector('h2'); if(!h) return;
+  h.setAttribute('role','button'); h.setAttribute('tabindex','0');
+  const toggle=()=>{ const c=pane.classList.toggle('collapsed'); try{ localStorage.setItem('reseed39.exCollapsed', c?'1':'0'); }catch(e){} };
+  h.addEventListener('click', toggle);
+  h.addEventListener('keydown', e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); toggle(); } });
+  let pref=null; try{ pref=localStorage.getItem('reseed39.exCollapsed'); }catch(e){}
+  pane.classList.toggle('collapsed', pref!=null ? pref==='1' : (window.innerWidth<=860));
 }
 function applyPreset(p){
   // Unified UI: a preset just seeds both axes; the tool infers the crack strategy
