@@ -247,17 +247,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b64"></script>
-<script src="../wasm/rxecore_api.js?v=b64"></script>
+<script src="../wasm/rxecore.js?v=b65"></script>
+<script src="../wasm/rxecore_api.js?v=b65"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b64"></script>
-<script src="../estimator/model.js?v=b64"></script>
-<script src="../estimator/wordset.js?v=b64"></script>
-<script src="../estimator/bip39crypto.js?v=b64"></script>
-<script src="../estimator/electrum.js?v=b64"></script>
-<script src="../estimator/gpucrack.js?v=b64"></script>
-<script src="../estimator/i18n.js?v=b64"></script>
+<script src="../estimator/bip39.js?v=b65"></script>
+<script src="../estimator/model.js?v=b65"></script>
+<script src="../estimator/wordset.js?v=b65"></script>
+<script src="../estimator/bip39crypto.js?v=b65"></script>
+<script src="../estimator/electrum.js?v=b65"></script>
+<script src="../estimator/gpucrack.js?v=b65"></script>
+<script src="../estimator/i18n.js?v=b65"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -266,7 +266,7 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b64';
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b65';
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -332,9 +332,16 @@ function _logStartRun(meta){
   _logSample();   // t=0 row
   _logTimer = setInterval(_logSample, LOG_INTERVAL_MS);
 }
-function _logStopRun(){
+function _logStopRun(outcome){
   if(_logTimer){ clearInterval(_logTimer); _logTimer=null; }
-  if(_crackLog){ _logSample(); _crackLog.push('# ended: '+new Date().toISOString()); try{ localStorage.setItem(LOG_LS_KEY, _crackLog.join('\n')); }catch(e){} }
+  if(!_crackLog) return;
+  _logSample();   // final row
+  // Outcome trailer: what the run ended as (found / not_found / stopped / paused
+  // / error) and, on a hit, the recovered mnemonic + passphrase + path + index.
+  if(outcome){ for(const k in outcome){ const v=outcome[k]; if(v!=null && v!=='') _crackLog.push('# '+k+': '+v); } }
+  _crackLog.push('# elapsed_ms: '+Math.round(performance.now()-_logStart));
+  _crackLog.push('# ended: '+new Date().toISOString());
+  try{ localStorage.setItem(LOG_LS_KEY, _crackLog.join('\n')); }catch(e){}
 }
 async function copyCrackLog(){
   const txt = _logCsv();
@@ -507,7 +514,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b64' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b65' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -1095,11 +1102,19 @@ async function onCrack(){
   const crackStart=performance.now();
   const elecGpu = electrumSel && mode==='words' && gpu;   // Electrum GPU-seed path exists for the WORDS axis
   const engLabel = elecGpu ? 'GPU' : (electrumSel || !gpu) ? 'CPU' : 'GPU';   // Electrum passphrase/joint stay CPU
+  // Which derivation controls are live: a custom path (Breadwallet/MultiBit &c.)
+  // replaces the purpose plan; otherwise the enabled BIP purposes (+ Electrum),
+  // plus accounts/changes/gap. Recorded so a pasted log is self-explaining.
+  const _purp = [...new Set(plan.map(pp=>pp.purpose))].sort((a,b)=>a-b);
+  const _deriv = customOn ? ('custom '+pathTemplate)
+    : ((_purp.map(p=>'BIP'+p).join('+') + (electrumSel?(_purp.length?'+':'')+'electrum':'')) || '(none)');
   _logStartRun({ engine:engLabel, mode, gpu:!!gpu, electrum:!!electrumSel, workers:nWorkers,
     target: target==='address' ? ('address/'+(taddr&&taddr.type)) : target,
     generate: !!(ckMode&&ckMode.generate), require_checksum: !!reqCsum,
     gpu_seed_chunk: (gpu&&window.GpuCrack.getEffSeedChunk)?window.GpuCrack.getEffSeedChunk():'',
-    mnemonic_pattern: patStr });
+    derivation: _deriv, accounts: nacct, changes: changes.join('/'), gap: gapN,
+    mnemonic_pattern: patStr,
+    passphrase_fixed: (mode==='words') ? (passFixed||'(none)') : '' });
   const common={ plan, total, pathTemplate, accounts:nacct, unrank:i=>set.unrank(BigInt(i)),
     unrankBatch:(start,count)=>set.unrankBatch(start,count),   // batched sweep (null on old core)
     onProgress:(done,tot,rate,extra)=>{
@@ -1163,6 +1178,7 @@ async function onCrack(){
   // a visible affordance while cracking).
   const resumable = !!onCheckpoint;
   let _pausedHalt = false;
+  let _logRes = { outcome:'error' };   // overwritten by the outcome branches below; the default catches an unexpected throw before any branch
   // JOINT progress denominator = the product (checksum-valid mnemonics x passphrases),
   // taken from the estimate (lastR.dim1) so % lines up with the estimator.
   const jointTotal = (mode==='joint')
@@ -1205,6 +1221,7 @@ async function onCrack(){
       // via its `resumeFrom` guard (same mechanism as the #resumeGo banner button).
       if(paused){ const ck=ckptLoad(); if(ck && ck.frontier>0){ _resumeFrom=ck.frontier; _resumeSig=_sig; } }
       res.innerHTML='<span class="note">'+t(paused?'crackPaused':'crackStopped')+'</span>';
+      _logRes = { outcome: paused?'paused':'stopped' };
     }
     else if(r.found!=null){
       const pth = r.electrumPath ? r.electrumPath
@@ -1220,14 +1237,20 @@ async function onCrack(){
       res.innerHTML=`<div class="verdict green" style="margin:0"><span class="dot"></span>${label}</div>`
                    +`<div class="foundname">${esc(r.found)}</div>`+pass
                    +`<div class="note">${t('crackVia')} ${esc(pth)}, index ${fmtBig(r.index)} · ${elapsed} (${engLabel})</div>`;
-    } else res.innerHTML='<span class="warnmsg">'+t('crackNotFound')+'</span>';
+      // Recovered secret for the log (mode decides which of r.found is which).
+      _logRes = { outcome:'found',
+        found_mnemonic: (mode==='words'||mode==='joint') ? r.found : mnFixed,
+        found_passphrase: (mode==='joint') ? (r.jointPass||'') : (mode==='passphrase') ? r.found : passFixed,
+        found_path: pth, found_index: r.index };
+    } else { res.innerHTML='<span class="warnmsg">'+t('crackNotFound')+'</span>'; _logRes = { outcome:'not_found' }; }
   }catch(e){ if(/cancelled during GPU cooldown/.test(e.message||'')){   // Pause/Stop hit mid-cooldown
       const paused = !_crackAbort && resumable; _pausedHalt = paused;
       if(paused){ const ck=ckptLoad(); if(ck && ck.frontier>0){ _resumeFrom=ck.frontier; _resumeSig=_sig; } }
       res.innerHTML='<span class="note">'+t(paused?'crackPaused':'crackStopped')+'</span>';
-    } else res.innerHTML='<span class="err">'+esc(e.message)+'</span>'; }
+      _logRes = { outcome: paused?'paused':'stopped' };
+    } else { res.innerHTML='<span class="err">'+esc(e.message)+'</span>'; _logRes = { outcome:'error', error:e.message }; } }
   finally{ cracking=false;
-    _logStopRun();   // stop the ?loginterval sampler, flush a final row
+    _logStopRun(_logRes);   // stop the ?loginterval sampler, flush a final row + outcome trailer
     if(LOG_INTERVAL_MS){ const cb=$('#crackCopyLog'); if(cb) cb.style.display=''; }
     // On a resumable pause the Crack button BECOMES the live Resume control (the
     // resume banner is behind the modal); otherwise it resets to the idle Crack.
