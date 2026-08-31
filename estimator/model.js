@@ -270,7 +270,21 @@ function estimate(input, deps) {
   //      => every candidate is hashed (off-dictionary/custom words allowed). ----
   let survival = null, validMnemonicCount = 1n;
   const wordsIsAxis = (mode === 'words' || mode === 'joint');
-  if (wordsIsAxis && !requireChecksum) {
+  const generateChecksum = !!input.generateChecksum;
+  if (wordsIsAxis && generateChecksum) {
+    // GENERATE mode: the [:Nth:] scaffold enumerates exactly the checksum-valid
+    // mnemonics (the final word is computed per candidate), so the librxe
+    // cardinality already IS the valid count -- exact, 100% survival, no sample.
+    if (wordsInfinite) {
+      warnings.push('mnemonic pattern is unbounded/infinite -- bound it (no * or {n,} tails).');
+      validMnemonicCount = null;
+    } else {
+      validMnemonicCount = wordsRaw;
+      survival = { infinite:false, method:'exact', raw:wordsRaw, validCount:wordsRaw, fraction:1,
+                   wordCount:null, theoreticalFraction:null, generate:true };
+      notes.push('generate-checksum mode: the [:Nth:] scaffold enumerates only checksum-valid mnemonics (the final word is computed), so the count is EXACT and every candidate is valid -- no rejection, ~2^CS fewer hashes than reject mode.');
+    }
+  } else if (wordsIsAxis && !requireChecksum) {
     if (wordsInfinite) {
       warnings.push('mnemonic pattern is unbounded/infinite -- bound it (no * or {n,} tails).');
       validMnemonicCount = null;

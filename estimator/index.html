@@ -75,6 +75,7 @@
   .levers li{margin:3px 0;color:var(--ink)}
   .note{color:var(--dim);font-size:12px;margin:4px 0}
   .warnmsg{color:var(--yellow);font-size:12.5px;margin:4px 0}
+  .okmsg{color:var(--green);font-size:12.5px;margin:4px 0;display:block}
   .err{color:var(--red);font-family:var(--mono);font-size:12.5px;white-space:pre-wrap}
   .sample code{display:block;font-family:var(--mono);font-size:12px;color:#cdd7f2;padding:1px 0;white-space:pre-wrap;word-break:break-all}
   .sample code.bad{color:#7d8aa8;text-decoration:line-through}
@@ -211,17 +212,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b57"></script>
-<script src="../wasm/rxecore_api.js?v=b57"></script>
+<script src="../wasm/rxecore.js?v=b58"></script>
+<script src="../wasm/rxecore_api.js?v=b58"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b57"></script>
-<script src="../estimator/model.js?v=b57"></script>
-<script src="../estimator/wordset.js?v=b57"></script>
-<script src="../estimator/bip39crypto.js?v=b57"></script>
-<script src="../estimator/electrum.js?v=b57"></script>
-<script src="../estimator/gpucrack.js?v=b57"></script>
-<script src="../estimator/i18n.js?v=b57"></script>
+<script src="../estimator/bip39.js?v=b58"></script>
+<script src="../estimator/model.js?v=b58"></script>
+<script src="../estimator/wordset.js?v=b58"></script>
+<script src="../estimator/bip39crypto.js?v=b58"></script>
+<script src="../estimator/electrum.js?v=b58"></script>
+<script src="../estimator/gpucrack.js?v=b58"></script>
+<script src="../estimator/i18n.js?v=b58"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -294,7 +295,7 @@ function applyBench(){
 // (found or exhausted); kept on Stop and on a crash so it can be resumed.
 const CKPT_KEY='bip39rxcrack.ckpt.v1';
 let _resumeFrom=0, _resumeSig=null, _ckptLast=0;
-function ckptSig(p){ return [p.mode,p.wordsPat,p.tseg,p.addr,p.reqChecksum?1:0,(p.changes||[]).join(','),p.gap,p.crackPass||''].join(''); }
+function ckptSig(p){ return [p.mode,p.wordsPat,p.tseg,p.addr,p.reqChecksum?1:0,(p.generate?'G':''),(p.changes||[]).join(','),p.gap,p.crackPass||''].join(''); }
 function ckptSave(o){ try{ localStorage.setItem(CKPT_KEY, JSON.stringify(o)); }catch(e){} }
 function ckptLoad(){ try{ const s=localStorage.getItem(CKPT_KEY); return s?JSON.parse(s):null; }catch(e){ return null; } }
 function ckptClear(){ try{ localStorage.removeItem(CKPT_KEY); }catch(e){} _resumeFrom=0; _resumeSig=null; }
@@ -400,13 +401,15 @@ function setLang(l){
     const txt = await (await fetch('../data/english.txt')).text();
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b57' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b58' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
     ['bip39en','bip39','en','english'].forEach(a=>{ try{ RXE.registerDict(a, englishWords); }catch(e){} });
     // Electrum's English wordlist is byte-identical to BIP39's, so [:electrum-en:] aliases it.
     ['electrum-en','electrumen','electrum'].forEach(a=>{ try{ RXE.registerDict(a, englishWords); }catch(e){} });
+    // [:Nth:] last-word scaffolds (generate-checksum mode): 2^(11-CS) stride reps.
+    Object.entries(BIP39.NTH_TOKENS).forEach(([W,tok])=>{ try{ RXE.registerDict(tok, BIP39.scaffoldWords(englishWords, +W)); }catch(e){} });
     VALIDATOR = BIP39.makeValidator(englishWords);
     // GPU detection + cached benchmark
     HAS_GPU = !!navigator.gpu;
@@ -699,7 +702,7 @@ async function _measCpuSweep(ms){
   }
   const per=Math.ceil(total/cores), swept=new Array(cores).fill(0), workers=[];
   for(let k=0;k<cores;k++){
-    let w; try{ w=new Worker('crackworker.js?v=b57'); }catch(e){ break; }
+    let w; try{ w=new Worker('crackworker.js?v=b58'); }catch(e){ break; }
     workers.push(w);
     w.onmessage=(e)=>{ const m=e.data; if(m&&(m.type==='cand'||m.type==='progress')) swept[m.id]=m.swept; };
     const start=k*per, end=Math.min(total,(k+1)*per);
@@ -890,6 +893,18 @@ async function onCrack(){
   if(!electrumSel && target==='address' && !plan.some(pp=>C.purposeType(pp.purpose)===taddr.type)){
     set.free(); if(jointW)try{jointW.free()}catch(e){} msg.textContent=t('crackTypeMismatch').replace('%t',taddr.type); return;
   }
+  // GENERATE-checksum guardrails: a [:Nth:] scaffold turns on generate mode (the
+  // worker rewrites the last word so every candidate is checksum-valid). Refuse
+  // the malformed / unsupported uses rather than silently emitting wrong words.
+  const ckMode = analyzeChecksum(wordsPat);
+  let generate=false;
+  if(ckMode.generate){
+    if(!ckMode.ok){ set.free(); if(jointW)try{jointW.free()}catch(e){}
+      msg.textContent=t(ckMode.warn)+(ckMode.warn==='ckLen'?` (${ckMode.W}≠${ckMode.N})`:''); return; }
+    if(mode!=='words' || electrumSel){ set.free(); if(jointW)try{jointW.free()}catch(e){}
+      msg.textContent=t('ckWordsOnly'); return; }
+    generate=true;
+  }
   cracking=true; _crackAbort=false; _crackPaused=false; btn.textContent=t('crackPause'); btn.classList.remove('resuming');
   { const sb=$('#crackStopBtn'); if(sb){ sb.textContent=t('crackStopBtn'); sb.style.display=''; } }
   msg.textContent=t('crackRunning'); res.innerHTML=''; prog.textContent='';
@@ -932,7 +947,7 @@ async function onCrack(){
   // A CPU path runs multicore via Web Workers, falling back to the single-thread
   // function when workers are unavailable / the set is tiny.
   const mt=(single)=>cpuCrackMT({ mode, pattern:patStr, mnemonic:mnFixed, passphrase:passFixed,
-    requireChecksum:reqCsum, plan, target:wTarget, changes, gap:gapN, total, nWorkers,
+    requireChecksum:reqCsum, generate, plan, target:wTarget, changes, gap:gapN, total, nWorkers,
     onProgress:common.onProgress, isCancelled:common.isCancelled, single });
   // GPU device-loss cooldown: honor the configurable pause, and show a live
   // countdown in the progress line while the GPU cools (else it looks hung).
@@ -952,7 +967,7 @@ async function onCrack(){
   }
   // CHECKPOINT context (words + GPU only): resume from a saved frontier, and
   // auto-save the frontier as the crack advances so a reload/crash can resume.
-  const ckptParams={ mode, wordsPat:patStr, tseg:target, addr, reqChecksum:reqCsum, changes:(changes&&changes.length?changes:[0]), gap:gapN, crackPass:passFixed };
+  const ckptParams={ mode, wordsPat:patStr, tseg:target, addr, reqChecksum:reqCsum, generate, changes:(changes&&changes.length?changes:[0]), gap:gapN, crackPass:passFixed };
   const _sig=ckptSig(ckptParams);
   const resumeFrom=(mode==='words' && _resumeSig===_sig)?_resumeFrom:0;
   _resumeSig=null; _resumeFrom=0;   // consume any pending resume request
@@ -981,18 +996,18 @@ async function onCrack(){
     } else if(mode==='joint'){                                 // both axes vary: outer mnemonic x inner passphrase sweep
       r = await crackJoint({ jointW, wCard, reqCsum, gpu, target, tcc, taddr, common, changes, gap:gapN, nWorkers, jointTotal });
     } else if(mode==='words'){
-      if(gpu && reqCsum && typeof Worker!=='undefined')      // parallel sweep (workers) + GPU seed
-        r = await crackWordsHybrid({ pattern:patStr, passphrase:passFixed, requireChecksum:reqCsum, plan, tcc, taddr, changes, gap:gapN, total, nWorkers, onProgress:common.onProgress, isCancelled:common.isCancelled, resumeFrom, onCheckpoint });
+      if(gpu && (reqCsum||generate) && typeof Worker!=='undefined')  // parallel sweep (workers, generate rewrites the last word) + GPU seed
+        r = await crackWordsHybrid({ pattern:patStr, passphrase:passFixed, requireChecksum:reqCsum, generate, plan, tcc, taddr, changes, gap:gapN, total, nWorkers, onProgress:common.onProgress, isCancelled:common.isCancelled, resumeFrom, onCheckpoint });
       else if(gpu)                                            // checksum-off or no workers: double-buffered main-thread sweep + GPU seed (+ parallel-EC derive pool for address)
-        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b57', resumeFrom, onCheckpoint});
+        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b58', resumeFrom, onCheckpoint});
       else                                                    // CPU multicore
-        r = await mt(()=>cpuCrackWords({...common, passphrase:passFixed, tcc, taddr, changes, gap:gapN, requireChecksum:reqCsum}));
+        r = await mt(()=>cpuCrackWords({...common, passphrase:passFixed, generate, tcc, taddr, changes, gap:gapN, requireChecksum:reqCsum}));
     } else if(target==='xpub'){
       const args={...common, mnemonic:mnFixed, targetChainCode:tcc, batchSize:4096};
       r = gpu ? await window.GpuCrack.crackXpub(args) : await mt(()=>cpuCrack(args));
     } else {
       const args={...common, mnemonic:mnFixed, target:taddr, changes, gap:gapN, batchSize:2048,
-        nWorkers, workerUrl:'crackworker.js?v=b57' };   // parallel-EC derive pool
+        nWorkers, workerUrl:'crackworker.js?v=b58' };   // parallel-EC derive pool
       r = gpu ? await window.GpuCrack.crackAddress(args) : await mt(()=>cpuCrackAddress(args));
     }
     if(r && r.error) throw new Error(r.error);
@@ -1071,7 +1086,7 @@ async function crackJoint(o){
       const args={...o.common, onProgress:innerProg, mnemonic:mn, targetChainCode:o.tcc, batchSize:4096};
       r = o.gpu ? await window.GpuCrack.crackXpub(args) : await cpuCrack(args);
     } else {
-      const args={...o.common, onProgress:innerProg, mnemonic:mn, target:o.taddr, changes:o.changes, gap:o.gap, batchSize:2048, nWorkers:o.nWorkers, workerUrl:'crackworker.js?v=b57'};
+      const args={...o.common, onProgress:innerProg, mnemonic:mn, target:o.taddr, changes:o.changes, gap:o.gap, batchSize:2048, nWorkers:o.nWorkers, workerUrl:'crackworker.js?v=b58'};
       r = o.gpu ? await window.GpuCrack.crackAddress(args) : await cpuCrackAddress(args);
     }
     if(r && r.error) return r;
@@ -1192,8 +1207,9 @@ async function cpuCrackWords(a){
     if(a.isCancelled()) return {stopped:true};
     const n=Math.min(1024,a.total-start); const _cb=a.unrankBatch?a.unrankBatch(start,n):null;
     for(let i=0;i<n;i++){
-      const mn=(_cb?_cb[i]:a.unrank(start+i));
-      if(reqCsum && !VALIDATOR.isValid(mn)) continue;   // checksum pre-filter -> skip PBKDF2
+      let mn=(_cb?_cb[i]:a.unrank(start+i));
+      if(a.generate){ mn = mn!==null ? VALIDATOR.complete(mn) : null; if(mn===null) continue; }   // rewrite last word -> valid, no rejection
+      else if(reqCsum && !VALIDATOR.isValid(mn)) continue;   // checksum pre-filter -> skip PBKDF2
       seeded++;
       const seed=C.mnemonicToSeed(mn,pass);
       if(isAddr){
@@ -1235,7 +1251,7 @@ function cpuCrackMT(o){
       const start=k*per, end=Math.min(o.total,(k+1)*per);
       if (start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b57'); }catch(e){ cleanup(); return resolve(o.single()); }
+      let w; try{ w=new Worker('crackworker.js?v=b58'); }catch(e){ cleanup(); return resolve(o.single()); }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if (m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
@@ -1245,7 +1261,7 @@ function cpuCrackMT(o){
       };
       w.onerror=(ev)=>{ finish({error:(ev && ev.message)||'worker error'}); };
       w.postMessage({ type:'run', id:k, wordlist:ENGLISH, pattern:o.pattern, mode:o.mode,
-        mnemonic:o.mnemonic||null, passphrase:o.passphrase||'', requireChecksum:o.requireChecksum,
+        mnemonic:o.mnemonic||null, passphrase:o.passphrase||'', requireChecksum:o.requireChecksum, generate:o.generate,
         plan:o.plan, target:o.target, changes:o.changes, gap:o.gap, start, end, progressEvery:2000 });
     }
     if (spawned===0) finish({found:null});
@@ -1261,7 +1277,7 @@ function cpuCrackMT(o){
 function crackWordsHybrid(o){
   const C=window.BIP39Crypto;
   const nW=Math.max(1, Math.min(o.nWorkers||1, 32));
-  const WURL='crackworker.js?v=b57';
+  const WURL='crackworker.js?v=b58';
   return new Promise(async (resolve)=>{
     try{ await window.GpuCrack.initGpuWords(); }catch(e){ return resolve({error:e.message}); }
     const isAddr=!!o.taddr; const isXpub=!isAddr;   // one derive pool serves both
@@ -1330,7 +1346,7 @@ function crackWordsHybrid(o){
       const start=cursor, end=Math.min(o.total, cursor+CHUNK); cursor=end;
       inflight.set(id,{start,end}); sweptCur[id]=0;
       w.postMessage({ type:'run', id, sweepOnly:true, wordlist:ENGLISH, pattern:o.pattern, mode:'words',
-        passphrase:o.passphrase||'', requireChecksum:o.requireChecksum, plan:o.plan,
+        passphrase:o.passphrase||'', requireChecksum:o.requireChecksum, generate:o.generate, plan:o.plan,
         target: o.taddr ? {kind:'address',addrType:o.taddr.type,programHex:C.toHex(o.taddr.program)} : {kind:'xpub',chainCodeHex:C.toHex(o.tcc)},
         changes:o.changes, gap:o.gap, start, end });
       return true;
@@ -1399,6 +1415,28 @@ function looksLikeTargetPaste(text){
       || /(?:^|\s)bc1[02-9ac-hj-np-z]{20,}/i.test(s)               // bech32 / bech32m address
       || /(?:^|\s)[13][1-9A-HJ-NP-Za-km-z]{24,}(?:\s|$)/.test(s);  // base58 P2PKH / P2SH
 }
+// Detect GENERATE-checksum mode from a mnemonic pattern: it turns on the moment
+// the pattern references a [:Nth:] last-word scaffold. Returns {generate, ok, N,
+// W, warn}. Generate is VALID only when the token is the single FINAL word, N
+// matches the word count, and it's not inside a {{ }} permutation -- otherwise
+// we surface a guardrail warning and refuse to run it (each is a silent-wrong
+// case). See PLAN §7.2.
+const NTH_RE_G = /\[:(12th|15th|18th|21st|24th):\]/g;
+const NTH_RE_1 = /\[:(12th|15th|18th|21st|24th):\]/;
+function analyzeChecksum(pat){
+  if(!pat) return { generate:false };
+  const ms = [...pat.matchAll(NTH_RE_G)];
+  if(ms.length===0) return { generate:false };
+  const N = parseInt(ms[0][1],10);
+  const segs = pat.trim().split(/\s+/);
+  const W = segs.length;
+  let warn = null;
+  if(ms.length>1)                             warn='ckMulti';
+  else if(/\{\{/.test(pat))                   warn='ckPerm';
+  else if(!NTH_RE_1.test(segs[segs.length-1]))warn='ckNotLast';
+  else if(W!==N)                              warn='ckLen';
+  return { generate:true, ok:!warn, N, W, warn };
+}
 function recompute(){
   autoResetCrack();   // editing a search input clears a finished crack result (see fn)
   freeLive();
@@ -1426,6 +1464,11 @@ function recompute(){
            gap:parseInt($('#gap').value,10)||1 },
     exactThreshold:50000, sampleSize:5000, exactFallbackCap:1000000,
   };
+  // GENERATE-checksum mode: a [:Nth:] scaffold makes the librxe cardinality the
+  // EXACT valid count, so tell the model to skip survival sampling. Only when the
+  // guardrails pass; a malformed use is flagged below and not treated as generate.
+  const ck = analyzeChecksum(input.mnemonicPattern);
+  if(ck.generate && ck.ok) input.generateChecksum = true;
   // ELECTRUM survival: when the Electrum purpose is selected, a candidate is a
   // valid seed iff its "Seed version" HMAC prefix matches -- 1/256 (standard) or
   // 1/4096 (segwit), NOT BIP39's checksum. Swap in an Electrum validator so the
@@ -1448,8 +1491,18 @@ function recompute(){
   $('#strategyLine').innerHTML = strategyText(r);
   // Wrong-box guard: an address/xpub pasted into the mnemonic or passphrase box.
   const mnBad=looksLikeTargetPaste($('#wordsPat').value), passBad=looksLikeTargetPaste($('#passPat').value);
-  $('#boxWarn').innerHTML = (mnBad||passBad)
-    ? '<span class="warnmsg">'+t(mnBad?'wrongBoxMn':'wrongBoxPass')+'</span>' : '';
+  let bw = (mnBad||passBad) ? '<span class="warnmsg">'+t(mnBad?'wrongBoxMn':'wrongBoxPass')+'</span>' : '';
+  // Checksum-mode indicator: green when a [:Nth:] scaffold is validly in play
+  // (generate mode), a guardrail warning when it's misused.
+  if(ck.generate){
+    bw += ck.ok ? '<span class="okmsg">'+t('ckGen')+'</span>'
+                : '<span class="warnmsg">'+t(ck.warn)+(ck.warn==='ckLen'?` (${ck.W}≠${ck.N})`:'')+'</span>';
+  }
+  $('#boxWarn').innerHTML = bw;
+  // When generate mode is on, the checksum checkbox is a no-op (every candidate
+  // is valid by construction) -- grey it so the UI reads honestly.
+  { const cb=$('#reqChecksum'); if(cb){ const gen=ck.generate&&ck.ok; cb.disabled=gen;
+      const lbl=cb.closest('label'); if(lbl) lbl.style.opacity=gen?'.5':''; } }
   liveSets = [r._sets.passSet, r._sets.wordsSet].filter(Boolean);
 }
 // One-line "which axis are we cracking, and why" -- replaces the old mode tab as

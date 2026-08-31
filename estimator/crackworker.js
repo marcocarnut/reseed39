@@ -24,6 +24,7 @@ async function ensureCore(wordlist){
   core = await globalThis.RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile: p => '../wasm/'+p+_v } });
   core.registerDict('bip39-en', wordlist);
   ['bip39en','bip39','en','english','electrum-en','electrumen','electrum'].forEach(a=>{ try{ core.registerDict(a, wordlist); }catch(e){} });
+  Object.entries(globalThis.BIP39.NTH_TOKENS).forEach(([W,tok])=>{ try{ core.registerDict(tok, globalThis.BIP39.scaffoldWords(wordlist, +W)); }catch(e){} });
   V = globalThis.BIP39.makeValidator(wordlist);
 }
 function hexToBytes(h){ const o=new Uint8Array(h.length/2); for(let i=0;i<o.length;i++) o[i]=parseInt(h.substr(i*2,2),16); return o; }
@@ -106,6 +107,7 @@ onmessage = async (e) => {
     const changes = (d.changes && d.changes.length) ? d.changes : [0];
     const gap = Math.max(1, d.gap || 1);
     const reqCsum = d.requireChecksum !== false;
+    const generate = !!d.generate;   // [:Nth:] scaffold: overwrite the last word's checksum
     const pass = d.passphrase || '';
     // sweepOnly: this worker only unranks + checksum-filters and streams the
     // surviving mnemonics back; the MAIN thread GPU-seeds them. That parallelizes
@@ -140,7 +142,13 @@ onmessage = async (e) => {
       let mn, pw;
       if (isWords) {
         mn = candAt(i); pw = pass;
-        if (reqCsum && !(mn !== null && V.isValid(mn))) { swept++; maybePost(); continue; }
+        if (generate) {
+          // GENERATE mode: rewrite the last word so the checksum is valid. One
+          // SHA per candidate (same as the reject filter), but NOTHING is
+          // rejected -- every scaffold candidate becomes a valid mnemonic.
+          mn = (mn !== null) ? V.complete(mn) : null;
+          if (mn === null) { swept++; maybePost(); continue; }
+        } else if (reqCsum && !(mn !== null && V.isValid(mn))) { swept++; maybePost(); continue; }
       } else {
         pw = candAt(i); mn = d.mnemonic;
       }
