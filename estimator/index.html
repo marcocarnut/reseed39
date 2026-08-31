@@ -247,17 +247,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b67"></script>
-<script src="../wasm/rxecore_api.js?v=b67"></script>
+<script src="../wasm/rxecore.js?v=b68"></script>
+<script src="../wasm/rxecore_api.js?v=b68"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b67"></script>
-<script src="../estimator/model.js?v=b67"></script>
-<script src="../estimator/wordset.js?v=b67"></script>
-<script src="../estimator/bip39crypto.js?v=b67"></script>
-<script src="../estimator/electrum.js?v=b67"></script>
-<script src="../estimator/gpucrack.js?v=b67"></script>
-<script src="../estimator/i18n.js?v=b67"></script>
+<script src="../estimator/bip39.js?v=b68"></script>
+<script src="../estimator/model.js?v=b68"></script>
+<script src="../estimator/wordset.js?v=b68"></script>
+<script src="../estimator/bip39crypto.js?v=b68"></script>
+<script src="../estimator/electrum.js?v=b68"></script>
+<script src="../estimator/gpucrack.js?v=b68"></script>
+<script src="../estimator/i18n.js?v=b68"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -266,7 +266,7 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b67';
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b68';
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -299,7 +299,7 @@ let _logTimer = null;        // setInterval handle
 let _logStart = 0;           // performance.now() at run start
 let _lastProg = null;        // latest onProgress snapshot {done,tot,rate,seeded,seedRate,pct,eta,resets}
 let _coolState = { cooling:0 };  // latest GPU-cooldown snapshot (separate callback)
-const LOG_COLS = 't_ms,done,tot,rate,seeded,seed_rate,pct,eta_s,gpu_resets,cooling,cool_remain_ms';
+const LOG_COLS = 't_ms,done,tot,rate,seeded,seed_rate,swept,swept_total,pct,eta_s,gpu_resets,cooling,cool_remain_ms';
 function _logCsv(){ return _crackLog ? _crackLog.join('\n') : (function(){ try{ return localStorage.getItem(LOG_LS_KEY)||''; }catch(e){ return ''; } })(); }
 function _logSample(){
   if(!_crackLog) return;
@@ -310,6 +310,7 @@ function _logSample(){
     Math.round(performance.now()-_logStart),
     g(p.done), g(p.tot), g(p.rate!=null?Math.round(p.rate):''),
     g(p.seeded), g(p.seedRate!=null&&p.seedRate!==''?Math.round(p.seedRate):''),
+    g(p.swept), g(p.sweptTotal),
     g(p.pct!=null?(+p.pct).toFixed(2):''), g(p.eta!=null&&isFinite(p.eta)?Math.round(p.eta):''),
     g(p.resets||0), c.cooling?1:0, c.cooling?g(Math.round(c.remain||0)):''
   ].join(',');
@@ -514,7 +515,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b67' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b68' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -1124,10 +1125,19 @@ async function onCrack(){
       // valid count can run slightly over it -- and guards any timing jitter in
       // the multi-worker sweep counters.
       if(tot && done>tot) done=tot;
-      let s=`${fmtBig(done)} / ${fmtBig(tot)} · ${fmtBig(Math.round(rate))} ${t('crackTried')}/s`;
-      // the "tried" sweep is cheap; the real cost is the ones actually HASHED --
-      // show those (and the worker count) so the timing makes sense.
-      if(extra) s+=` · ${fmtBig(extra.seeded)} ${t('crackSeeded')} (${fmtBig(Math.round(extra.seedRate))}/s)`;
+      let s;
+      if(extra && extra.checksum){
+        // Checksum/GPU: `done` is candidates HASHED, `tot` the (live-estimated)
+        // valid total -- the bottleneck and what finds the answer. Show the raw
+        // sweep separately so the reject-heavy filtering is visible, not conflated.
+        s=`${fmtBig(done)} / ~${fmtBig(tot)} ${t('crackHashed')} · ${fmtBig(Math.round(rate))}/s`
+         + ` · ${t('crackSwept')} ${fmtBig(extra.swept)} / ${fmtBig(extra.sweptTotal)}`;
+      } else {
+        s=`${fmtBig(done)} / ${fmtBig(tot)} · ${fmtBig(Math.round(rate))} ${t('crackTried')}/s`;
+        // the "tried" sweep is cheap; the real cost is the ones actually HASHED --
+        // show those (and the worker count) so the timing makes sense.
+        if(extra) s+=` · ${fmtBig(extra.seeded)} ${t('crackSeeded')} (${fmtBig(Math.round(extra.seedRate))}/s)`;
+      }
       // second line: % done + ETA to completion (+ GPU recoveries if any happened).
       const pct = tot ? (done/tot*100) : 0;
       const remain = rate>0 ? (tot-done)/rate : Infinity;
@@ -1136,7 +1146,8 @@ async function onCrack(){
         + (resets>0 ? ` · ${resets} ${t('crackGpuRecover')}` : '');
       prog.innerHTML=`<div>${esc(s)}</div><div style="margin-top:2px">${esc(line2)}</div>`;
       // Snapshot for the ?loginterval sampler (a normal update also means "not cooling").
-      _lastProg = { done, tot, rate, seeded: extra?extra.seeded:'', seedRate: extra?extra.seedRate:'', pct, eta: remain, resets };
+      _lastProg = { done, tot, rate, seeded: extra?extra.seeded:'', seedRate: extra?extra.seedRate:'', pct, eta: remain, resets,
+                    swept: extra&&extra.checksum?extra.swept:'', sweptTotal: extra&&extra.checksum?extra.sweptTotal:'' };
       _coolState = { cooling:0 };
     },
     isCancelled:()=>!cracking };
@@ -1506,7 +1517,7 @@ function crackWordsHybrid(o){
     const inflight=new Map();       // workerId -> {start,end} currently sweeping
     const completed=new Set();      // completed chunk starts (for the frontier)
     const sweptCur={};              // workerId -> swept-so-far in its current chunk
-    let finished=false, seededTotal=0, derivedCount=0, seeding=false, allSwept=(startAt>=o.total);
+    let finished=false, seededTotal=0, seeding=false, allSwept=(startAt>=o.total);
     const curSwept=()=>{ let s=sweptBase; for(const k in sweptCur) s+=sweptCur[k]; return s; };
     const queue=[]; const t0=performance.now();
     // Address: a PARALLEL derive pool does the secp256k1 compare off the main
@@ -1515,15 +1526,24 @@ function crackWordsHybrid(o){
     let dBatchId=0, dDispatched=0, dCompleted=0;
     const cleanup=()=>{ workers.forEach(w=>{try{w.terminate()}catch(e){}}); dWorkers.forEach(w=>{try{w.terminate()}catch(e){}}); clearInterval(poll); };
     const finish=(r)=>{ if(finished) return; finished=true; cleanup(); resolve(r); };
-    // Honest progress: the CPU sweep races ahead of the GPU/derive drain, so
-    // "done" = fully-PROCESSED candidates = swept - the pipeline backlog (valid
-    // candidates swept but not yet seeded OR seeded but not yet compared). Without
-    // this, checksum-on runs hit 100% while the GPU still has the whole valid
-    // subset (~1/16 of the keyspace) left to hash -- looking stuck "at 100%".
+    // Progress against the BOTTLENECK, which is the GPU hashing the checksum-
+    // valid subset -- NOT the raw sweep. The sweep is reject-dominated (~15/16 of
+    // 12-word candidates fail the checksum and are discarded instantly), so a
+    // raw-sweep % races ahead of the hashing that actually finds the answer. The
+    // find-relevant progress is `seeded / total-valids`: how many valid candidates
+    // have been hashed. Valids are uniform in the keyspace, so this % passing the
+    // answer's keyspace fraction == the answer having been tested. total-valids is
+    // estimated live from the observed checksum pass rate (exact once swept whole;
+    // for generate mode every candidate is valid, so it collapses to seeded/total).
     const report=()=>{ const swept=curSwept(), el=(performance.now()-t0)/1000||1e-6;
-      const backlog = queue.length + (seededTotal - derivedCount);
-      let done = swept - backlog; if(done<startAt) done=startAt; if(done>o.total) done=o.total;
-      o.onProgress(done,o.total,(done-startAt)/el,{seeded:seededTotal,seedRate:seededTotal/el}); };
+      const validsSeen = seededTotal + queue.length;          // valids the sweep found
+      const frac = swept>0 ? validsSeen/swept : 1;            // observed pass rate
+      let estValid = Math.round(o.total * frac);
+      if(estValid < seededTotal) estValid = seededTotal;      // never below what's hashed
+      if(estValid > o.total)     estValid = o.total;
+      const seedRate = seededTotal/el;
+      o.onProgress(seededTotal, estValid, seedRate,
+        {seeded:seededTotal, seedRate, swept, sweptTotal:o.total, checksum:true}); };
     const poll=setInterval(()=>{ if(o.isCancelled&&o.isCancelled()) finish({stopped:true}); },200);
     const maybeDone=()=>{ if(allSwept && !queue.length && !seeding && (dDispatched===dCompleted && !dQueue.length) && !finished) finish({found:null}); };
     // dispatch pending seed-batches to idle derive workers. Address = secp256k1
@@ -1538,8 +1558,7 @@ function crackWordsHybrid(o){
       for(let i=0;i<nW;i++){ let w; try{ w=new Worker(WURL); }catch(e){ break; } dWorkers.push(w); dIdle.push(w);
         w.onmessage=(e)=>{ const m=e.data; if(finished) return;
           if(m.type==='derivehit'){ const task=dPending.get(m.batchId); const hitc=task.batch[m.index]; finish({found:hitc.mn, path:m.path, index:hitc.index}); }
-          else if(m.type==='derivedone'){ const dt=dPending.get(m.batchId); if(dt) derivedCount+=dt.batch.length;   // candidates now fully compared (for honest progress)
-            dPending.delete(m.batchId); dCompleted++; dIdle.push(w); drainDerive(); pump(); report(); maybeDone(); } };
+          else if(m.type==='derivedone'){ dPending.delete(m.batchId); dCompleted++; dIdle.push(w); drainDerive(); pump(); report(); maybeDone(); } };
         w.onerror=(ev)=>finish({error:(ev&&ev.message)||'derive worker error'});
       }
     }
