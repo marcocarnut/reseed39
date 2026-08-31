@@ -61,12 +61,12 @@ const scripts = [rxecore, api, bip39, model, wordset, crypto, electrum, gpucrack
 // Swap the served <script src=...> block (rxecore.js .. i18n.js) for the inlined
 // globals + scripts. indexOf/slice (not .replace) so the base64 payloads are
 // copied verbatim -- a replacement string would treat $&/$' specially.
-const startTag = '<script src="../wasm/rxecore.js?v=b60"></script>';
-const endTag = '<script src="../estimator/i18n.js?v=b60"></script>';
-const si = html.indexOf(startTag);
-const ei = html.indexOf(endTag);
-if (si < 0 || ei < 0) throw new Error('could not find the <script src> block to replace (did the ?v= stamp change?)');
-const body = html.slice(0, si) + pre + '\n' + scripts + html.slice(ei + endTag.length);
+const si = html.search(/<script src="\.\.\/wasm\/rxecore\.js\?[^"]*"><\/script>/);
+const endRe = /<script src="\.\.\/estimator\/i18n\.js\?[^"]*"><\/script>/;
+const em = html.match(endRe);
+if (si < 0 || !em) throw new Error('could not find the <script src> block (rxecore.js .. i18n.js) to replace');
+const ei = em.index + em[0].length;
+const body = html.slice(0, si) + pre + '\n' + scripts + html.slice(ei);
 
 await mkdir(root + 'dist', { recursive: true });
 await writeFile(root + 'dist/reseed39.html', body);
