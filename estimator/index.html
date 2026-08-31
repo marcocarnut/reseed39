@@ -462,9 +462,11 @@ const PRESETS = [
     words:'legal winner thank year wave sausage worth useful legal winner [:bip39-en:] [:bip39-en:]',
     pass:'', target:'xpub', purposes:['bip84'] },
   { title:{en:'Words: known set, unknown order',pt:'Palavras: conjunto conhecido, ordem desconhecida'},
-    sub:{en:'12 known words permuted (12!) + checksum, xpub',pt:'12 palavras conhecidas permutadas (12!) + checksum, xpub'},
-    words:'((legal|winner|thank|year|wave|sausage|worth|useful|abandon|ability|able|about) ){{12!?}}',
-    pass:'', target:'xpub', purposes:['bip84'] },
+    sub:{en:'12 known words, all permutations (12!) + checksum, address',pt:'12 palavras conhecidas, todas as permutações (12!) + checksum, endereço'},
+    tip:{en:'In 2017 a user said the words she copied down did not work. As we know the words, here we try all its permutations and in a few minutes arrive at the correct order. Closer examination revealed that she had just copied them rowwise instead of columnwise.',
+         pt:'Em 2017 uma usuária disse que as palavras que ela anotou não funcionavam. Como sabemos as palavras, aqui tentamos todas as suas permutações e em poucos minutos chegamos à ordem correta. Um exame mais atento revelou que ela havia copiado as palavras por linhas em vez de por colunas.'},
+    share:{ v:1, wp:'((slow|edge|build|grunt|acid|rich|garment|address|open|health|voyage|frozen) ){{12!?}}', pp:'',
+      ad:'144uEF4Yc4TuWFSBttRYDXDFD44BCDi7Hc', tg:'address', pu:['bip44'], ac:'1', ch:'1', gp:'1', rc:1, bk:'gpu', tpp:'' } },
   { title:{en:'Electrum: missing word',pt:'Electrum: palavra faltando'},
     sub:{en:'Electrum segwit seed, one unknown word (bc1q…)',pt:'seed segwit Electrum, uma palavra desconhecida (bc1q…)'},
     words:'bitter grass shiver impose acquire brush forget axis eager alone wine [:electrum-en:]',
@@ -487,6 +489,12 @@ function applyPreset(p){
   // Unified UI: a preset just seeds both axes; the tool infers the crack strategy
   // from cardinality (a fixed mnemonic + a passphrase pattern => passphrase axis,
   // a mnemonic pattern + blank passphrase => words axis, both varying => joint).
+  // A preset built with the Share feature carries a full `share` state object
+  // (real target address, backend, etc.); route it through the same restorer the
+  // #hash links use so the example is byte-identical to what Share produced. Its
+  // bilingual backstory `tip` is injected as the mnemonic note in the current
+  // language; `lg` is intentionally omitted so a click never flips the UI language.
+  if(p.share){ const st=Object.assign({}, p.share); if(p.tip) st.tm = p.tip[LANG]||p.tip.en; applyShareState(st); return; }
   $('#wordsPat').value = p.words!=null ? p.words : '';
   $('#passPat').value  = p.pass!=null  ? p.pass  : '';
   setSeg('#targetSeg','data-t',p.target||'address');
