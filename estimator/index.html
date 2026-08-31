@@ -247,17 +247,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b68"></script>
-<script src="../wasm/rxecore_api.js?v=b68"></script>
+<script src="../wasm/rxecore.js?v=b69"></script>
+<script src="../wasm/rxecore_api.js?v=b69"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b68"></script>
-<script src="../estimator/model.js?v=b68"></script>
-<script src="../estimator/wordset.js?v=b68"></script>
-<script src="../estimator/bip39crypto.js?v=b68"></script>
-<script src="../estimator/electrum.js?v=b68"></script>
-<script src="../estimator/gpucrack.js?v=b68"></script>
-<script src="../estimator/i18n.js?v=b68"></script>
+<script src="../estimator/bip39.js?v=b69"></script>
+<script src="../estimator/model.js?v=b69"></script>
+<script src="../estimator/wordset.js?v=b69"></script>
+<script src="../estimator/bip39crypto.js?v=b69"></script>
+<script src="../estimator/electrum.js?v=b69"></script>
+<script src="../estimator/gpucrack.js?v=b69"></script>
+<script src="../estimator/i18n.js?v=b69"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -266,7 +266,7 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b68';
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b69';
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -282,29 +282,45 @@ let LANG = 'en';
 let t = EstI18N.makeT('en');
 const VERDICT_WORD = { en:{green:'GREEN',yellow:'YELLOW',red:'RED'}, pt:{green:'VERDE',yellow:'AMARELO',red:'VERMELHO'} };
 
-// ── Crack instrumentation ────────────────────────────────────────────────────
-// With ?loginterval=<ms> the crack loop samples every number shown in the crack
-// dialog (counts, speeds, %, ETA, GPU recoveries/cooldown) at that cadence into
-// a copy-pasteable CSV. Regular sampling (rather than onProgress's own bursty
-// cadence) is what makes it graphable -- speed vs time shows the GPU/CPU heating
-// then settling to a throttled steady state. Persisted to localStorage each
-// sample so a run that CRASHES the tab is still recoverable after a reload.
+// ── Crack instrumentation (?loginterval=<ms>) ────────────────────────────────
+// A first-class debug timeline (opt-in via the URL param). The crack loop
+// samples every dialog number (counts, speeds, %, ETA, GPU recoveries/cooldown)
+// at a fixed cadence, and marks lifecycle EVENTS -- run start (with meta), pause,
+// resume (from which auto-saved checkpoint frontier), page (re)load, and the
+// outcome. It is ONE continuous log, APPENDED across pause/resume and reloads
+// (never overwritten), persisted to localStorage each sample so even a tab CRASH
+// leaves the timeline up to ~1 interval before it died. Regular sampling is what
+// makes speed-vs-time graphable (GPU/CPU heat -> throttled steady state). Meant
+// to grow into the shared debugging channel once more users are involved.
 const LOG_INTERVAL_MS = (function(){ try{
   const v = parseInt(new URLSearchParams(location.search).get('loginterval'),10);
   return (v>0) ? Math.max(50, v) : 0;   // floor 50ms; 0 = feature off
 }catch(e){ return 0; } })();
 const LOG_LS_KEY = 'reseed39.cracklog';
-let _crackLog = null;        // array of CSV rows (strings) for the current/last run
-let _logTimer = null;        // setInterval handle
-let _logStart = 0;           // performance.now() at run start
-let _lastProg = null;        // latest onProgress snapshot {done,tot,rate,seeded,seedRate,pct,eta,resets}
-let _coolState = { cooling:0 };  // latest GPU-cooldown snapshot (separate callback)
+const LOG_MAX_LINES = 20000;   // bound the timeline (~5.5h at 1s); oldest dropped
+let _crackLog = null;          // the whole timeline (in memory), mirrors localStorage
+let _logTimer = null;          // setInterval handle
+let _logStart = 0;             // performance.now() at the CURRENT run's start
+let _runActive = false;        // a run is being sampled (guards stray timer ticks)
+let _lastProg = null;          // latest onProgress snapshot
+let _coolState = { cooling:0 };// latest GPU-cooldown snapshot (separate callback)
 const LOG_COLS = 't_ms,done,tot,rate,seeded,seed_rate,swept,swept_total,pct,eta_s,gpu_resets,cooling,cool_remain_ms';
-function _logCsv(){ return _crackLog ? _crackLog.join('\n') : (function(){ try{ return localStorage.getItem(LOG_LS_KEY)||''; }catch(e){ return ''; } })(); }
+function _logLoad(){ if(_crackLog) return; try{ const s=localStorage.getItem(LOG_LS_KEY); _crackLog = s ? s.split('\n') : []; }catch(e){ _crackLog=[]; } }
+function _logWrite(){ try{
+  if(_crackLog.length > LOG_MAX_LINES){ const drop=_crackLog.length-LOG_MAX_LINES;
+    _crackLog.splice(0, drop, '# …('+drop+' earlier lines dropped)…'); }
+  localStorage.setItem(LOG_LS_KEY, _crackLog.join('\n'));
+}catch(e){} }
+function _logCsv(){ if(_crackLog) return _crackLog.join('\n'); try{ return localStorage.getItem(LOG_LS_KEY)||''; }catch(e){ return ''; } }
+function _logEvent(kind, extra){ if(!LOG_INTERVAL_MS) return; _logLoad();
+  _crackLog.push('# ▸ '+kind+' '+new Date().toISOString()+(extra?'  '+extra:'')); _logWrite();
+  try{ console.log('[cracklog] # '+kind+(extra?' '+extra:'')); }catch(e){} }
+// A page (re)load: mark it so a reload mid-run is visible in the timeline (the
+// interrupted run has no run-end marker; the resume that follows is a new run).
+function _logBoot(){ if(!LOG_INTERVAL_MS) return; _logLoad(); if(_crackLog.length) _logEvent('page-load'); }
 function _logSample(){
-  if(!_crackLog) return;
-  const p = _lastProg || {};
-  const c = _coolState || {cooling:0};
+  if(!_runActive || !_crackLog) return;
+  const p = _lastProg || {}, c = _coolState || {cooling:0};
   const g = (n)=> (n==null || n==='' || (typeof n==='number'&&!isFinite(n))) ? '' : n;
   const row = [
     Math.round(performance.now()-_logStart),
@@ -314,35 +330,41 @@ function _logSample(){
     g(p.pct!=null?(+p.pct).toFixed(2):''), g(p.eta!=null&&isFinite(p.eta)?Math.round(p.eta):''),
     g(p.resets||0), c.cooling?1:0, c.cooling?g(Math.round(c.remain||0)):''
   ].join(',');
-  _crackLog.push(row);
-  try{ localStorage.setItem(LOG_LS_KEY, _crackLog.join('\n')); }catch(e){}
+  _crackLog.push(row); _logWrite();
   try{ console.log('[cracklog] '+row); }catch(e){}
 }
-function _logStartRun(meta){
+function _logStartRun(meta, opts){
   if(!LOG_INTERVAL_MS) return;
-  _logStart = performance.now();
-  _lastProg = null; _coolState = { cooling:0 };
-  _crackLog = [];
-  // Header as CSV comments so the whole paste is one self-describing block.
-  _crackLog.push('# reseed39 crack log');
-  _crackLog.push('# started: '+new Date().toISOString());
-  _crackLog.push('# loginterval_ms: '+LOG_INTERVAL_MS);
+  opts = opts || {};
+  _logLoad();
+  // Clearing policy: a FRESH crack (play from a stopped/idle state) starts a new
+  // timeline; a RESUME -- from a pause or a reload-then-resume -- CONTINUES the
+  // existing one. Stop/pause/found/reload never clear; only the next fresh play
+  // does, right here.
+  if(!opts.resume) _crackLog = [];
+  _logStart = performance.now(); _lastProg = null; _coolState = { cooling:0 }; _runActive = true;
+  _crackLog.push('# ═══ run start '+new Date().toISOString()+(opts.resume?' (resumed)':'')+' ═══');
   for(const k in meta) _crackLog.push('# '+k+': '+meta[k]);
+  _crackLog.push('# loginterval_ms: '+LOG_INTERVAL_MS);
+  if(opts.resume && opts.frontier>0) _crackLog.push('# resumed_from_frontier: '+opts.frontier);
   _crackLog.push(LOG_COLS);
-  try{ localStorage.setItem(LOG_LS_KEY, _crackLog.join('\n')); }catch(e){}
+  _logWrite();
   _logSample();   // t=0 row
   _logTimer = setInterval(_logSample, LOG_INTERVAL_MS);
 }
 function _logStopRun(outcome){
   if(_logTimer){ clearInterval(_logTimer); _logTimer=null; }
-  if(!_crackLog) return;
-  _logSample();   // final row
-  // Outcome trailer: what the run ended as (found / not_found / stopped / paused
-  // / error) and, on a hit, the recovered mnemonic + passphrase + path + index.
-  if(outcome){ for(const k in outcome){ const v=outcome[k]; if(v!=null && v!=='') _crackLog.push('# '+k+': '+v); } }
+  if(!_runActive || !_crackLog){ _runActive=false; return; }
+  _logSample();   // final row (still active)
+  const kind = (outcome && outcome.outcome) || 'ended';
+  _crackLog.push('# outcome: '+kind);
+  // Detail keys (recovered mnemonic/passphrase/path/index on a hit; checkpoint
+  // frontier on a resumable pause) so the paste is self-explaining.
+  if(outcome){ for(const k in outcome){ if(k==='outcome') continue; const v=outcome[k]; if(v!=null && v!=='') _crackLog.push('# '+k+': '+v); } }
   _crackLog.push('# elapsed_ms: '+Math.round(performance.now()-_logStart));
-  _crackLog.push('# ended: '+new Date().toISOString());
-  try{ localStorage.setItem(LOG_LS_KEY, _crackLog.join('\n')); }catch(e){}
+  _runActive = false;
+  _logWrite();
+  _logEvent('run-end '+kind);
 }
 async function copyCrackLog(){
   const txt = _logCsv();
@@ -515,7 +537,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b68' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b69' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -535,6 +557,7 @@ function setLang(l){
     // A #hash share-link reproduces every control (see the Share button).
     try{ if(location.hash.length>1){ applyShareState(JSON.parse(_b64urlDec(location.hash.slice(1)))); } }catch(e){}
     renderResumeBar();   // offer to resume an interrupted crack (from localStorage)
+    _logBoot();          // mark this (re)load in the crack log timeline (?loginterval)
   }catch(e){
     $('#booting').innerHTML = '<span class="err">failed to load wasm core: '+e.message+'</span>';
   }
@@ -1109,13 +1132,15 @@ async function onCrack(){
   const _purp = [...new Set(plan.map(pp=>pp.purpose))].sort((a,b)=>a-b);
   const _deriv = customOn ? ('custom '+pathTemplate)
     : ((_purp.map(p=>'BIP'+p).join('+') + (electrumSel?(_purp.length?'+':'')+'electrum':'')) || '(none)');
-  _logStartRun({ engine:engLabel, mode, gpu:!!gpu, electrum:!!electrumSel, workers:nWorkers,
+  const _logMeta = { engine:engLabel, mode, gpu:!!gpu, electrum:!!electrumSel, workers:nWorkers,
     target: target==='address' ? ('address/'+(taddr&&taddr.type)) : target,
     generate: !!(ckMode&&ckMode.generate), require_checksum: !!reqCsum,
     gpu_seed_chunk: (gpu&&window.GpuCrack.getEffSeedChunk)?window.GpuCrack.getEffSeedChunk():'',
     derivation: _deriv, accounts: nacct, changes: changes.join('/'), gap: gapN,
     mnemonic_pattern: patStr,
-    passphrase_fixed: (mode==='words') ? (passFixed||'(none)') : '' });
+    passphrase_fixed: (mode==='words') ? (passFixed||'(none)') : '' };
+  // The log run is opened AFTER resumeFrom is known (below), so a resume continues
+  // the timeline while a fresh play clears it -- see _logStartRun's clearing policy.
   const common={ plan, total, pathTemplate, accounts:nacct, unrank:i=>set.unrank(BigInt(i)),
     unrankBatch:(start,count)=>set.unrankBatch(start,count),   // batched sweep (null on old core)
     onProgress:(done,tot,rate,extra)=>{
@@ -1179,6 +1204,7 @@ async function onCrack(){
   const _sig=ckptSig(ckptParams);
   const resumeFrom=(mode==='words' && _resumeSig===_sig)?_resumeFrom:0;
   _resumeSig=null; _resumeFrom=0;   // consume any pending resume request
+  _logStartRun(_logMeta, { resume: resumeFrom>0, frontier: resumeFrom });
   const onCheckpoint=(gpu && mode==='words' && !electrumSel) ? (fr)=>{ const now=performance.now(); if(now-_ckptLast<2500) return; _ckptLast=now;
     ckptSave({ v:1, ts:Date.now(), sig:_sig, frontier:fr, total, params:ckptParams }); } : null;   // Electrum has no checkpoint yet
   // A halt is a RESUMABLE pause only where we actually checkpoint a frontier
@@ -1230,9 +1256,10 @@ async function onCrack(){
       _pausedHalt = paused;
       // Arm the in-modal Resume: the next onCrack picks up _resumeFrom/_resumeSig
       // via its `resumeFrom` guard (same mechanism as the #resumeGo banner button).
-      if(paused){ const ck=ckptLoad(); if(ck && ck.frontier>0){ _resumeFrom=ck.frontier; _resumeSig=_sig; } }
+      let _ckFront=0;
+      if(paused){ const ck=ckptLoad(); if(ck && ck.frontier>0){ _resumeFrom=ck.frontier; _resumeSig=_sig; _ckFront=ck.frontier; } }
       res.innerHTML='<span class="note">'+t(paused?'crackPaused':'crackStopped')+'</span>';
-      _logRes = { outcome: paused?'paused':'stopped' };
+      _logRes = paused ? { outcome:'paused', checkpoint_frontier:_ckFront||'' } : { outcome:'stopped' };
     }
     else if(r.found!=null){
       const pth = r.electrumPath ? r.electrumPath
@@ -1256,9 +1283,10 @@ async function onCrack(){
     } else { res.innerHTML='<span class="warnmsg">'+t('crackNotFound')+'</span>'; _logRes = { outcome:'not_found' }; }
   }catch(e){ if(/cancelled during GPU cooldown/.test(e.message||'')){   // Pause/Stop hit mid-cooldown
       const paused = !_crackAbort && resumable; _pausedHalt = paused;
-      if(paused){ const ck=ckptLoad(); if(ck && ck.frontier>0){ _resumeFrom=ck.frontier; _resumeSig=_sig; } }
+      let _ckFront=0;
+      if(paused){ const ck=ckptLoad(); if(ck && ck.frontier>0){ _resumeFrom=ck.frontier; _resumeSig=_sig; _ckFront=ck.frontier; } }
       res.innerHTML='<span class="note">'+t(paused?'crackPaused':'crackStopped')+'</span>';
-      _logRes = { outcome: paused?'paused':'stopped' };
+      _logRes = paused ? { outcome:'paused', checkpoint_frontier:_ckFront||'' } : { outcome:'stopped' };
     } else { res.innerHTML='<span class="err">'+esc(e.message)+'</span>'; _logRes = { outcome:'error', error:e.message }; } }
   finally{ cracking=false;
     _logStopRun(_logRes);   // stop the ?loginterval sampler, flush a final row + outcome trailer
