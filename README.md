@@ -7,7 +7,8 @@ describe the *shape* of what you half-remember — a mnemonic pattern and/or a p
 written as a compact **regular expression / dictionary** — point it at a **target** you still have
 (a Bitcoin **address** or, better, an **xpub**), and it searches the keyspace until it finds the
 secret, using your machine's **CPU cores and GPU**. Before it searches, it **estimates the effort**
-and tells you honestly whether the job is feasible here or belongs on bigger hardware.
+and tells you honestly whether the job is feasible here, or belongs on bigger hardware, or whether
+it is hopeless in terms of time or resources that would need to be expended.
 
 The name plays on **(re)** = *regular expression* and *recovery*; **seed** = the wallet seed;
 **39** = BIP39 (and its Electrum cousin). Everywhere outside the logo it's written `reseed39`.
@@ -80,6 +81,8 @@ node test/test_p2.js         # estimator model
 python3 -m http.server 8877 --bind 127.0.0.1
 # open http://127.0.0.1:8877/estimator/index.html
 ```
+
+Future versions will run as a single-page application you can easily add to your amnesiac offline setup.
 
 Pick a **common case** on the left (or start blank), write the **mnemonic** and/or **passphrase**
 pattern as an rxe regex, paste your **address or xpub** (the target type and likely derivation are
