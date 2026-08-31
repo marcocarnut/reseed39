@@ -9,4 +9,8 @@ server.log
 server.log.info
 
 # Keep the built core committed for durability across box restarts:
-#   wasm/rxecore.js and wasm/rxecore.wasm are intentionally NOT ignored.
+#   wasm/rxecore.js, wasm/rxecore.wasm, and wasm/rxecore-single.js (the
+#   SINGLE_FILE variant the SPA bundler inlines) are intentionally NOT ignored.
+
+# The single-file SPA build output: regenerate with `node tools/bundle.mjs`.
+dist/

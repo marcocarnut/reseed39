@@ -41,4 +41,23 @@ emcc -O2 -Wall -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function \
     -sSTACK_SIZE=1048576
 
 echo "built: $HERE/rxecore.js  $HERE/rxecore.wasm"
-ls -la "$HERE"/rxecore.*
+
+# SINGLE-FILE variant for the offline SPA bundle: the wasm is inlined as base64
+# inside rxecore-single.js (no separate .wasm, no locateFile fetch), so the whole
+# core can be concatenated into one HTML and also into the crack Worker's blob.
+# Same exports/API and EXPORT_NAME=RxeCore, so rxecore_api.js loads it unchanged.
+emcc -O2 -Wall -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function \
+    -I"$RXE_DIR" -I"$GMP_INC" \
+    "${SRCS[@]}" "$GMP_LIB" \
+    -o "$HERE/rxecore-single.js" \
+    -sMODULARIZE=1 -sEXPORT_NAME=RxeCore \
+    -sALLOW_MEMORY_GROWTH=1 \
+    -sEXPORTED_FUNCTIONS="$EXPORTS" \
+    -sEXPORTED_RUNTIME_METHODS="$RT" \
+    -sENVIRONMENT=node,web \
+    -sEXPORT_ES6=0 \
+    -sSINGLE_FILE=1 \
+    -sSTACK_SIZE=1048576
+
+echo "built: $HERE/rxecore-single.js (wasm inlined)"
+ls -la "$HERE"/rxecore.* "$HERE"/rxecore-single.js

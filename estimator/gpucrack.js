@@ -7,6 +7,13 @@
 const STRIDE = 28;                 // u32/lane (112 bytes salt budget; salt+4<=111)
 const MAXSALT = 107;               // "mnemonic"(8)+passphrase; salt+4<=111
 let _gpu = null;
+// WGSL loader: the single-file SPA bundle inlines shaders on globalThis.__WGSL;
+// the served build fetches the sibling .wgsl. (A file:// page can't fetch, so
+// the bundle must inline them.)
+async function _wgsl(name){
+  if (globalThis.__WGSL && globalThis.__WGSL[name]) return globalThis.__WGSL[name];
+  return await (await fetch(name,{cache:'reload'})).text();
+}
 
 async function initGpu(){
   if (_gpu) return _gpu;
@@ -14,7 +21,7 @@ async function initGpu(){
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) throw new Error('no WebGPU adapter');
   const dev = await adapter.requestDevice();
-  const code = await (await fetch('pbkdf2.wgsl',{cache:'reload'})).text();
+  const code = await _wgsl('pbkdf2.wgsl');
   const mod = dev.createShaderModule({ code });
   const info = await mod.getCompilationInfo();
   const errs = info.messages.filter(m=>m.type==='error');
@@ -219,7 +226,7 @@ let _gpuW = null;
 async function initGpuWords(){
   if (_gpuW) return _gpuW;
   const { dev, adapter } = await initGpu();          // reuse device
-  const code = await (await fetch('pbkdf2_words.wgsl',{cache:'reload'})).text();
+  const code = await _wgsl('pbkdf2_words.wgsl');
   const mod = dev.createShaderModule({ code });
   const info = await mod.getCompilationInfo();
   const errs = info.messages.filter(m=>m.type==='error');
