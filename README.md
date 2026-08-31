@@ -10,8 +10,13 @@ secret, using your machine's **CPU cores and GPU**. Before it searches, it **est
 and tells you honestly whether the job is feasible here, or belongs on bigger hardware, or whether
 it is hopeless in terms of time or resources that would need to be expended.
 
-The name plays on **(re)** = *regular expression* and *recovery*; **seed** = the wallet seed;
-**39** = BIP39 (and its Electrum cousin). Everywhere outside the logo it's written `reseed39`.
+The name plays on **(re)** — for *regular expression* and *recovery* — plus **seed** (the wallet
+seed) and **39** (BIP39, and its Electrum cousin). The *regular expression* part is literal: every
+pattern is enumerated by **[rxe](https://rxenum.postcogito.org)**, the finite-regex engine at the
+tool's core. rxe treats a bounded regex as an integer-indexed **set** (an O(1) bijection between
+`[0, N)` and the strings it matches), which is exactly what gives the **exact** keyspace count and
+makes the search trivially **shardable** across CPU cores, the GPU, and — for the native CLI —
+whole machines. Everywhere outside the logo the name is written `reseed39`.
 
 > **It is a real cracker now, not just a calculator.** Earlier versions only *estimated* the
 > effort; today the same page enumerates candidates, derives keys, and matches them against your
