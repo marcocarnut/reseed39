@@ -668,6 +668,28 @@ function programForType(pub33, type){
   const p=_TYPE_PURPOSE[type]; if(p===undefined) throw new Error('unsupported target type '+type);
   return pubToTarget(pub33, p);
 }
+// Which placeholders a parsed template uses (drives the estimator multiplier + loops).
+function templatePlaceholders(parsed){
+  const s={ account:false, change:false, index:false };
+  for(const seg of parsed) if('ph' in seg) s[seg.ph.slice(1,-1)]=true;
+  return s;
+}
+// Custom-path address match: sweep {account}x{change}x{index} of the template
+// against a decoded target; returns {account,change,index} of a hit, else null.
+// The single crack-side derivation site for custom paths (used on every backend).
+function customMatch(seed, parsedTmpl, taddr, opts){
+  opts = opts || {};
+  const ph = opts.ph || templatePlaceholders(parsedTmpl);
+  const changes = ph.change ? (opts.changes && opts.changes.length ? opts.changes : [0]) : [0];
+  const gap = ph.index ? Math.max(1, opts.gap||1) : 1;
+  const accounts = ph.account ? Math.max(1, opts.accounts||1) : 1;
+  for (let a=0;a<accounts;a++) for (const ch of changes) for (let ix=0;ix<gap;ix++){
+    const node = deriveTemplate(seed, parsedTmpl, {account:a, change:ch, index:ix});
+    const tg = programForType(privToPub(node.k), taddr.type);
+    if (tg.type===taddr.type && eq(tg.program, taddr.program)) return { account:a, change:ch, index:ix };
+  }
+  return null;
+}
 
 /* ------------------------------- helpers -------------------------------- */
 function concat(...arrs){ let n=0; for(const a of arrs) n+=a.length; const o=new Uint8Array(n); let k=0; for(const a of arrs){o.set(a,k);k+=a.length;} return o; }
@@ -690,7 +712,7 @@ const _exports = {
   ripemd160, hash160,
   bech32Encode, bech32Decode, segwitEncode,
   decodeAddress, encodeAddress, purposeType, pubToTarget, addressTarget,
-  parsePathTemplate, deriveTemplate, programForType,
+  parsePathTemplate, deriveTemplate, programForType, templatePlaceholders, customMatch,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = _exports;
 if (typeof globalThis !== 'undefined') globalThis.BIP39Crypto = _exports; // window OR worker(self)

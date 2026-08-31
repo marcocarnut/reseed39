@@ -287,6 +287,8 @@ async function crackWordsGpu(opts){
   const isAddr = !!opts.taddr;
   const plan = isAddr ? opts.plan.filter(pp=>C.purposeType(pp.purpose)===opts.taddr.type) : opts.plan;
   const changes=(opts.changes&&opts.changes.length)?opts.changes:[0]; const gap=Math.max(1,opts.gap||1);
+  const customTmpl = (isAddr && opts.pathTemplate)?C.parsePathTemplate(opts.pathTemplate):null;   // custom derivation path
+  const customPh = customTmpl?C.templatePlaceholders(customTmpl):null;
   const reqCsum = opts.requireChecksum!==false;
   const total=opts.total, B=opts.batchSize||8192;
   // Address is EC-bound: if workers are available, run the secp256k1 derive+compare
@@ -320,7 +322,9 @@ async function crackWordsGpu(opts){
     for (let k=0;k<cur.mns.length;k++){
       const s=seeds.subarray(k*64,k*64+64);
       if (isAddr){
-        for (const pp of plan){ const acct=C.deriveHardenedPath(s,[pp.purpose,pp.coin||0,pp.account||0]);
+        if(customTmpl){ const h=C.customMatch(s,customTmpl,opts.taddr,{ph:customPh,changes,gap,accounts:opts.accounts||1});
+          if(h) return {found:cur.mns[k],path:{custom:true,template:opts.pathTemplate,...h},index:cur.gidx[k],done:done+k+1}; }
+        else for (const pp of plan){ const acct=C.deriveHardenedPath(s,[pp.purpose,pp.coin||0,pp.account||0]);
           for (const ch of changes){ const chNode=C.ckdNormal(acct,ch);
             for (let idx=0;idx<gap;idx++){ const node=C.ckdNormal(chNode,idx);
               const tg=C.pubToTarget(C.privToPub(node.k),pp.purpose);
@@ -367,7 +371,7 @@ async function _crackWordsAddrParallel(opts, plan, changes, gap, nW){
     const drain=()=>{ while(idle.length && queue.length && !finished){ const w=idle.shift(), task=queue.shift();
       pending.set(task.batchId, task);
       w.postMessage({ type:'derive', batchId:task.batchId, seedsBuf:task.seedsBuf, n:task.mns.length, startIndex:0,
-        plan, addrType, programHex, changes, gap }, [task.seedsBuf]); } };
+        plan, addrType, programHex, changes, gap, pathTemplate:opts.pathTemplate||null, accounts:opts.accounts||1 }, [task.seedsBuf]); } };
     for(let i=0;i<nW;i++){ let w; try{ w=new Worker(opts.workerUrl); }catch(e){ spawnFail=true; break; }
       workers.push(w); idle.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished)return;
@@ -447,8 +451,8 @@ async function _crackAddressParallel(opts, nW){
   const g = await initGpu();
   const C = window.BIP39Crypto;
   const mid = C.hmacMidstates(C.utf8(C.nfkd(opts.mnemonic)));
-  const plan = (opts.plan||[]).filter(pp => C.purposeType(pp.purpose) === opts.target.type);
-  if (!plan.length) return { found:null, done:0, mismatch:opts.target.type };
+  const plan = opts.pathTemplate ? [] : (opts.plan||[]).filter(pp => C.purposeType(pp.purpose) === opts.target.type);
+  if (!opts.pathTemplate && !plan.length) return { found:null, done:0, mismatch:opts.target.type };
   const changes = (opts.changes && opts.changes.length) ? opts.changes : [0];
   const gap = Math.max(1, opts.gap||1);
   const total = opts.total, B = opts.batchSize||4096;
@@ -464,7 +468,7 @@ async function _crackAddressParallel(opts, nW){
       pending.set(task.batchId, task);
       w.__batch=task.batchId;
       w.postMessage({ type:'derive', batchId:task.batchId, seedsBuf:task.seedsBuf, n:task.n, startIndex:task.start,
-        plan, addrType, programHex, changes, gap }, [task.seedsBuf]); } };
+        plan, addrType, programHex, changes, gap, pathTemplate:opts.pathTemplate||null, accounts:opts.accounts||1 }, [task.seedsBuf]); } };
     for (let i=0;i<nW;i++){
       let w; try{ w=new Worker(opts.workerUrl); }catch(e){ cleanup(); return resolve(_crackAddressInline(opts)); }
       workers.push(w); idle.push(w);
@@ -502,12 +506,14 @@ async function _crackAddressInline(opts){
   const g = await initGpu();
   const C = window.BIP39Crypto;
   const mid = C.hmacMidstates(C.utf8(C.nfkd(opts.mnemonic)));
+  const customTmpl = opts.pathTemplate ? C.parsePathTemplate(opts.pathTemplate) : null;   // custom derivation path
+  const customPh = customTmpl ? C.templatePlaceholders(customTmpl) : null;
   // Only derivations whose script type matches the target address are worth testing.
-  const plan = (opts.plan||[]).filter(pp => C.purposeType(pp.purpose) === opts.target.type);
-  if (!plan.length) return { found:null, done:0, mismatch:opts.target.type };
+  const plan = customTmpl ? [] : (opts.plan||[]).filter(pp => C.purposeType(pp.purpose) === opts.target.type);
+  if (!customTmpl && !plan.length) return { found:null, done:0, mismatch:opts.target.type };
   const changes = (opts.changes && opts.changes.length) ? opts.changes : [0];
   const gap = Math.max(1, opts.gap||1);
-  const simple = BATCH_EC && plan.length===1 && changes.length===1 && changes[0]===0 && gap===1;
+  const simple = !customTmpl && BATCH_EC && plan.length===1 && changes.length===1 && changes[0]===0 && gap===1;
   const total = opts.total, B = opts.batchSize||2048;
   const t0 = performance.now(); let done=0;
   for (let start=0; start<total; start+=B){
@@ -521,6 +527,11 @@ async function _crackAddressInline(opts){
     } else {
       for (let i=0;i<n;i++){
         const seed = seeds.subarray(i*64,i*64+64);
+        if (customTmpl){
+          const h = C.customMatch(seed, customTmpl, opts.target, {ph:customPh, changes, gap, accounts:opts.accounts||1});
+          if (h) return { found: passes[i], path:{custom:true, template:opts.pathTemplate, ...h}, index:start+i, done:done+i+1 };
+          continue;
+        }
         for (const pp of plan){
           const acct = C.deriveHardenedPath(seed, [pp.purpose, pp.coin||0, pp.account||0]);
           for (const ch of changes){

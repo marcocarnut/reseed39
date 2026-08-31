@@ -126,6 +126,14 @@ for (const [purpose,type] of [[44,'p2pkh'],[49,'p2sh'],[84,'p2wpkh'],[86,'p2tr']
 }
 // parse validation rejects garbage
 for (const bad of ['x/0/0','m/0/-1','m/0/1a','m/']){ let threw=false; try{ C.parsePathTemplate(bad); }catch(e){ threw=true; } ok(threw, `parsePathTemplate rejects "${bad}"`); }
+// customMatch: plant a Breadwallet-shape P2PKH target at m/0'/1/3 and recover it.
+{
+  const tmpl=C.parsePathTemplate("m/0'/{change}/{index}");
+  const planted=C.programForType(C.privToPub(C.deriveTemplate(aseed,tmpl,{change:1,index:3}).k),'p2pkh');
+  const hit=C.customMatch(aseed, tmpl, planted, {changes:[0,1], gap:5});
+  ok(hit && hit.change===1 && hit.index===3, "customMatch finds m/0'/1/3 (Breadwallet-shape)");
+  ok(C.customMatch(aseed, tmpl, planted, {changes:[0], gap:3})===null, "customMatch misses when the range excludes the hit");
+}
 
 // 11) END-TO-END address-target crack: unknown passphrase, known BIP84 address.
 (function(){

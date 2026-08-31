@@ -187,6 +187,18 @@
         <div id="gapWrap"><label class="f" data-i18n="gap">address gap</label><input id="gap" class="num" type="text" value="1"></div>
       </div>
       <div class="hint" id="gapHint" data-i18n="gapHint"></div>
+      <label class="derivrow" style="margin-top:8px"><input type="checkbox" id="customPathOn"> <span data-i18n="customPathLbl">Custom derivation path (nonstandard wallets)</span></label>
+      <div id="customPathFields" style="display:none;margin-top:6px">
+        <select id="customPreset" style="margin-bottom:5px">
+          <option value="" data-i18n="customPresetPick">— preset —</option>
+          <option value="m/0'/{change}/{index}">Breadwallet / BRD · m/0'/{change}/{index}</option>
+          <option value="m/0'/{change}/{index}">MultiBit HD · m/0'/{change}/{index}</option>
+          <option value="m/{change}/{index}">Legacy (no hardened) · m/{change}/{index}</option>
+          <option value="m/44'/0'/{account}'/{change}/{index}">BIP44 explicit · m/44'/0'/{account}'/{change}/{index}</option>
+        </select>
+        <input id="customPath" type="text" value="m/0'/{change}/{index}" spellcheck="false" style="width:100%;font-family:monospace;box-sizing:border-box">
+        <div class="hint" id="customPathHint" data-i18n="customPathHint"></div>
+      </div>
     </fieldset>
 
   </div>
@@ -212,17 +224,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b59"></script>
-<script src="../wasm/rxecore_api.js?v=b59"></script>
+<script src="../wasm/rxecore.js?v=b60"></script>
+<script src="../wasm/rxecore_api.js?v=b60"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b59"></script>
-<script src="../estimator/model.js?v=b59"></script>
-<script src="../estimator/wordset.js?v=b59"></script>
-<script src="../estimator/bip39crypto.js?v=b59"></script>
-<script src="../estimator/electrum.js?v=b59"></script>
-<script src="../estimator/gpucrack.js?v=b59"></script>
-<script src="../estimator/i18n.js?v=b59"></script>
+<script src="../estimator/bip39.js?v=b60"></script>
+<script src="../estimator/model.js?v=b60"></script>
+<script src="../estimator/wordset.js?v=b60"></script>
+<script src="../estimator/bip39crypto.js?v=b60"></script>
+<script src="../estimator/electrum.js?v=b60"></script>
+<script src="../estimator/gpucrack.js?v=b60"></script>
+<script src="../estimator/i18n.js?v=b60"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -295,7 +307,7 @@ function applyBench(){
 // (found or exhausted); kept on Stop and on a crash so it can be resumed.
 const CKPT_KEY='bip39rxcrack.ckpt.v1';
 let _resumeFrom=0, _resumeSig=null, _ckptLast=0;
-function ckptSig(p){ return [p.mode,p.wordsPat,p.tseg,p.addr,p.reqChecksum?1:0,(p.generate?'G':''),(p.changes||[]).join(','),p.gap,p.crackPass||''].join(''); }
+function ckptSig(p){ return [p.mode,p.wordsPat,p.tseg,p.addr,p.reqChecksum?1:0,(p.generate?'G':''),(p.pathTemplate||''),(p.changes||[]).join(','),p.gap,p.crackPass||''].join(''); }
 function ckptSave(o){ try{ localStorage.setItem(CKPT_KEY, JSON.stringify(o)); }catch(e){} }
 function ckptLoad(){ try{ const s=localStorage.getItem(CKPT_KEY); return s?JSON.parse(s):null; }catch(e){ return null; } }
 function ckptClear(){ try{ localStorage.removeItem(CKPT_KEY); }catch(e){} _resumeFrom=0; _resumeSig=null; }
@@ -401,7 +413,7 @@ function setLang(l){
     const txt = await (await fetch('../data/english.txt')).text();
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b59' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b60' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -536,6 +548,7 @@ function buildShareState(){
     pu:$$('#purposes input').filter(c=>c.checked).map(c=>c.dataset.p),
     ac:$('#accts').value, ch:$('#change').value, gp:$('#gap').value,
     rc:$('#reqChecksum').checked?1:0, bk:segVal('#backendSeg','data-b'), lg:LANG,
+    co:$('#customPathOn').checked?1:0, cp:$('#customPath').value,
     tm:(($('#shareMnTip')&&$('#shareMnTip').value.trim())||$('#wordsPat').title||''),
     tpp:(($('#sharePassTip')&&$('#sharePassTip').value.trim())||$('#passPat').title||'') };
 }
@@ -552,6 +565,8 @@ function applyShareState(s){
     if(s.ch!=null && $('#change')) $('#change').value=s.ch;
     if(s.gp!=null && $('#gap')) $('#gap').value=s.gp;
     if(s.rc!=null) $('#reqChecksum').checked=!!s.rc;
+    if(s.cp!=null) $('#customPath').value=s.cp;
+    if(s.co!=null) $('#customPathOn').checked=!!s.co;
     if(s.bk){ const b=$('#backendSeg button[data-b="'+s.bk+'"]'); if(b && !b.disabled) setSeg('#backendSeg','data-b',s.bk); }
     if(s.lg && s.lg!==LANG) setLang(s.lg);
     setTip('mn',s.tm||''); setTip('pass',s.tpp||'');
@@ -589,6 +604,19 @@ function applyTargetVis(){
   $('#gapWrap').style.display = xpub?'none':'';
   $('#changeWrap').style.display = xpub?'none':'';
   $('#gapHint').style.display = xpub?'none':'';
+  applyCustomPathVis();
+}
+// Custom-path mode: reveal the path field, and grey the (now-moot) purpose list.
+// Custom paths target ADDRESSES only, so the toggle hides itself under an xpub.
+function customPathActive(){ return $('#customPathOn') && $('#customPathOn').checked && segVal('#targetSeg','data-t')!=='xpub'; }
+function applyCustomPathVis(){
+  const on = $('#customPathOn') && $('#customPathOn').checked;
+  const xpub = segVal('#targetSeg','data-t')==='xpub';
+  const wrap=$('#customPathWrap'); // (the label lives in the fieldset; hide the whole control under xpub)
+  const lbl=$('#customPathOn') && $('#customPathOn').closest('label');
+  if(lbl) lbl.style.display = xpub?'none':'';
+  const f=$('#customPathFields'); if(f) f.style.display = (on&&!xpub)?'':'none';
+  const pl=$('#purposes'); if(pl) pl.style.opacity = (on&&!xpub)?'.45':'';
 }
 function detectTarget(addr){
   const a=(addr||'').trim(); if(!a) return null;
@@ -626,6 +654,12 @@ function wireUI(){
   ['#passPat','#wordsPat','#accts','#gap','#cores'].forEach(s=>$(s).addEventListener('input',schedule));
   $('#change').addEventListener('change',recompute);
   $('#reqChecksum').addEventListener('change',recompute);
+  // Custom derivation path: toggle reveals the field; a preset fills it; the
+  // purpose checkboxes are moot when a custom path is active (the path defines
+  // derivation, the target defines the script type).
+  $('#customPathOn').addEventListener('change',()=>{ applyCustomPathVis(); recompute(); });
+  $('#customPreset').addEventListener('change',()=>{ const v=$('#customPreset').value; if(v){ $('#customPath').value=v; } recompute(); });
+  $('#customPath').addEventListener('input',schedule);
   $('#addr').addEventListener('input',()=>{clearTimeout(debounce);debounce=setTimeout(onAddr,250);});
   $('#crackBtn').onclick=onCrack;    // while running this button reads "Pause" -> onCrack toggles cracking off, keeping the checkpoint
   $('#crackStopBtn').onclick=()=>{
@@ -702,7 +736,7 @@ async function _measCpuSweep(ms){
   }
   const per=Math.ceil(total/cores), swept=new Array(cores).fill(0), workers=[];
   for(let k=0;k<cores;k++){
-    let w; try{ w=new Worker('crackworker.js?v=b59'); }catch(e){ break; }
+    let w; try{ w=new Worker('crackworker.js?v=b60'); }catch(e){ break; }
     workers.push(w);
     w.onmessage=(e)=>{ const m=e.data; if(m&&(m.type==='cand'||m.type==='progress')) swept[m.id]=m.swept; };
     const start=k*per, end=Math.min(total,(k+1)*per);
@@ -889,10 +923,23 @@ async function onCrack(){
   const nacct=Math.max(1,parseInt($('#accts').value,10)||1);
   const plan=[]; let electrum=false;
   checked.forEach(p=>{ if(p==='electrum'){electrum=true;return;} if(pmap[p]!==undefined) for(let a=0;a<nacct;a++) plan.push({purpose:pmap[p],account:a,coin:0}); });
-  if(!plan.length && !electrumSel){ set.free(); if(jointW)try{jointW.free()}catch(e){} msg.textContent = 'select a BIP44/49/84/86 path'; return; }
-  if(!electrumSel && target==='address' && !plan.some(pp=>C.purposeType(pp.purpose)===taddr.type)){
-    set.free(); if(jointW)try{jointW.free()}catch(e){} msg.textContent=t('crackTypeMismatch').replace('%t',taddr.type); return;
+  // CUSTOM derivation path (nonstandard wallets): a single template replaces the
+  // purpose plan, and the script type comes from the target -- so the purpose/
+  // type guards below don't apply. Address targets only.
+  const customOn = customPathActive();
+  let pathTemplate=null;
+  if(customOn){
+    if(target!=='address'){ set.free(); if(jointW)try{jointW.free()}catch(e){} msg.textContent=t('customNeedsAddr'); return; }
+    const ts=$('#customPath').value.trim();
+    try{ C.parsePathTemplate(ts); }catch(e){ set.free(); if(jointW)try{jointW.free()}catch(e){} msg.textContent=t('customPathErr')+' '+e.message; return; }
+    pathTemplate=ts;
+  } else {
+    if(!plan.length && !electrumSel){ set.free(); if(jointW)try{jointW.free()}catch(e){} msg.textContent = 'select a BIP44/49/84/86 path'; return; }
+    if(!electrumSel && target==='address' && !plan.some(pp=>C.purposeType(pp.purpose)===taddr.type)){
+      set.free(); if(jointW)try{jointW.free()}catch(e){} msg.textContent=t('crackTypeMismatch').replace('%t',taddr.type); return;
+    }
   }
+  if(customOn && electrumSel){ set.free(); if(jointW)try{jointW.free()}catch(e){} msg.textContent=t('customNoElectrum'); return; }
   // GENERATE-checksum guardrails: a [:Nth:] scaffold turns on generate mode (the
   // worker rewrites the last word so every candidate is checksum-valid). Refuse
   // the malformed / unsupported uses rather than silently emitting wrong words.
@@ -922,7 +969,7 @@ async function onCrack(){
   const crackStart=performance.now();
   const elecGpu = electrumSel && mode==='words' && gpu;   // Electrum GPU-seed path exists for the WORDS axis
   const engLabel = elecGpu ? 'GPU' : (electrumSel || !gpu) ? 'CPU' : 'GPU';   // Electrum passphrase/joint stay CPU
-  const common={ plan, total, unrank:i=>set.unrank(BigInt(i)),
+  const common={ plan, total, pathTemplate, accounts:nacct, unrank:i=>set.unrank(BigInt(i)),
     unrankBatch:(start,count)=>set.unrankBatch(start,count),   // batched sweep (null on old core)
     onProgress:(done,tot,rate,extra)=>{
       // Clamp the numerator to the denominator: the % is a fraction of a KNOWN
@@ -947,7 +994,7 @@ async function onCrack(){
   // A CPU path runs multicore via Web Workers, falling back to the single-thread
   // function when workers are unavailable / the set is tiny.
   const mt=(single)=>cpuCrackMT({ mode, pattern:patStr, mnemonic:mnFixed, passphrase:passFixed,
-    requireChecksum:reqCsum, generate, plan, target:wTarget, changes, gap:gapN, total, nWorkers,
+    requireChecksum:reqCsum, generate, plan, pathTemplate, accounts:nacct, target:wTarget, changes, gap:gapN, total, nWorkers,
     onProgress:common.onProgress, isCancelled:common.isCancelled, single });
   // GPU device-loss cooldown: honor the configurable pause, and show a live
   // countdown in the progress line while the GPU cools (else it looks hung).
@@ -967,7 +1014,7 @@ async function onCrack(){
   }
   // CHECKPOINT context (words + GPU only): resume from a saved frontier, and
   // auto-save the frontier as the crack advances so a reload/crash can resume.
-  const ckptParams={ mode, wordsPat:patStr, tseg:target, addr, reqChecksum:reqCsum, generate, changes:(changes&&changes.length?changes:[0]), gap:gapN, crackPass:passFixed };
+  const ckptParams={ mode, wordsPat:patStr, tseg:target, addr, reqChecksum:reqCsum, generate, pathTemplate, changes:(changes&&changes.length?changes:[0]), gap:gapN, crackPass:passFixed };
   const _sig=ckptSig(ckptParams);
   const resumeFrom=(mode==='words' && _resumeSig===_sig)?_resumeFrom:0;
   _resumeSig=null; _resumeFrom=0;   // consume any pending resume request
@@ -994,12 +1041,12 @@ async function onCrack(){
         onProgress:common.onProgress, isCancelled:common.isCancelled };
       r = elecGpu ? await crackElectrumGpu(eArgs) : await crackElectrum(eArgs);   // words+GPU -> GPU-seeded; else CPU
     } else if(mode==='joint'){                                 // both axes vary: outer mnemonic x inner passphrase sweep
-      r = await crackJoint({ jointW, wCard, reqCsum, generate, gpu, target, tcc, taddr, common, changes, gap:gapN, nWorkers, jointTotal });
+      r = await crackJoint({ jointW, wCard, reqCsum, generate, gpu, target, tcc, taddr, common, changes, gap:gapN, nWorkers, jointTotal, pathTemplate });
     } else if(mode==='words'){
       if(gpu && (reqCsum||generate) && typeof Worker!=='undefined')  // parallel sweep (workers, generate rewrites the last word) + GPU seed
-        r = await crackWordsHybrid({ pattern:patStr, passphrase:passFixed, requireChecksum:reqCsum, generate, plan, tcc, taddr, changes, gap:gapN, total, nWorkers, onProgress:common.onProgress, isCancelled:common.isCancelled, resumeFrom, onCheckpoint });
+        r = await crackWordsHybrid({ pattern:patStr, passphrase:passFixed, requireChecksum:reqCsum, generate, plan, pathTemplate, accounts:nacct, tcc, taddr, changes, gap:gapN, total, nWorkers, onProgress:common.onProgress, isCancelled:common.isCancelled, resumeFrom, onCheckpoint });
       else if(gpu)                                            // checksum-off or no workers: double-buffered main-thread sweep + GPU seed (+ parallel-EC derive pool for address)
-        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b59', resumeFrom, onCheckpoint});
+        r = await window.GpuCrack.crackWordsGpu({...common, passphrase:passFixed, requireChecksum:reqCsum, validator:VALIDATOR, tcc, taddr, changes, gap:gapN, batchSize:16384, nWorkers, workerUrl:'crackworker.js?v=b60', resumeFrom, onCheckpoint});
       else                                                    // CPU multicore
         r = await mt(()=>cpuCrackWords({...common, passphrase:passFixed, generate, tcc, taddr, changes, gap:gapN, requireChecksum:reqCsum}));
     } else if(target==='xpub'){
@@ -1007,7 +1054,7 @@ async function onCrack(){
       r = gpu ? await window.GpuCrack.crackXpub(args) : await mt(()=>cpuCrack(args));
     } else {
       const args={...common, mnemonic:mnFixed, target:taddr, changes, gap:gapN, batchSize:2048,
-        nWorkers, workerUrl:'crackworker.js?v=b59' };   // parallel-EC derive pool
+        nWorkers, workerUrl:'crackworker.js?v=b60' };   // parallel-EC derive pool
       r = gpu ? await window.GpuCrack.crackAddress(args) : await mt(()=>cpuCrackAddress(args));
     }
     if(r && r.error) throw new Error(r.error);
@@ -1026,6 +1073,8 @@ async function onCrack(){
     }
     else if(r.found!=null){
       const pth = r.electrumPath ? r.electrumPath
+        : (r.path && r.path.custom)
+        ? r.path.template.replace('{account}',r.path.account).replace('{change}',r.path.change).replace('{index}',r.path.index)
         : (target==='xpub')
         ? `m/${r.path.purpose}'/${r.path.coin}'/${r.path.account}'`
         : `m/${r.path.purpose}'/${r.path.coin}'/${r.path.account}'/${r.path.change}/${r.path.index}`;
@@ -1087,7 +1136,7 @@ async function crackJoint(o){
       const args={...o.common, onProgress:innerProg, mnemonic:mn, targetChainCode:o.tcc, batchSize:4096};
       r = o.gpu ? await window.GpuCrack.crackXpub(args) : await cpuCrack(args);
     } else {
-      const args={...o.common, onProgress:innerProg, mnemonic:mn, target:o.taddr, changes:o.changes, gap:o.gap, batchSize:2048, nWorkers:o.nWorkers, workerUrl:'crackworker.js?v=b59'};
+      const args={...o.common, onProgress:innerProg, mnemonic:mn, target:o.taddr, changes:o.changes, gap:o.gap, batchSize:2048, nWorkers:o.nWorkers, workerUrl:'crackworker.js?v=b60'};
       r = o.gpu ? await window.GpuCrack.crackAddress(args) : await cpuCrackAddress(args);
     }
     if(r && r.error) return r;
@@ -1201,6 +1250,7 @@ async function cpuCrackWords(a){
   const isAddr=!!a.taddr;
   const plan=isAddr ? a.plan.filter(pp=>C.purposeType(pp.purpose)===a.taddr.type) : a.plan;
   const changes=(a.changes&&a.changes.length)?a.changes:[0]; const gap=Math.max(1,a.gap||1);
+  const customTmpl=(isAddr&&a.pathTemplate)?C.parsePathTemplate(a.pathTemplate):null, customPh=customTmpl?C.templatePlaceholders(customTmpl):null;
   const pass=a.passphrase||'';
   const reqCsum=a.requireChecksum!==false;
   let seeded=0;
@@ -1214,7 +1264,9 @@ async function cpuCrackWords(a){
       seeded++;
       const seed=C.mnemonicToSeed(mn,pass);
       if(isAddr){
-        for(const pp of plan){ const acct=C.deriveHardenedPath(seed,[pp.purpose,pp.coin||0,pp.account||0]);
+        if(customTmpl){ const h=C.customMatch(seed,customTmpl,a.taddr,{ph:customPh,changes,gap,accounts:a.accounts||1});
+          if(h) return {found:mn,path:{custom:true,template:a.pathTemplate,...h},index:start+i}; }
+        else for(const pp of plan){ const acct=C.deriveHardenedPath(seed,[pp.purpose,pp.coin||0,pp.account||0]);
           for(const ch of changes){ const chNode=C.ckdNormal(acct,ch);
             for(let idx=0;idx<gap;idx++){ const node=C.ckdNormal(chNode,idx);
               const tg=C.pubToTarget(C.privToPub(node.k),pp.purpose);
@@ -1252,7 +1304,7 @@ function cpuCrackMT(o){
       const start=k*per, end=Math.min(o.total,(k+1)*per);
       if (start>=end) continue;
       spawned++;
-      let w; try{ w=new Worker('crackworker.js?v=b59'); }catch(e){ cleanup(); return resolve(o.single()); }
+      let w; try{ w=new Worker('crackworker.js?v=b60'); }catch(e){ cleanup(); return resolve(o.single()); }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
         if (m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
@@ -1263,7 +1315,7 @@ function cpuCrackMT(o){
       w.onerror=(ev)=>{ finish({error:(ev && ev.message)||'worker error'}); };
       w.postMessage({ type:'run', id:k, wordlist:ENGLISH, pattern:o.pattern, mode:o.mode,
         mnemonic:o.mnemonic||null, passphrase:o.passphrase||'', requireChecksum:o.requireChecksum, generate:o.generate,
-        plan:o.plan, target:o.target, changes:o.changes, gap:o.gap, start, end, progressEvery:2000 });
+        plan:o.plan, pathTemplate:o.pathTemplate||null, accounts:o.accounts||1, target:o.target, changes:o.changes, gap:o.gap, start, end, progressEvery:2000 });
     }
     if (spawned===0) finish({found:null});
   });
@@ -1278,7 +1330,7 @@ function cpuCrackMT(o){
 function crackWordsHybrid(o){
   const C=window.BIP39Crypto;
   const nW=Math.max(1, Math.min(o.nWorkers||1, 32));
-  const WURL='crackworker.js?v=b59';
+  const WURL='crackworker.js?v=b60';
   return new Promise(async (resolve)=>{
     try{ await window.GpuCrack.initGpuWords(); }catch(e){ return resolve({error:e.message}); }
     const isAddr=!!o.taddr; const isXpub=!isAddr;   // one derive pool serves both
@@ -1310,7 +1362,7 @@ function crackWordsHybrid(o){
     // dispatch pending seed-batches to idle derive workers. Address = secp256k1
     // EC compare; xpub = EC-free chain-code compare -- both off the main thread.
     const deriveMsg = isAddr
-      ? { addrType:o.taddr.type, programHex:C.toHex(o.taddr.program), changes, gap }
+      ? { addrType:o.taddr.type, programHex:C.toHex(o.taddr.program), changes, gap, pathTemplate:o.pathTemplate||null, accounts:o.accounts||1 }
       : { targetKind:'xpub', chainCodeHex:C.toHex(o.tcc) };
     const drainDerive=()=>{ while(dIdle.length && dQueue.length && !finished){ const w=dIdle.shift(), task=dQueue.shift();
       dPending.set(task.batchId, task);
@@ -1391,10 +1443,13 @@ async function cpuCrackAddress(a){
   const C=window.BIP39Crypto, t0=performance.now();
   const plan=a.plan.filter(pp=>C.purposeType(pp.purpose)===a.target.type);
   const changes=(a.changes&&a.changes.length)?a.changes:[0]; const gap=Math.max(1,a.gap||1);
+  const customTmpl=a.pathTemplate?C.parsePathTemplate(a.pathTemplate):null, customPh=customTmpl?C.templatePlaceholders(customTmpl):null;
   for(let start=0;start<a.total;start+=128){
     if(a.isCancelled()) return {stopped:true};
     const n=Math.min(128,a.total-start); const _cb=a.unrankBatch?a.unrankBatch(start,n):null;
     for(let i=0;i<n;i++){ const pass=(_cb?_cb[i]:a.unrank(start+i)); const seed=C.mnemonicToSeed(a.mnemonic,pass);
+      if(customTmpl){ const h=C.customMatch(seed,customTmpl,a.target,{ph:customPh,changes,gap,accounts:a.accounts||1});
+        if(h) return {found:pass,path:{custom:true,template:a.pathTemplate,...h},index:start+i}; continue; }
       for(const pp of plan){ const acct=C.deriveHardenedPath(seed,[pp.purpose,pp.coin||0,pp.account||0]);
         for(const ch of changes){ const chNode=C.ckdNormal(acct,ch);
           for(let idx=0;idx<gap;idx++){ const node=C.ckdNormal(chNode,idx);
@@ -1452,6 +1507,15 @@ function recompute(){
   // passphrase => words; both varying => joint). A blank passphrase = card-1 empty
   // string, so the common "one missing word, no passphrase" case lands on words.
   const passPat = $('#passPat').value.trim();
+  // Custom derivation path: a single template replaces the purpose fan-out. Its
+  // {account}/{change}/{index} placeholders decide which knobs multiply the
+  // keyspace (a path with no {change} sweeps no change axis, etc.).
+  let customPh=null, customErr=null;
+  if(customPathActive()){
+    try{ customPh = BIP39Crypto.templatePlaceholders(BIP39Crypto.parsePathTemplate($('#customPath').value.trim())); }
+    catch(e){ customErr = e.message; }
+  }
+  const accountsN=parseInt($('#accts').value,10)||1, changeN=parseInt($('#change').value,10)||1, gapN=parseInt($('#gap').value,10)||1;
   const input = {
     passphrasePattern: passPat || null,
     mnemonicPattern: $('#wordsPat').value.trim() || null,
@@ -1459,10 +1523,9 @@ function recompute(){
     requireChecksum: $('#reqChecksum').checked,
     cores: parseInt($('#cores').value,10)||1,
     calibration: calGpu || calCpu,
-    path:{ purposes: purposes.length?purposes:['bip84'],
-           accounts:parseInt($('#accts').value,10)||1,
-           change:parseInt($('#change').value,10)||1,
-           gap:parseInt($('#gap').value,10)||1 },
+    path: customPh
+      ? { purposes:['custom'], accounts: customPh.account?accountsN:1, change: customPh.change?changeN:1, gap: customPh.index?gapN:1 }
+      : { purposes: purposes.length?purposes:['bip84'], accounts:accountsN, change:changeN, gap:gapN },
     exactThreshold:50000, sampleSize:5000, exactFallbackCap:1000000,
   };
   // GENERATE-checksum mode: a [:Nth:] scaffold makes the librxe cardinality the
@@ -1499,6 +1562,7 @@ function recompute(){
     bw += ck.ok ? '<span class="okmsg">'+t('ckGen')+'</span>'
                 : '<span class="warnmsg">'+t(ck.warn)+(ck.warn==='ckLen'?` (${ck.W}≠${ck.N})`:'')+'</span>';
   }
+  if(customErr) bw += '<span class="warnmsg">'+t('customPathErr')+' '+esc(customErr)+'</span>';
   $('#boxWarn').innerHTML = bw;
   // When generate mode is on, the checksum checkbox is a no-op (every candidate
   // is valid by construction) -- grey it so the UI reads honestly.

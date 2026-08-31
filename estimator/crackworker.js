@@ -55,6 +55,17 @@ onmessage = async (e) => {
     const plan = d.plan.filter(pp => C.purposeType(pp.purpose) === taddr.type);
     const changes = (d.changes && d.changes.length) ? d.changes : [0];
     const gap = Math.max(1, d.gap || 1);
+    // CUSTOM derivation path: a single template, script type from the target.
+    if (d.pathTemplate) {
+      const tmpl = C.parsePathTemplate(d.pathTemplate), ph = C.templatePlaceholders(tmpl);
+      for (let i=0; i<d.n && !hit; i++) {
+        const h = C.customMatch(seeds.subarray(i*64, i*64+64), tmpl, taddr, { ph, changes, gap, accounts:d.accounts||1 });
+        if (h) hit = { index:d.startIndex+i, path:{ custom:true, template:d.pathTemplate, ...h } };
+      }
+      postMessage(hit ? { type:'derivehit', id:d.id, batchId:d.batchId, index:hit.index, path:hit.path }
+                      : { type:'derivedone', id:d.id, batchId:d.batchId });
+      return;
+    }
     // BATCH EC: for the common simple derivation (1 purpose, change 0, index 0)
     // amortize the modular inverse across the whole task via Montgomery batch
     // inversion (privToPubBatch) -- ~1.7x the per-candidate privToPub.
@@ -106,6 +117,8 @@ onmessage = async (e) => {
     const plan  = isAddr ? d.plan.filter(pp => C.purposeType(pp.purpose) === taddr.type) : d.plan;
     const changes = (d.changes && d.changes.length) ? d.changes : [0];
     const gap = Math.max(1, d.gap || 1);
+    const customTmpl = (isAddr && d.pathTemplate) ? C.parsePathTemplate(d.pathTemplate) : null;   // custom derivation path
+    const customPh = customTmpl ? C.templatePlaceholders(customTmpl) : null;
     const reqCsum = d.requireChecksum !== false;
     const generate = !!d.generate;   // [:Nth:] scaffold: overwrite the last word's checksum
     const pass = d.passphrase || '';
@@ -157,6 +170,10 @@ onmessage = async (e) => {
       const seed = C.mnemonicToSeed(mn, pw);
       let hit = null;
       if (isAddr) {
+        if (customTmpl) {
+          const h = C.customMatch(seed, customTmpl, taddr, { ph:customPh, changes, gap, accounts:d.accounts||1 });
+          if (h) hit = { custom:true, template:d.pathTemplate, ...h };
+        } else
         for (const pp of plan) {
           const acct = C.deriveHardenedPath(seed, [pp.purpose, pp.coin||0, pp.account||0]);
           for (const ch of changes) {
