@@ -247,17 +247,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b65"></script>
-<script src="../wasm/rxecore_api.js?v=b65"></script>
+<script src="../wasm/rxecore.js?v=b66"></script>
+<script src="../wasm/rxecore_api.js?v=b66"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b65"></script>
-<script src="../estimator/model.js?v=b65"></script>
-<script src="../estimator/wordset.js?v=b65"></script>
-<script src="../estimator/bip39crypto.js?v=b65"></script>
-<script src="../estimator/electrum.js?v=b65"></script>
-<script src="../estimator/gpucrack.js?v=b65"></script>
-<script src="../estimator/i18n.js?v=b65"></script>
+<script src="../estimator/bip39.js?v=b66"></script>
+<script src="../estimator/model.js?v=b66"></script>
+<script src="../estimator/wordset.js?v=b66"></script>
+<script src="../estimator/bip39crypto.js?v=b66"></script>
+<script src="../estimator/electrum.js?v=b66"></script>
+<script src="../estimator/gpucrack.js?v=b66"></script>
+<script src="../estimator/i18n.js?v=b66"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -266,7 +266,7 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b65';
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b66';
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -514,7 +514,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b65' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b66' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -1506,7 +1506,7 @@ function crackWordsHybrid(o){
     const inflight=new Map();       // workerId -> {start,end} currently sweeping
     const completed=new Set();      // completed chunk starts (for the frontier)
     const sweptCur={};              // workerId -> swept-so-far in its current chunk
-    let finished=false, seededTotal=0, seeding=false, allSwept=(startAt>=o.total);
+    let finished=false, seededTotal=0, derivedCount=0, seeding=false, allSwept=(startAt>=o.total);
     const curSwept=()=>{ let s=sweptBase; for(const k in sweptCur) s+=sweptCur[k]; return s; };
     const queue=[]; const t0=performance.now();
     // Address: a PARALLEL derive pool does the secp256k1 compare off the main
@@ -1515,8 +1515,15 @@ function crackWordsHybrid(o){
     let dBatchId=0, dDispatched=0, dCompleted=0;
     const cleanup=()=>{ workers.forEach(w=>{try{w.terminate()}catch(e){}}); dWorkers.forEach(w=>{try{w.terminate()}catch(e){}}); clearInterval(poll); };
     const finish=(r)=>{ if(finished) return; finished=true; cleanup(); resolve(r); };
+    // Honest progress: the CPU sweep races ahead of the GPU/derive drain, so
+    // "done" = fully-PROCESSED candidates = swept - the pipeline backlog (valid
+    // candidates swept but not yet seeded OR seeded but not yet compared). Without
+    // this, checksum-on runs hit 100% while the GPU still has the whole valid
+    // subset (~1/16 of the keyspace) left to hash -- looking stuck "at 100%".
     const report=()=>{ const swept=curSwept(), el=(performance.now()-t0)/1000||1e-6;
-      o.onProgress(swept,o.total,(swept-startAt)/el,{seeded:seededTotal,seedRate:seededTotal/el}); };
+      const backlog = queue.length + (seededTotal - derivedCount);
+      let done = swept - backlog; if(done<startAt) done=startAt; if(done>o.total) done=o.total;
+      o.onProgress(done,o.total,(done-startAt)/el,{seeded:seededTotal,seedRate:seededTotal/el}); };
     const poll=setInterval(()=>{ if(o.isCancelled&&o.isCancelled()) finish({stopped:true}); },200);
     const maybeDone=()=>{ if(allSwept && !queue.length && !seeding && (dDispatched===dCompleted && !dQueue.length) && !finished) finish({found:null}); };
     // dispatch pending seed-batches to idle derive workers. Address = secp256k1
@@ -1531,7 +1538,8 @@ function crackWordsHybrid(o){
       for(let i=0;i<nW;i++){ let w; try{ w=new Worker(WURL); }catch(e){ break; } dWorkers.push(w); dIdle.push(w);
         w.onmessage=(e)=>{ const m=e.data; if(finished) return;
           if(m.type==='derivehit'){ const task=dPending.get(m.batchId); const hitc=task.batch[m.index]; finish({found:hitc.mn, path:m.path, index:hitc.index}); }
-          else if(m.type==='derivedone'){ dPending.delete(m.batchId); dCompleted++; dIdle.push(w); drainDerive(); pump(); maybeDone(); } };
+          else if(m.type==='derivedone'){ const dt=dPending.get(m.batchId); if(dt) derivedCount+=dt.batch.length;   // candidates now fully compared (for honest progress)
+            dPending.delete(m.batchId); dCompleted++; dIdle.push(w); drainDerive(); pump(); report(); maybeDone(); } };
         w.onerror=(ev)=>finish({error:(ev&&ev.message)||'derive worker error'});
       }
     }
