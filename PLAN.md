@@ -244,6 +244,62 @@ Checksum-first (outer), key-schedule-shared (outer→inner), and sharding still 
 index maps to `(m_idx, p_idx)`). It explodes fast, so the estimate matters most here — **exactly the
 "too big for a browser → run it on the cluster" case.**
 
+### 7.2 Checksum modes & the `[:Nth:]` last-word scaffolds
+There are **three** things to do with the BIP39 checksum when the last word is (part of) the search:
+
+1. **No checksum** — hash every candidate (finds a deliberately off-dictionary / custom last word).
+2. **Reject invalid** (today's default; the "least thinking" mode) — enumerate everything, run one
+   SHA-256, skip the ~`2^-CS` that fail. Costs `2^CS` unranks+SHAs per *valid* candidate (256× for
+   24-word).
+3. **Generate valid** — never emit an invalid last word. This is the **last-word shortcut**, made
+   practical by a scaffold + a substitution.
+
+**The scaffold.** The last word's high `11−CS` bits are free entropy; its low `CS` bits are the
+checksum. So replace the final `[:bip39-en:]` (2048) with a **`[:Nth:]` dictionary of exactly
+`2^(11−CS)` words at wordlist indices `{e·2^CS}`** — one representative per free-bit value `e`:
+
+| token | phrase | CS | scaffold size = 2^(11−CS) | stride = 2^CS |
+|-------|--------|----|--------------------------|---------------|
+| `[:12th:]` | 12-word | 4 | **128** | 16 |
+| `[:15th:]` | 15-word | 5 | **64**  | 32 |
+| `[:18th:]` | 18-word | 6 | **32**  | 64 |
+| `[:21st:]` | 21-word | 7 | **16**  | 128 |
+| `[:24th:]` | 24-word | 8 | **8**   | 256 |
+
+(`size × stride = 2048` always.) **The scaffold is a cardinality device, not a lookup of valid
+words** — it must be the *stride* representatives (`{0,256,…,1792}` for `[:24th:]`), never the first
+N words (those all share high-bits 0 and would collapse to one valid word). librxe's set size and
+unrank bijection are then exactly right, and — a bonus — the **estimate becomes exact** (cardinality
+= valid count; no survival sampling, no "sampled" caveat).
+
+**The substitution.** Per enumerated candidate, compute the entropy from all the chosen words + the
+scaffold's free bits, `SHA-256`, and **overwrite** the last word's low `CS` bits with the checksum:
+`corrected = e·2^CS + checksum`. This lives in the **CPU sweep, exactly where reject-mode's SHA
+already runs** — same hash, overwrite instead of reject — so the GPU seed kernel is unchanged and
+needs **no on-GPU SHA-256**. Because the substitution reads each candidate's *full* entropy, it works
+even when **other** positions also vary (not just the "lost last word" case). Net cost: `2^CS` fewer
+unranks+SHAs per valid candidate → the CPU feeds valid candidates `2^CS×` faster, which is what keeps
+a fast GPU saturated. (On-GPU SHA-256 only matters in the extreme where even that reduced feed can't
+saturate a monster discrete GPU — the separate GPU-side-enumeration project; deferred.)
+
+**Automagical UX (no mode selector).** Keep the default = **reject** (least thinking). **Auto-enable
+generate the moment the pattern mentions a `[:Nth:]` token** — the token is both the scaffold and the
+intent signal. The existing "require checksum" checkbox stays for reject(on)/no-checksum(off) and is
+**greyed when a `[:Nth:]` token is present** (every candidate is valid by construction). Guardrails,
+because each is a way to silently produce wrong results — **warn and refuse generate** on any:
+- the `[:Nth:]` token is **not the final word**;
+- `N` **≠ the phrase's word count** (`[:24th:]` needs 24 slots);
+- **more than one** `[:Nth:]` token;
+- a `[:Nth:]` token **inside a `{{ }}` permutation** (the checksum-bearing word rotates through
+  positions there — that regime stays reject / GPU-side checksum).
+
+**Deferred (phase 2):** proactively *suggest* the swap when the unknown obviously is the final word
+(a trailing `[:bip39-en:]` under reject) — "use `[:24th:]`, 256× fewer candidates." Coaching, not
+forcing.
+
+**THE LAW here:** the substitution is gated byte-exact — completing any *valid* mnemonic returns it
+unchanged (idempotence), and completing a scaffold candidate reproduces the reference checksum.
+
 ---
 
 ## 8. Dictionaries & languages

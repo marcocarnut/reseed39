@@ -157,11 +157,67 @@ function makeValidator(words) {
     return true;
   }
 
-  return { isValid, words, index,
+  // "Generate valid" mode: given a mnemonic whose LAST word is a scaffold
+  // placeholder (or any word), recompute the correct final word so the whole
+  // mnemonic is checksum-valid, and return it. Only the last word's HIGH
+  // (11-CS) bits are entropy; we recompute the LOW CS checksum bits from the
+  // full entropy and overwrite them: corrected = (freeBits<<CS) | checksum.
+  // Idempotent on an already-valid mnemonic (returns the same last word).
+  // Returns null on a bad word count or an unknown word. `toks` = word array.
+  function completeLastWord(toks) {
+    const W = toks.length;
+    if (!VALID_WORD_COUNTS.has(W)) return null;
+    const totalBits = W * 11;
+    const entBits = (totalBits * 32) / 33;
+    const csBits = totalBits - entBits;                 // = W/3
+    const bits = new Uint8Array(totalBits);
+    for (let i=0;i<W;i++){
+      const idx = index.get(toks[i]);
+      if (idx === undefined) return null;
+      for (let b=0;b<11;b++) bits[i*11+b] = (idx >>> (10-b)) & 1;
+    }
+    const ent = new Uint8Array(entBits/8);
+    for (let i=0;i<entBits;i++) if (bits[i]) ent[i>>3] |= (0x80 >> (i&7));
+    const hb0 = (sha256_1blk_h0(ent) >>> 24) & 0xff;    // top byte of SHA256(entropy)
+    const checksum = hb0 >>> (8 - csBits);              // top CS bits
+    const lastIdx = index.get(toks[W-1]);
+    const free = lastIdx >>> csBits;                    // this word's high (11-CS) entropy bits
+    return words[(free << csBits) | checksum];
+  }
+  // Convenience over a whitespace-joined string: returns the corrected mnemonic
+  // string (last word swapped to the checksum-valid one), or null if malformed.
+  function complete(mnemonic) {
+    const toks = mnemonic.trim().split(/\s+/);
+    const last = completeLastWord(toks);
+    if (last === null) return null;
+    toks[toks.length-1] = last;
+    return toks.join(' ');
+  }
+
+  return { isValid, complete, completeLastWord, words, index,
     // theoretical survival fraction for a full-entropy pattern of W words
     theoreticalFraction: (W) => VALID_WORD_COUNTS.has(W) ? Math.pow(2, -(W/3)) : null };
 }
 
-const _bip39Exports = { sha256, sha256_1blk_h0, makeValidator, VALID_WORD_COUNTS };
+/* ---- [:Nth:] last-word scaffolds (cardinality devices for generate mode) --- *
+ * The final word of a W-word mnemonic carries CS=W/3 checksum bits in its LOW
+ * bits and 11-CS free entropy bits in its HIGH bits. A scaffold dictionary of
+ * exactly 2^(11-CS) words -- one per free-bit value, at wordlist indices
+ * {e * 2^CS} -- gives librxe the exact valid cardinality; the completeLastWord
+ * substitution then fixes the checksum per candidate. MUST be the stride
+ * representatives (NOT the first N words, which share high-bits 0 and collapse
+ * to a single valid word). */
+const NTH_TOKENS = { 12:'12th', 15:'15th', 18:'18th', 21:'21st', 24:'24th' };
+function csBitsFor(W){ return VALID_WORD_COUNTS.has(W) ? (W/3) : null; }
+function scaffoldWords(words, W) {
+  const csBits = csBitsFor(W);
+  if (csBits === null) return null;
+  const stride = 1 << csBits, n = 1 << (11 - csBits), out = new Array(n);
+  for (let e=0;e<n;e++) out[e] = words[e*stride];
+  return out;
+}
+
+const _bip39Exports = { sha256, sha256_1blk_h0, makeValidator, VALID_WORD_COUNTS,
+  NTH_TOKENS, csBitsFor, scaffoldWords };
 if (typeof module !== 'undefined' && module.exports) module.exports = _bip39Exports;
 if (typeof globalThis !== 'undefined') globalThis.BIP39 = _bip39Exports; // window OR worker(self)
