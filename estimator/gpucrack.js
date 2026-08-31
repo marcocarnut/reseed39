@@ -7,6 +7,51 @@
 const STRIDE = 28;                 // u32/lane (112 bytes salt budget; salt+4<=111)
 const MAXSALT = 107;               // "mnemonic"(8)+passphrase; salt+4<=111
 let _gpu = null;
+// Lanes per GPU SUBMIT. Each lane is a full PBKDF2-HMAC-SHA512(2048) -- ~2000x
+// heavier than a plain hash -- so one submit over a whole batch runs for seconds
+// and trips a mobile GPU's anti-lockup watchdog (TDR), crashing the tab. We split
+// each seed dispatch into SUBMITS of this many lanes so no single command runs
+// long. BUT each submit carries a large fixed cost (~hundreds of ms on some
+// drivers -- the throughput-vs-chunk curve is linear), so chunking is pure loss
+// on a discrete GPU that has no watchdog problem. Hence: DEFAULT is mobile-aware
+// (0 = auto -> small chunks on a phone, whole-batch on desktop); a positive value
+// forces a fixed chunk (a phone user can lower it further if the tab still crashes).
+let _seedChunkN = 0;   // 0 = auto
+const _isMobile = (function(){ try{
+  if (navigator.userAgentData && typeof navigator.userAgentData.mobile==='boolean') return navigator.userAgentData.mobile;
+  return /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent||''); }catch(e){ return false; } })();
+function _effChunk(){ return _seedChunkN>0 ? _seedChunkN : (_isMobile ? 512 : (1<<20)); }
+function _setSeedChunk(n){ n=n|0; _seedChunkN = n>0 ? Math.max(64, Math.min(1<<20, n)) : 0; }
+let _seedDepth = 2;   // submits kept in flight; harmless (1 submit on desktop), a mild hedge on mobile
+function _setSeedDepth(n){ _seedDepth = Math.max(1, Math.min(8, n|0)); }
+// Chunked dispatch: split m lanes into _effChunk()-lane SUBMITS, keeping _seedDepth
+// in flight. On desktop the chunk is >= the whole batch -> a single fast submit
+// (unchanged from before). On a phone the chunk is small -> short, preemptible
+// submits that don't trip the watchdog. mapAsync is the yield (no setTimeout tax).
+// mkChunk(base,cn) -> {bg, oBuf, temps:[buffers to free]}; writeChunk(base,cn,words) copies out.
+async function _pipelineSeeds(dev, pipe, m, mkChunk, writeChunk){
+  const CHUNK=_effChunk(), DEPTH=Math.max(1,_seedDepth);
+  const CD=GPUBufferUsage.COPY_DST, MR=GPUBufferUsage.MAP_READ;
+  const submit=(base)=>{
+    const cn=Math.min(CHUNK, m-base);
+    const { bg, oBuf, temps } = mkChunk(base, cn);
+    const enc=dev.createCommandEncoder(); const p=enc.beginComputePass();
+    p.setPipeline(pipe); p.setBindGroup(0,bg); p.dispatchWorkgroups(Math.ceil(cn/64)); p.end();
+    const stg=dev.createBuffer({size:cn*64,usage:CD|MR}); enc.copyBufferToBuffer(oBuf,0,stg,0,cn*64);
+    dev.queue.submit([enc.finish()]);
+    const mp=stg.mapAsync(GPUMapMode.READ);
+    return { base, cn, stg, mp, temps:temps.concat(oBuf) };
+  };
+  const inflight=[]; let next=0;
+  while(next<m && inflight.length<DEPTH){ inflight.push(submit(next)); next+=CHUNK; }
+  while(inflight.length){
+    const cur=inflight.shift(); await cur.mp;
+    const words=new Uint32Array(cur.stg.getMappedRange().slice(0)); cur.stg.unmap();
+    writeChunk(cur.base, cur.cn, words);
+    cur.temps.forEach(b=>b.destroy&&b.destroy()); if(cur.stg.destroy) cur.stg.destroy();
+    if(next<m){ inflight.push(submit(next)); next+=CHUNK; }
+  }
+}
 // WGSL loader: the single-file SPA bundle inlines shaders on globalThis.__WGSL;
 // the served build fetches the sibling .wgsl. (A file:// page can't fetch, so
 // the bundle must inline them.)
@@ -141,18 +186,19 @@ async function gpuSeeds(g, mid, mnemonic, passphrases){
       const { dev, pipe, kBuf } = await initGpu();
       const ST=GPUBufferUsage.STORAGE,U=GPUBufferUsage.UNIFORM,CS=GPUBufferUsage.COPY_SRC,CD=GPUBufferUsage.COPY_DST;
       const mk=(a,us)=>{const b=dev.createBuffer({size:Math.max(16,a.byteLength),usage:us});dev.queue.writeBuffer(b,0,a);return b;};
-      const iB=mk(mid.ipad,ST|CD), oB=mk(mid.opad,ST|CD), lB=mk(sl,ST|CD), dB=mk(sd,ST|CD);
-      const pB=mk(new Uint32Array([m,STRIDE,2048,0]),U|CD);
-      const oBuf=dev.createBuffer({size:m*64,usage:ST|CS});
-      const bg=dev.createBindGroup({layout:pipe.getBindGroupLayout(0),entries:[
-        {binding:0,resource:{buffer:kBuf}},{binding:1,resource:{buffer:iB}},{binding:2,resource:{buffer:oB}},
-        {binding:3,resource:{buffer:lB}},{binding:4,resource:{buffer:dB}},{binding:5,resource:{buffer:oBuf}},{binding:6,resource:{buffer:pB}}]});
-      const enc=dev.createCommandEncoder(); const p=enc.beginComputePass(); p.setPipeline(pipe); p.setBindGroup(0,bg); p.dispatchWorkgroups(Math.ceil(m/64)); p.end();
-      const stg=dev.createBuffer({size:m*64,usage:CD|GPUBufferUsage.MAP_READ}); enc.copyBufferToBuffer(oBuf,0,stg,0,m*64);
-      dev.queue.submit([enc.finish()]); await stg.mapAsync(GPUMapMode.READ);
-      const words=new Uint32Array(stg.getMappedRange().slice(0)); stg.unmap();
-      for (let k=0;k<m;k++){ const o=idxGpu[k]*64; for (let w=0;w<16;w++){ const v=words[k*16+w]>>>0; out[o+w*4]=(v>>>24)&255; out[o+w*4+1]=(v>>>16)&255; out[o+w*4+2]=(v>>>8)&255; out[o+w*4+3]=v&255; } }
-      [iB,oB,lB,dB,pB,oBuf,stg].forEach(b=>b.destroy&&b.destroy());
+      const iB=mk(mid.ipad,ST|CD), oB=mk(mid.opad,ST|CD);   // fixed-mnemonic HMAC midstates: shared across chunks
+      await _pipelineSeeds(dev, pipe, m,
+        (base,cn)=>{
+          const lB=mk(sl.subarray(base,base+cn),ST|CD), dB=mk(sd.subarray(base*STRIDE,(base+cn)*STRIDE),ST|CD);
+          const pB=mk(new Uint32Array([cn,STRIDE,2048,0]),U|CD);
+          const oBuf=dev.createBuffer({size:cn*64,usage:ST|CS});
+          const bg=dev.createBindGroup({layout:pipe.getBindGroupLayout(0),entries:[
+            {binding:0,resource:{buffer:kBuf}},{binding:1,resource:{buffer:iB}},{binding:2,resource:{buffer:oB}},
+            {binding:3,resource:{buffer:lB}},{binding:4,resource:{buffer:dB}},{binding:5,resource:{buffer:oBuf}},{binding:6,resource:{buffer:pB}}]});
+          return { bg, oBuf, temps:[lB,dB,pB] };
+        },
+        (base,cn,words)=>{ for (let k=0;k<cn;k++){ const o=idxGpu[base+k]*64; for (let w=0;w<16;w++){ const v=words[k*16+w]>>>0; out[o+w*4]=(v>>>24)&255; out[o+w*4+1]=(v>>>16)&255; out[o+w*4+2]=(v>>>8)&255; out[o+w*4+3]=v&255; } } });
+      [iB,oB].forEach(b=>b.destroy&&b.destroy());
     });
   }
   return out;
@@ -267,18 +313,19 @@ async function gpuSeedsWords(mnemonics, passphrase, saltPrefix){
       const { dev, pipe } = await initGpuWords();
       const ST=GPUBufferUsage.STORAGE,U=GPUBufferUsage.UNIFORM,CS=GPUBufferUsage.COPY_SRC,CD=GPUBufferUsage.COPY_DST;
       const mk=(a,us)=>{const bf=dev.createBuffer({size:Math.max(16,a.byteLength),usage:us});dev.queue.writeBuffer(bf,0,a);return bf;};
-      const kBuf=mk(K,ST|CD), sBuf=mk(sl,ST|CD), lBuf=mk(ml,ST|CD), dBuf=mk(md,ST|CD);
-      const pBuf=mk(new Uint32Array([m,WSTRIDE,2048,salt.length]),U|CD);
-      const oBuf=dev.createBuffer({size:m*64,usage:ST|CS});
-      const bg=dev.createBindGroup({layout:pipe.getBindGroupLayout(0),entries:[
-        {binding:0,resource:{buffer:kBuf}},{binding:1,resource:{buffer:sBuf}},{binding:2,resource:{buffer:lBuf}},
-        {binding:3,resource:{buffer:dBuf}},{binding:4,resource:{buffer:oBuf}},{binding:5,resource:{buffer:pBuf}}]});
-      const enc=dev.createCommandEncoder(); const p=enc.beginComputePass(); p.setPipeline(pipe); p.setBindGroup(0,bg); p.dispatchWorkgroups(Math.ceil(m/64)); p.end();
-      const stg=dev.createBuffer({size:m*64,usage:CD|GPUBufferUsage.MAP_READ}); enc.copyBufferToBuffer(oBuf,0,stg,0,m*64);
-      dev.queue.submit([enc.finish()]); await stg.mapAsync(GPUMapMode.READ);
-      const words=new Uint32Array(stg.getMappedRange().slice(0)); stg.unmap();
-      for (let k=0;k<m;k++){ const o=idxGpu[k]*64; for(let w=0;w<16;w++){ const v=words[k*16+w]>>>0; out[o+w*4]=(v>>>24)&255;out[o+w*4+1]=(v>>>16)&255;out[o+w*4+2]=(v>>>8)&255;out[o+w*4+3]=v&255; } }
-      [kBuf,sBuf,lBuf,dBuf,pBuf,oBuf,stg].forEach(b=>b.destroy&&b.destroy());
+      const kBuf=mk(K,ST|CD), sBuf=mk(sl,ST|CD);   // shared across chunks (K table + salt are lane-independent)
+      await _pipelineSeeds(dev, pipe, m,
+        (base,cn)=>{
+          const lBuf=mk(ml.subarray(base,base+cn),ST|CD), dBuf=mk(md.subarray(base*WSTRIDE,(base+cn)*WSTRIDE),ST|CD);
+          const pBuf=mk(new Uint32Array([cn,WSTRIDE,2048,salt.length]),U|CD);
+          const oBuf=dev.createBuffer({size:cn*64,usage:ST|CS});
+          const bg=dev.createBindGroup({layout:pipe.getBindGroupLayout(0),entries:[
+            {binding:0,resource:{buffer:kBuf}},{binding:1,resource:{buffer:sBuf}},{binding:2,resource:{buffer:lBuf}},
+            {binding:3,resource:{buffer:dBuf}},{binding:4,resource:{buffer:oBuf}},{binding:5,resource:{buffer:pBuf}}]});
+          return { bg, oBuf, temps:[lBuf,dBuf,pBuf] };
+        },
+        (base,cn,words)=>{ for (let k=0;k<cn;k++){ const o=idxGpu[base+k]*64; for(let w=0;w<16;w++){ const v=words[k*16+w]>>>0; out[o+w*4]=(v>>>24)&255;out[o+w*4+1]=(v>>>16)&255;out[o+w*4+2]=(v>>>8)&255;out[o+w*4+3]=v&255; } } });
+      [kBuf,sBuf].forEach(b=>b.destroy&&b.destroy());
     });
   }
   return out;
@@ -576,6 +623,8 @@ async function gateWords(mnemonics, passphrase){
 window.GpuCrack = { initGpu, gpuSeeds, benchmark, crackXpub, crackAddress, MAXSALT,
   initGpuWords, gpuSeedsWords, crackWordsGpu, gateWords, getGpuInfo,
   setBatchEC:(b)=>{ BATCH_EC=!!b; }, getBatchEC:()=>BATCH_EC,
+  setSeedChunk:_setSeedChunk, getSeedChunk:()=>_seedChunkN,   // 0 = auto (mobile-aware)
+  getEffSeedChunk:_effChunk, isMobile:()=>_isMobile, setSeedDepth:_setSeedDepth,
   getGpuResets:()=>_gpuResets, resetGpuStats:_resetGpuStats,
   // base = minimum/starting cooldown; it doubles per consecutive failure up to
   // the cap, and resets to base after running clean past the stability window.
