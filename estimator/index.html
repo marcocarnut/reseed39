@@ -447,12 +447,14 @@ function buildDerivs(){
 // is left for you to paste.
 const _KNOWN_MN='abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 const PRESETS = [
-  { title:{en:'Passphrase: prefix + case + digits',pt:'Frase-senha: prefixo + caixa + dígitos'},
-    sub:{en:'known mnemonic, passphrase varies (BIP84)',pt:'mnemônico conhecido, frase-senha varia (BIP84)'},
-    words:_KNOWN_MN, pass:'Correct(horse|Horse)?[0-9]{0,2}', target:'address', purposes:['bip84'], gap:'1' },
-  { title:{en:'Passphrase: word + optional year',pt:'Frase-senha: palavra + ano opcional'},
-    sub:{en:'known mnemonic, passphrase + optional year',pt:'mnemônico conhecido, frase-senha + ano opcional'},
-    words:_KNOWN_MN, pass:'[Tt]rezor(2019|2020|2021)?', target:'address', purposes:['bip84'], gap:'3' },
+  { title:{en:'Passphrase: forgotten PIN (4 digits)',pt:'Frase-senha: PIN esquecido (4 dígitos)'},
+    sub:{en:'known mnemonic, 4-digit passphrase, address (BIP49)',pt:'mnemônico conhecido, passphrase de 4 dígitos, endereço (BIP49)'},
+    tip:{en:"That's the seed phrase used by two traders who in 2019 migrated to a brand new hardware wallet. For a while, it worked fine and they sent funds to/from it quite a few times. However, a glitchy touchscreen and the fact that they were conflating the PIN with the passphrase set them up for a trap.",
+         pt:'Essa é a frase-semente usada por dois traders que em 2019 migraram para uma carteira de hardware nova em folha. Por um tempo, funcionou bem e enviaram fundos de/para ela várias vezes. Porém, uma tela sensível ao toque com defeito e o fato de confundirem o PIN com a passphrase os prepararam para uma armadilha.'},
+    tipPass:{en:'One day they unwittingly send 20BTC to an address under a different passphrase because of the faulty touchscreen. The recovery itself was actually easy because they said they were using a four digit PIN, but that only became clear days later after they calmed down enough to coherently explain what they did.',
+             pt:'Um dia, sem perceber, enviaram 20 BTC para um endereço sob uma passphrase diferente por causa da tela com defeito. A recuperação em si foi na verdade fácil, porque disseram que usavam um PIN de quatro dígitos — mas isso só ficou claro dias depois, quando se acalmaram o suficiente para explicar coerentemente o que fizeram.'},
+    share:{ v:1, wp:'laundry very receive soldier town age monkey already senior cereal vocal split', pp:'[0-9]{4}',
+      ad:'36TaauZymS8sLXYh9HqYeqMvShJcMajK7j', tg:'address', pu:['bip49'], ac:'1', ch:'1', gp:'1', rc:1, bk:'gpu', tm:'', tpp:'' } },
   { title:{en:'12-word: one missing word',pt:'12 palavras: uma faltando'},
     sub:{en:'dictionary at last position, xpub (BIP44)',pt:'dicionário na última posição, xpub (BIP44)'},
     words:'legal winner thank year wave sausage worth useful legal winner thank [:bip39-en:]',
@@ -494,7 +496,10 @@ function applyPreset(p){
   // #hash links use so the example is byte-identical to what Share produced. Its
   // bilingual backstory `tip` is injected as the mnemonic note in the current
   // language; `lg` is intentionally omitted so a click never flips the UI language.
-  if(p.share){ const st=Object.assign({}, p.share); if(p.tip) st.tm = p.tip[LANG]||p.tip.en; applyShareState(st); return; }
+  if(p.share){ const st=Object.assign({}, p.share);
+    if(p.tip) st.tm = p.tip[LANG]||p.tip.en;
+    if(p.tipPass) st.tpp = p.tipPass[LANG]||p.tipPass.en;
+    applyShareState(st); return; }
   $('#wordsPat').value = p.words!=null ? p.words : '';
   $('#passPat').value  = p.pass!=null  ? p.pass  : '';
   setSeg('#targetSeg','data-t',p.target||'address');
