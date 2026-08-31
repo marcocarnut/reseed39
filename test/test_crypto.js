@@ -103,6 +103,30 @@ for (const [purpose,addr] of [[84,'bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu'],
   ok(C.encodeAddress(d)===addr, `encodeAddress round-trips BIP${purpose} (${d.type})`);
 }
 
+// 11) CUSTOM PATH TEMPLATE: deriveTemplate must reproduce the trusted BIP44-family
+//     derivation byte-exact for the canonical templates, and programForType must
+//     match pubToTarget. This validates the template engine against known-good code.
+console.log('\n---- custom path templates ----');
+for (const [purpose,type] of [[44,'p2pkh'],[49,'p2sh'],[84,'p2wpkh'],[86,'p2tr']]){
+  const tmpl=`m/${purpose}'/0'/0'/{change}/{index}`;
+  let good=true;
+  for (const [ch,ix] of [[0,0],[0,1],[1,0],[1,5]]){
+    const node=C.deriveTemplate(aseed, tmpl, {change:ch,index:ix});
+    const viaTmpl=C.programForType(C.privToPub(node.k), type);
+    const viaStd =C.addressTarget(aseed, purpose, 0, 0, ch, ix);
+    if(!(viaTmpl.type===viaStd.type && C.eq(viaTmpl.program, viaStd.program))) good=false;
+  }
+  ok(good, `deriveTemplate+programForType == addressTarget for BIP${purpose} (${type})`);
+}
+// hardened marker actually matters: m/0'/0/0 (Breadwallet-shape) != m/0'/0'/0
+{
+  const k=(t)=>C.ser256(C.deriveTemplate(aseed,t,{}).k);
+  ok(!C.eq(k("m/0'/0/0"), k("m/0'/0'/0")), "hardened marker matters: m/0'/0/0 != m/0'/0'/0");
+  ok(C.eq(k("m/0h/0/0"), k("m/0'/0/0")), "h and ' hardened markers equivalent");
+}
+// parse validation rejects garbage
+for (const bad of ['x/0/0','m/0/-1','m/0/1a','m/']){ let threw=false; try{ C.parsePathTemplate(bad); }catch(e){ threw=true; } ok(threw, `parsePathTemplate rejects "${bad}"`); }
+
 // 11) END-TO-END address-target crack: unknown passphrase, known BIP84 address.
 (function(){
   const known='legal winner thank year wave sausage worth useful legal winner thank yellow';

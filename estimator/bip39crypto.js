@@ -630,6 +630,45 @@ function addressTarget(seed, purpose, account, coin, change, index){
   return pubToTarget(privToPub(node.k), purpose);
 }
 
+/* ------------- custom derivation-path templates (oddball wallets) --------- *
+ * Many wallets predate/ignore BIP44's m/purpose'/coin'/account'/change/index:
+ * Breadwallet/MultiBit HD use m/0'/0/i, Electrum-legacy m/0/i, etc. A template
+ * is a BIP32 path with hardened markers (' or h) and the placeholders
+ * {account}/{change}/{index} filled per candidate. The SEED is still BIP39
+ * (salt "mnemonic") -- only the BIP32 path differs -- and the script type comes
+ * from the pasted target (programForType), so the user specifies only the path. */
+function parsePathTemplate(template){                 // -> array of {v|placeholder, hardened} (validates once)
+  const parts = String(template).trim().split('/');
+  if (parts[0] !== 'm' && parts[0] !== 'M') throw new Error("path must start with m/");
+  const out = [];
+  for (let i=1;i<parts.length;i++){
+    let s = parts[i].trim(); if (s==='') continue;
+    let hardened=false;
+    if (/['h]$/.test(s)){ hardened=true; s=s.slice(0,-1); }
+    if (s==='{account}'||s==='{change}'||s==='{index}') out.push({ ph:s, hardened });
+    else { const n=parseInt(s,10); if(!Number.isInteger(n)||n<0||String(n)!==s) throw new Error('bad path segment "'+parts[i]+'"'); out.push({ v:n, hardened }); }
+  }
+  if (!out.length) throw new Error('empty path');
+  return out;
+}
+function deriveTemplate(seed, template, vars){        // template: string OR parsed array
+  const parsed = Array.isArray(template) ? template : parsePathTemplate(template);
+  vars = vars || {};
+  let node = seedToMaster(seed);
+  for (const seg of parsed){
+    const n = ('ph' in seg) ? (seg.ph==='{account}'?(vars.account|0):seg.ph==='{change}'?(vars.change|0):(vars.index|0)) : seg.v;
+    node = seg.hardened ? ckdHardened(node, (n + HARD) >>> 0) : ckdNormal(node, n);
+  }
+  return node;
+}
+// Build the {type,program} for a pubkey given a target script TYPE (not a BIP
+// purpose) -- used with custom paths, where the type comes from the target.
+const _TYPE_PURPOSE = { p2pkh:44, p2sh:49, p2wpkh:84, p2tr:86 };
+function programForType(pub33, type){
+  const p=_TYPE_PURPOSE[type]; if(p===undefined) throw new Error('unsupported target type '+type);
+  return pubToTarget(pub33, p);
+}
+
 /* ------------------------------- helpers -------------------------------- */
 function concat(...arrs){ let n=0; for(const a of arrs) n+=a.length; const o=new Uint8Array(n); let k=0; for(const a of arrs){o.set(a,k);k+=a.length;} return o; }
 function toHex(b){ let s=''; for(let i=0;i<b.length;i++) s+=b[i].toString(16).padStart(2,'0'); return s; }
@@ -651,6 +690,7 @@ const _exports = {
   ripemd160, hash160,
   bech32Encode, bech32Decode, segwitEncode,
   decodeAddress, encodeAddress, purposeType, pubToTarget, addressTarget,
+  parsePathTemplate, deriveTemplate, programForType,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = _exports;
 if (typeof globalThis !== 'undefined') globalThis.BIP39Crypto = _exports; // window OR worker(self)
