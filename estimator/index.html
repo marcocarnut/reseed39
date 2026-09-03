@@ -248,17 +248,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b90"></script>
-<script src="../wasm/rxecore_api.js?v=b90"></script>
+<script src="../wasm/rxecore.js?v=b91"></script>
+<script src="../wasm/rxecore_api.js?v=b91"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b90"></script>
-<script src="../estimator/model.js?v=b90"></script>
-<script src="../estimator/wordset.js?v=b90"></script>
-<script src="../estimator/bip39crypto.js?v=b90"></script>
-<script src="../estimator/electrum.js?v=b90"></script>
-<script src="../estimator/gpucrack.js?v=b90"></script>
-<script src="../estimator/i18n.js?v=b90"></script>
+<script src="../estimator/bip39.js?v=b91"></script>
+<script src="../estimator/model.js?v=b91"></script>
+<script src="../estimator/wordset.js?v=b91"></script>
+<script src="../estimator/bip39crypto.js?v=b91"></script>
+<script src="../estimator/electrum.js?v=b91"></script>
+<script src="../estimator/gpucrack.js?v=b91"></script>
+<script src="../estimator/i18n.js?v=b91"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -267,7 +267,7 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b90';
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b91';
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -302,6 +302,13 @@ const LOG_INTERVAL_MS = (function(){ try{
 // whether a specific size works on the first try. 0 = off (normal auto-calibration).
 const FORCE_CHUNK = (function(){ try{
   const v = parseInt(new URLSearchParams(location.search).get('chunk'),10);
+  return (v>0) ? v : 0;
+}catch(e){ return 0; } })();
+// ?maxlen=N -> EXPERIMENTAL: during a crack, SKIP any candidate whose string is
+// longer than N characters (the mnemonic in words mode, the passphrase in
+// passphrase mode). Skipped candidates are swept-over but never hashed. 0 = off.
+const MAXLEN = (function(){ try{
+  const v = parseInt(new URLSearchParams(location.search).get('maxlen'),10);
   return (v>0) ? v : 0;
 }catch(e){ return 0; } })();
 const LOG_LS_KEY = 'reseed39.cracklog';
@@ -718,7 +725,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b90' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b91' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -733,6 +740,7 @@ function setLang(l){
     loadBench(); applyBench();
     if(HAS_GPU && window.GpuCrack){ try{ // time-box it: right after a reset requestAdapter() can hang, and that must not block boot (recovery falls back to the stored id)
         CUR_GPU_ID = (await Promise.race([ window.GpuCrack.getGpuInfo(), new Promise(r=>setTimeout(()=>r(''),3000)) ]))||''; }catch(e){}
+      if(MAXLEN) try{ window.GpuCrack.setMaxLen(MAXLEN); }catch(e){}   // EXPERIMENTAL ?maxlen -> also filter the GPU passphrase paths
       // Restore this device's crash-recovered safe dispatch size so a crack uses it
       // even before a fresh benchmark (mobile only; desktop ignores _mobChunk).
       if(IS_MOBILE){ const sc=gcalLoad().safe; if(sc>0) try{ window.GpuCrack.setMobChunk(sc); }catch(e){}
@@ -1717,7 +1725,7 @@ async function crackJointCpuPooled(o){
       w.onerror=(ev)=>settle({error:(ev&&ev.message)||'worker error'});
       w.postMessage({ type:'run', id:k, wordlist:ENGLISH, pattern:o.innerPat, mode:'passphrase', mnemonic:mn, passphrase:'',
         requireChecksum:false, generate:false, plan:o.common.plan, pathTemplate:null, accounts:o.common.accounts||1,
-        target:targetHex, changes:o.changes, gap:o.gap, start, end, progressEvery:2000 }); }
+        target:targetHex, changes:o.changes, gap:o.gap, start, end, progressEvery:2000, maxlen:MAXLEN }); }
     if(spawned===0) settle({found:null});
   });
   try{
@@ -1896,6 +1904,7 @@ async function cpuCrackWords(a){
       let mn=(_cb?_cb[i]:a.unrank(start+i));
       if(a.generate){ mn = mn!==null ? VALIDATOR.complete(mn) : null; if(mn===null) continue; }   // rewrite last word -> valid, no rejection
       else if(reqCsum && !VALIDATOR.isValid(mn)) continue;   // checksum pre-filter -> skip PBKDF2
+      if(MAXLEN && mn!=null && mn.length>MAXLEN) continue;   // ?maxlen: skip long candidates
       seeded++;
       const seed=C.mnemonicToSeed(mn,pass);
       if(isAddr){
@@ -1951,7 +1960,7 @@ function cpuCrackMT(o){
       w.onerror=(ev)=>{ finish({error:(ev && ev.message)||'worker error'}); };
       w.postMessage({ type:'run', id:k, wordlist:ENGLISH, pattern:o.pattern, mode:o.mode,
         mnemonic:o.mnemonic||null, passphrase:o.passphrase||'', requireChecksum:o.requireChecksum, generate:o.generate,
-        plan:o.plan, pathTemplate:o.pathTemplate||null, accounts:o.accounts||1, target:o.target, changes:o.changes, gap:o.gap, start, end, progressEvery:2000 });
+        plan:o.plan, pathTemplate:o.pathTemplate||null, accounts:o.accounts||1, target:o.target, changes:o.changes, gap:o.gap, start, end, progressEvery:2000, maxlen:MAXLEN });
     }
     if (spawned===0) finish({found:null});
   });
@@ -2055,7 +2064,7 @@ function crackWordsHybrid(o){
       w.postMessage({ type:'run', id, sweepOnly:true, wordlist:ENGLISH, pattern:o.pattern, mode:'words',
         passphrase:o.passphrase||'', requireChecksum:o.requireChecksum, generate:o.generate, plan:o.plan,
         target: o.taddr ? {kind:'address',addrType:o.taddr.type,programHex:C.toHex(o.taddr.program)} : {kind:'xpub',chainCodeHex:C.toHex(o.tcc)},
-        changes:o.changes, gap:o.gap, start, end });
+        changes:o.changes, gap:o.gap, start, end, maxlen:MAXLEN });
       return true;
     };
     if(startAt>=o.total){ finish({found:null}); return; }
@@ -2091,7 +2100,7 @@ async function cpuCrack(a){
   for(let start=0;start<a.total;start+=512){
     if(a.isCancelled()) return {stopped:true};
     const n=Math.min(512,a.total-start); const _cb=a.unrankBatch?a.unrankBatch(start,n):null;
-    for(let i=0;i<n;i++){ const pass=(_cb?_cb[i]:a.unrank(start+i)); const seed=C.mnemonicToSeed(a.mnemonic,pass);
+    for(let i=0;i<n;i++){ const pass=(_cb?_cb[i]:a.unrank(start+i)); if(MAXLEN && pass!=null && pass.length>MAXLEN) continue; const seed=C.mnemonicToSeed(a.mnemonic,pass);
       for(const pp of a.plan){ if(C.eq(C.accountNode(seed,pp.purpose,pp.account,pp.coin).c,a.targetChainCode)) return {found:pass,path:pp,index:start+i}; } }
     a.onProgress(start+n,a.total,(start+n)/((performance.now()-t0)/1000)); await new Promise(r=>setTimeout(r,0));
   }
@@ -2106,7 +2115,7 @@ async function cpuCrackAddress(a){
   for(let start=0;start<a.total;start+=128){
     if(a.isCancelled()) return {stopped:true};
     const n=Math.min(128,a.total-start); const _cb=a.unrankBatch?a.unrankBatch(start,n):null;
-    for(let i=0;i<n;i++){ const pass=(_cb?_cb[i]:a.unrank(start+i)); const seed=C.mnemonicToSeed(a.mnemonic,pass);
+    for(let i=0;i<n;i++){ const pass=(_cb?_cb[i]:a.unrank(start+i)); if(MAXLEN && pass!=null && pass.length>MAXLEN) continue; const seed=C.mnemonicToSeed(a.mnemonic,pass);
       if(customTmpl){ const h=C.customMatch(seed,customTmpl,a.target,{ph:customPh,changes,gap,accounts:a.accounts||1});
         if(h) return {found:pass,path:{custom:true,template:a.pathTemplate,...h},index:start+i}; continue; }
       for(const pp of plan){ const acct=C.deriveHardenedPath(seed,[pp.purpose,pp.coin||0,pp.account||0]);

@@ -127,6 +127,7 @@ onmessage = async (e) => {
     // the sweep (the real bottleneck for a multi-unknown-word checksum-on crack)
     // while the GPU does the KDF -- neither alone was enough.
     const sweepOnly = !!d.sweepOnly;
+    const maxlen = d.maxlen || 0;   // EXPERIMENTAL: skip candidates longer than this (saves the KDF/EC)
     let swept = 0, seeded = 0, lastPost = performance.now();
     let candBuf = [];
     const flushCand = (force) => { if (candBuf.length && (force || candBuf.length>=512)) { postMessage({ type:'cand', id:d.id, items:candBuf, swept }); candBuf=[]; } };
@@ -165,6 +166,9 @@ onmessage = async (e) => {
       } else {
         pw = candAt(i); mn = d.mnemonic;
       }
+      // maxlen: skip this candidate (the mnemonic in words mode, the passphrase
+      // otherwise) before any hashing -- swept over, never seeded.
+      if (maxlen){ const _c = isWords ? mn : pw; if (_c != null && _c.length > maxlen){ swept++; maybePost(); continue; } }
       if (sweepOnly) { swept++; seeded++; candBuf.push({ mn, index:i }); flushCand(false); maybePost(); continue; }
       seeded++;
       const seed = C.mnemonicToSeed(mn, pw);

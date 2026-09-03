@@ -120,6 +120,8 @@ function _resetGpu(){ try{ if(_gpu&&_gpu.dev&&_gpu.dev.destroy) _gpu.dev.destroy
 let _gpuResets = 0;         // how many GPU ops we've recovered from a lost device this session
 let _gpuLostCb = null;      // app hook fired on a real device loss (see dev.lost above)
 function _setGpuLostCb(fn){ _gpuLostCb = (typeof fn==='function') ? fn : null; }
+let _maxLen = 0;            // EXPERIMENTAL: skip candidates longer than this (0 = off); set from the ?maxlen URL param
+function _setMaxLen(n){ _maxLen = (n>0) ? (n|0) : 0; }
 // Adaptive cooldown after a device loss. Start at the base (min); DOUBLE it on
 // each consecutive failure up to a cap; RESET to the base only once the GPU has
 // run clean past a stability window (so a flaky-under-heat GPU keeps backing off,
@@ -263,13 +265,18 @@ async function crackXpub(opts){
   for (let start=0; start<total; start+=B){
     if (opts.isCancelled && opts.isCancelled()) return { stopped:true, done };
     const n = Math.min(B, total-start);
-    const _cb = opts.unrankBatch ? opts.unrankBatch(start, n) : null; const passes = new Array(n); for (let i=0;i<n;i++) passes[i]=_cb?_cb[i]:opts.unrank(start+i);
+    const _cb = opts.unrankBatch ? opts.unrankBatch(start, n) : null;
+    let passes, gidx=null;   // maxlen: keep only <=_maxLen, remember original indices
+    if(_maxLen){ passes=[]; gidx=[]; for(let i=0;i<n;i++){ const p=_cb?_cb[i]:opts.unrank(start+i); if(p!=null && p.length<=_maxLen){ passes.push(p); gidx.push(start+i); } } }
+    else { passes=new Array(n); for (let i=0;i<n;i++) passes[i]=_cb?_cb[i]:opts.unrank(start+i); }
+    const m=passes.length, gi=(i)=>gidx?gidx[i]:start+i;
+    if(m===0){ done+=n; if(opts.onProgress) opts.onProgress(done,total,done/((performance.now()-t0)/1000)); await new Promise(r=>setTimeout(r,0)); continue; }
     const seeds = await gpuSeeds(g, mid, opts.mnemonic, passes);
-    for (let i=0;i<n;i++){
+    for (let i=0;i<m;i++){
       const seed = seeds.subarray(i*64,i*64+64);
       for (const pp of plan){
         const cc = C.accountNode(seed, pp.purpose, pp.account||0, pp.coin||0).c;
-        if (C.eq(cc, opts.targetChainCode)) return { found: passes[i], path: pp, index: start+i, done: done+i+1 };
+        if (C.eq(cc, opts.targetChainCode)) return { found: passes[i], path: pp, index: gi(i), done: gi(i)+1 };
       }
     }
     done += n;
@@ -377,7 +384,7 @@ async function crackWordsGpu(opts){
     const n=Math.min(B, total-start);
     const cands = opts.unrankBatch ? opts.unrankBatch(start, n) : null;
     const mns=[], gidx=[];
-    for (let i=0;i<n;i++){ const mn=cands?cands[i]:opts.unrank(start+i); if(mn==null) continue; if(reqCsum && !opts.validator.isValid(mn)) continue; mns.push(mn); gidx.push(start+i); }
+    for (let i=0;i<n;i++){ const mn=cands?cands[i]:opts.unrank(start+i); if(mn==null) continue; if(_maxLen && mn.length>_maxLen) continue; if(reqCsum && !opts.validator.isValid(mn)) continue; mns.push(mn); gidx.push(start+i); }
     return { n, mns, gidx };
   };
   const seed=(b)=> b.mns.length ? gpuSeedsWords(b.mns, opts.passphrase) : Promise.resolve(new Uint8Array(0));
@@ -430,7 +437,7 @@ async function _crackWordsAddrParallel(opts, plan, changes, gap, nW){
   const programHex=C.toHex(opts.taddr.program), addrType=opts.taddr.type;
   const sweepFilter=(start)=>{ const n=Math.min(SB,total-start);
     const cands=opts.unrankBatch?opts.unrankBatch(start,n):null; const mns=[],gidx=[];
-    for(let i=0;i<n;i++){ const mn=cands?cands[i]:opts.unrank(start+i); if(mn==null)continue; if(reqCsum&&!opts.validator.isValid(mn))continue; mns.push(mn); gidx.push(start+i); }
+    for(let i=0;i<n;i++){ const mn=cands?cands[i]:opts.unrank(start+i); if(mn==null)continue; if(_maxLen && mn.length>_maxLen)continue; if(reqCsum&&!opts.validator.isValid(mn))continue; mns.push(mn); gidx.push(start+i); }
     return {n,mns,gidx}; };
   return new Promise((resolve)=>{
     const workers=[], idle=[], pending=new Map(); const queue=[];
@@ -547,7 +554,7 @@ async function _crackAddressParallel(opts, nW){
         // Check cancel in the message handler too: a fast EC-worker stream can
         // starve the 200ms poll, leaving Stop / a time-cap unresponsive.
         if(opts.isCancelled && opts.isCancelled()){ finish({ stopped:true }); return; }
-        if(m.type==='derivehit'){ const info=pending.get(m.batchId); finish({ found:info.passes[m.index-info.start], path:m.path, index:m.index }); }
+        if(m.type==='derivehit'){ const info=pending.get(m.batchId); const j=m.index-info.start; finish({ found:info.passes[j], path:m.path, index: info.gidx ? info.gidx[j] : m.index }); }
         else if(m.type==='derivedone'){ pending.delete(m.batchId); completed++; idle.push(w); drain();
           if(sweepDone && completed>=dispatched && !finished) finish({ found:null }); }
       };
@@ -559,13 +566,19 @@ async function _crackAddressParallel(opts, nW){
           if(opts.isCancelled && opts.isCancelled()){ finish({ stopped:true }); return; }
           const n=Math.min(B, total-start);
           const cands = opts.unrankBatch ? opts.unrankBatch(start, n) : null;
-          const passes = new Array(n); for (let i=0;i<n;i++) passes[i]=cands?cands[i]:opts.unrank(start+i);
+          // maxlen: keep only candidates <= _maxLen and remember their ORIGINAL
+          // indices (gidx) so a hit still reports the true index. Skipped ones are
+          // never seeded -> the GPU + EC work is actually saved.
+          let passes, gidx=null;
+          if(_maxLen){ passes=[]; gidx=[]; for(let i=0;i<n;i++){ const p=cands?cands[i]:opts.unrank(start+i); if(p!=null && p.length<=_maxLen){ passes.push(p); gidx.push(start+i); } } }
+          else { passes=new Array(n); for (let i=0;i<n;i++) passes[i]=cands?cands[i]:opts.unrank(start+i); }
+          seeded+=n; if(passes.length===0){ report(); await new Promise(r=>setTimeout(r,0)); continue; }   // whole batch skipped
           const seeds = await gpuSeeds(g, mid, opts.mnemonic, passes);
           if (finished) return;
           // gpuSeeds returns a fresh Uint8Array(n*64) each call, so transfer its
           // buffer directly (zero-copy) -- main doesn't need the seeds after this.
-          queue.push({ batchId:batchId++, seedsBuf:seeds.buffer, n, start, passes });
-          dispatched++; seeded+=n; report(); drain();
+          queue.push({ batchId:batchId++, seedsBuf:seeds.buffer, n:passes.length, start, passes, gidx });
+          dispatched++; report(); drain();   // seeded already advanced by n above
           await new Promise(r=>setTimeout(r,0));
           // backpressure: EC (workers) is the bottleneck, so cap the seed queue.
           while (queue.length > nW*3 && !finished) await new Promise(r=>setTimeout(r,4));
@@ -594,17 +607,22 @@ async function _crackAddressInline(opts){
   for (let start=0; start<total; start+=B){
     if (opts.isCancelled && opts.isCancelled()) return { stopped:true, done };
     const n = Math.min(B, total-start);
-    const _cb = opts.unrankBatch ? opts.unrankBatch(start, n) : null; const passes = new Array(n); for (let i=0;i<n;i++) passes[i]=_cb?_cb[i]:opts.unrank(start+i);
+    const _cb = opts.unrankBatch ? opts.unrankBatch(start, n) : null;
+    let passes, gidx=null;   // maxlen: keep only <=_maxLen, remember original indices (gi)
+    if(_maxLen){ passes=[]; gidx=[]; for(let i=0;i<n;i++){ const p=_cb?_cb[i]:opts.unrank(start+i); if(p!=null && p.length<=_maxLen){ passes.push(p); gidx.push(start+i); } } }
+    else { passes=new Array(n); for (let i=0;i<n;i++) passes[i]=_cb?_cb[i]:opts.unrank(start+i); }
+    const m=passes.length, gi=(i)=>gidx?gidx[i]:start+i;
+    if(m===0){ done+=n; if(opts.onProgress) opts.onProgress(done,total,done/((performance.now()-t0)/1000)); await new Promise(r=>setTimeout(r,0)); continue; }
     const seeds = await gpuSeeds(g, mid, opts.mnemonic, passes);
     if (simple){
-      const hit = _addrBatchMatch(seeds, n, plan[0], opts.target);
-      if (hit) return { found: passes[hit.i], path:{...plan[0], change:0, index:0}, index:start+hit.i, done:done+hit.i+1 };
+      const hit = _addrBatchMatch(seeds, m, plan[0], opts.target);
+      if (hit) return { found: passes[hit.i], path:{...plan[0], change:0, index:0}, index:gi(hit.i), done:gi(hit.i)+1 };
     } else {
-      for (let i=0;i<n;i++){
+      for (let i=0;i<m;i++){
         const seed = seeds.subarray(i*64,i*64+64);
         if (customTmpl){
           const h = C.customMatch(seed, customTmpl, opts.target, {ph:customPh, changes, gap, accounts:opts.accounts||1});
-          if (h) return { found: passes[i], path:{custom:true, template:opts.pathTemplate, ...h}, index:start+i, done:done+i+1 };
+          if (h) return { found: passes[i], path:{custom:true, template:opts.pathTemplate, ...h}, index:gi(i), done:gi(i)+1 };
           continue;
         }
         for (const pp of plan){
@@ -615,7 +633,7 @@ async function _crackAddressInline(opts){
               const node = C.ckdNormal(chNode, idx);
               const tg = C.pubToTarget(C.privToPub(node.k), pp.purpose);
               if (tg.type===opts.target.type && C.eq(tg.program, opts.target.program))
-                return { found: passes[i], path:{...pp, change:ch, index:idx}, index:start+i, done:done+i+1 };
+                return { found: passes[i], path:{...pp, change:ch, index:idx}, index:gi(i), done:gi(i)+1 };
             }
           }
         }
@@ -647,6 +665,7 @@ window.GpuCrack = { initGpu, gpuSeeds, benchmark, crackXpub, crackAddress, MAXSA
   setSeedChunk:_setSeedChunk, getSeedChunk:()=>_seedChunkN,   // 0 = auto (mobile-aware)
   setMobChunk:_setMobChunk, getMobChunk:()=>_mobChunk,        // probe-chosen mobile lanes/dispatch
   setGpuLostCb:_setGpuLostCb,                                 // app hook: real device loss (watchdog reset)
+  setMaxLen:_setMaxLen,                                       // EXPERIMENTAL ?maxlen: skip candidates longer than N chars
   getEffSeedChunk:_effChunk, isMobile:()=>_isMobile, setSeedDepth:_setSeedDepth,
   getGpuResets:()=>_gpuResets, resetGpuStats:_resetGpuStats,
   // base = minimum/starting cooldown; it doubles per consecutive failure up to
