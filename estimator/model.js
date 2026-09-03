@@ -99,6 +99,20 @@ function humanTime(sec) {
   }
   return `${Math.round(sec)} seconds`;
 }
+// Pessimistic display for sub-year ETAs: round the value in its unit UP by
+// ceil(v + 0.5) and phrase it as an upper bound ("less than N units"). An
+// over-estimate is forgiven; an under-estimate annoys -- and real cracks can run
+// a bit over the estimate. >= 1 year falls back to the plain humanTime.
+function humanTimeUpper(sec) {
+  if (!isFinite(sec)) return 'unbounded';
+  const YEAR = 365 * 24 * 3600;
+  if (sec >= YEAR) return humanTime(sec);
+  if (sec < 60) return 'less than a minute';
+  for (const [name, span] of [['day', 86400], ['hour', 3600], ['minute', 60]]) {
+    if (sec >= span) { const v = Math.ceil(sec / span + 0.5); return `less than ${v} ${name}${v === 1 ? '' : 's'}`; }
+  }
+  return 'less than a minute';
+}
 
 /* --------------------------- checksum survival -------------------------- */
 // How many members of a mnemonic pattern are checksum-valid BIP39 mnemonics.
@@ -464,7 +478,7 @@ function mergeRates(cal) {
 
 const _modelExports = {
   estimate, checksumSurvival, pathMultiplier,
-  humanCount, humanTime, mergeRates, verdictTier,
+  humanCount, humanTime, humanTimeUpper, mergeRates, verdictTier,
   DEFAULT_RATES, GREEN_MAX_SEC, YELLOW_MAX_SEC, MULTS_PER_ADDRESS,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = _modelExports;

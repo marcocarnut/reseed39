@@ -248,17 +248,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b92"></script>
-<script src="../wasm/rxecore_api.js?v=b92"></script>
+<script src="../wasm/rxecore.js?v=b93"></script>
+<script src="../wasm/rxecore_api.js?v=b93"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b92"></script>
-<script src="../estimator/model.js?v=b92"></script>
-<script src="../estimator/wordset.js?v=b92"></script>
-<script src="../estimator/bip39crypto.js?v=b92"></script>
-<script src="../estimator/electrum.js?v=b92"></script>
-<script src="../estimator/gpucrack.js?v=b92"></script>
-<script src="../estimator/i18n.js?v=b92"></script>
+<script src="../estimator/bip39.js?v=b93"></script>
+<script src="../estimator/model.js?v=b93"></script>
+<script src="../estimator/wordset.js?v=b93"></script>
+<script src="../estimator/bip39crypto.js?v=b93"></script>
+<script src="../estimator/electrum.js?v=b93"></script>
+<script src="../estimator/gpucrack.js?v=b93"></script>
+<script src="../estimator/i18n.js?v=b93"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -267,7 +267,7 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b92';
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b93';
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -694,13 +694,21 @@ function spoken(s){
 // the tested model untouched; a deeper pass could key the model's prose too.
 function localizeTime(s){
   if(LANG!=='pt'||!s) return s;
-  return s.replace(/\bseconds?\b/g,m=>m==='second'?'segundo':'segundos')
+  return s.replace(/\bless than a minute\b/g,'menos de um minuto')   // before the unit rules (else 'minute' is already translated)
+          .replace(/\bless than\b/g,'menos de')
+          .replace(/\bseconds?\b/g,m=>m==='second'?'segundo':'segundos')
           .replace(/\bminutes?\b/g,m=>m==='minute'?'minuto':'minutos')
           .replace(/\bhours?\b/g,m=>m==='hour'?'hora':'horas')
           .replace(/\bdays?\b/g,m=>m==='day'?'dia':'dias')
           .replace(/\byears?\b/g,m=>m==='year'?'ano':'anos')
           .replace(/\bunbounded\b/g,'ilimitado')
           .replace(/(\d)\.(\d)/g,'$1,$2');
+}
+// Localized ETA string. Under a year it's rounded UP + "less than" (pessimistic,
+// see humanTimeUpper); a year or more shows the plain measured time.
+function etaDisp(secs){
+  if(!isFinite(secs)) return localizeTime('unbounded');
+  return localizeTime(BIP39Estimator.humanTimeUpper(secs));
 }
 
 // ---------- i18n apply ----------
@@ -725,7 +733,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b92' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b93' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -2260,7 +2268,7 @@ function render(r, input){
   // so cracking is only offered once benchmarked -- which is fine.
   if(BENCH){
     const tl = tierLabel(r.tier.key);
-    const timeStr = r.unbounded?t('unbounded'):(r.eta?(t('exhaustIn')+' '+localizeTime(r.eta.timeToExhaust)):'');
+    const timeStr = r.unbounded?t('unbounded'):(r.eta?etaDisp(r.eta.exhaustSeconds):'');
     html += `<div class="verdict ${r.tier.color}" style="flex-direction:column;align-items:stretch;gap:9px">
       <div style="display:flex;justify-content:space-between;align-items:center;width:100%;gap:10px">
         <span style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;opacity:.82">${t('prognosis')}</span>
@@ -2292,8 +2300,8 @@ function render(r, input){
   if(r.eta && BENCH){
     html += `<div class="card"><h3>${t('etaTitle')} <span class="pill">${r.eta.calibrated?t('etaCalibrated'):t('etaAssumed')}</span></h3>
       <div class="kv">
-        <div class="k">${t('etaExhaust')}</div><div class="v">${localizeTime(r.eta.timeToExhaust)}</div>
-        <div class="k">${t('etaHit')}</div><div class="v">${localizeTime(r.eta.expectedTimeToHit)}</div>
+        <div class="k">${t('etaExhaust')}</div><div class="v">${etaDisp(r.eta.exhaustSeconds)}</div>
+        <div class="k">${t('etaHit')}</div><div class="v">${etaDisp(r.eta.expectedHitSeconds)}</div>
         ${r.eta.rawSweep ? `<div class="k">${t('etaSweep')}</div><div class="v">${fmtBig(r.eta.rawSweep)} → ${localizeTime(r.eta.sweepTime)}</div>
         <div class="k">${t('etaKdf')}</div><div class="v">${fmtBig(Math.round(Number(r.dim1)))} → ${localizeTime(r.eta.seedTime)}</div>` : ''}
         <div class="k">${t('etaRate')}</div><div class="v">${fmtBig(Math.round(r.eta.kdfRate))}/s KDF${input.backend==='cpu'?' ('+input.cores+' '+t('cores')+')':''}</div>
