@@ -73,7 +73,10 @@ async function _wgsl(name){
 async function initGpu(){
   if (_gpu) return _gpu;
   if (!navigator.gpu) throw new Error('WebGPU not available');
-  const adapter = await navigator.gpu.requestAdapter();
+  // high-performance: matches jsrxe and, on some drivers/browsers (seen with
+  // Firefox on an AMD iGPU), the bare requestAdapter() returns null while this
+  // one succeeds -- so the GPU is "not detected" without it.
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference:'high-performance' });
   if (!adapter) throw new Error('no WebGPU adapter');
   const dev = await adapter.requestDevice();
   const code = await _wgsl('pbkdf2.wgsl');
@@ -227,7 +230,7 @@ async function gpuSeeds(g, mid, mnemonic, passphrases){
 async function getGpuInfo(){
   if (!navigator.gpu) return null;
   try {
-    const adapter = await navigator.gpu.requestAdapter();
+    const adapter = await navigator.gpu.requestAdapter({ powerPreference:'high-performance' });
     if (!adapter) return null;
     let info = adapter.info;
     if (!info && adapter.requestAdapterInfo) info = await adapter.requestAdapterInfo();
