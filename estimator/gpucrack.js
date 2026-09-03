@@ -20,15 +20,25 @@ let _seedChunkN = 0;   // 0 = auto
 const _isMobile = (function(){ try{
   if (navigator.userAgentData && typeof navigator.userAgentData.mobile==='boolean') return navigator.userAgentData.mobile;
   return /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent||''); }catch(e){ return false; } })();
-function _effChunk(){ return _seedChunkN>0 ? _seedChunkN : (_isMobile ? 512 : (1<<20)); }
+function _effChunk(){ return _seedChunkN>0 ? _seedChunkN : (_isMobile ? _mobChunk : (1<<20)); }
 function _setSeedChunk(n){ n=n|0; _seedChunkN = n>0 ? Math.max(64, Math.min(1<<20, n)) : 0; }
 let _seedDepth = 2;   // submits kept in flight; harmless (1 submit on desktop), a mild hedge on mobile
 function _setSeedDepth(n){ _seedDepth = Math.max(1, Math.min(8, n|0)); }
+// Mobile lanes-per-dispatch. The PBKDF2-SHA512 kernel is heavy; a big dispatch
+// that's fine on a flagship runs past a weaker GPU's ~2s driver watchdog -> the
+// GPU process resets and the TAB RELOADS (a fixed 512 crashed an Adreno-6xx).
+// But TINY chunks are also bad: mobile GPU->CPU readback is costly, so many
+// small dispatches are readback-bound and crawl (that regressed a fast phone
+// ~8x). There's no good FIXED value and no reliable per-lane model, so we don't
+// guess: the benchmark PROBES real dispatch times on THIS device and sets
+// _mobChunk (via setMobChunk) to the largest size that ran safely under budget
+// (see _measGpuKdf). Default: a conservatively small, universally safe value.
+let _mobChunk = 64;
+function _setMobChunk(n){ n=n|0; if(n>0) _mobChunk = Math.max(16, Math.min(1<<20, n)); }
 // Chunked dispatch: split m lanes into _effChunk()-lane SUBMITS, keeping _seedDepth
-// in flight. On desktop the chunk is >= the whole batch -> a single fast submit
-// (unchanged from before). On a phone the chunk is small -> short, preemptible
-// submits that don't trip the watchdog. mapAsync is the yield (no setTimeout tax).
-// mkChunk(base,cn) -> {bg, oBuf, temps:[buffers to free]}; writeChunk(base,cn,words) copies out.
+// in flight so GPU compute overlaps the (costly, on mobile) readback. Desktop: one
+// >=m chunk -> a single fast submit. Mobile: _effChunk() = _mobChunk, the
+// probe-chosen safe size. mkChunk(base,cn) -> {bg,oBuf,temps}; writeChunk copies out.
 async function _pipelineSeeds(dev, pipe, m, mkChunk, writeChunk){
   const CHUNK=_effChunk(), DEPTH=Math.max(1,_seedDepth);
   const CD=GPUBufferUsage.COPY_DST, MR=GPUBufferUsage.MAP_READ;
@@ -81,7 +91,12 @@ async function initGpu(){
   // the GPU process. When that happens the cached device is dead; clear it so the
   // next init re-acquires a fresh adapter+device (see _withGpuRetry).
   dev.lost.then((info)=>{ try{ console.warn('[gpucrack] WebGPU device lost:', info&&info.reason, info&&info.message); }catch(_){}
-    if (_gpu && _gpu.dev===dev){ _gpu=null; _gpuW=null; } }).catch(()=>{});
+    if (_gpu && _gpu.dev===dev){ _gpu=null; _gpuW=null; }
+    // Notify the app of a REAL loss (reason!=='destroyed' -- 'destroyed' is our own
+    // teardown). A watchdog reset that doesn't take the whole tab down surfaces here;
+    // the app can react (e.g. reload into chunk-halving recovery). See setGpuLostCb.
+    if (_gpuLostCb && info && info.reason!=='destroyed'){ try{ _gpuLostCb(info); }catch(_){} }
+  }).catch(()=>{});
   _gpu = { dev, pipe, kBuf, adapter };
   return _gpu;
 }
@@ -103,6 +118,8 @@ function _resetGpu(){ try{ if(_gpu&&_gpu.dev&&_gpu.dev.destroy) _gpu.dev.destroy
 // transient driver reset doesn't abort a multi-hour crack. Re-throws non-device
 // errors (real bugs) immediately, and gives up after `tries` device re-inits.
 let _gpuResets = 0;         // how many GPU ops we've recovered from a lost device this session
+let _gpuLostCb = null;      // app hook fired on a real device loss (see dev.lost above)
+function _setGpuLostCb(fn){ _gpuLostCb = (typeof fn==='function') ? fn : null; }
 // Adaptive cooldown after a device loss. Start at the base (min); DOUBLE it on
 // each consecutive failure up to a cap; RESET to the base only once the GPU has
 // run clean past a stability window (so a flaky-under-heat GPU keeps backing off,
@@ -527,6 +544,9 @@ async function _crackAddressParallel(opts, nW){
       let w; try{ w=new Worker(opts.workerUrl); }catch(e){ cleanup(); return resolve(_crackAddressInline(opts)); }
       workers.push(w); idle.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
+        // Check cancel in the message handler too: a fast EC-worker stream can
+        // starve the 200ms poll, leaving Stop / a time-cap unresponsive.
+        if(opts.isCancelled && opts.isCancelled()){ finish({ stopped:true }); return; }
         if(m.type==='derivehit'){ const info=pending.get(m.batchId); finish({ found:info.passes[m.index-info.start], path:m.path, index:m.index }); }
         else if(m.type==='derivedone'){ pending.delete(m.batchId); completed++; idle.push(w); drain();
           if(sweepDone && completed>=dispatched && !finished) finish({ found:null }); }
@@ -536,6 +556,7 @@ async function _crackAddressParallel(opts, nW){
     (async ()=>{
       try{
         for (let start=0; start<total && !finished; start+=B){
+          if(opts.isCancelled && opts.isCancelled()){ finish({ stopped:true }); return; }
           const n=Math.min(B, total-start);
           const cands = opts.unrankBatch ? opts.unrankBatch(start, n) : null;
           const passes = new Array(n); for (let i=0;i<n;i++) passes[i]=cands?cands[i]:opts.unrank(start+i);
@@ -624,6 +645,8 @@ window.GpuCrack = { initGpu, gpuSeeds, benchmark, crackXpub, crackAddress, MAXSA
   initGpuWords, gpuSeedsWords, crackWordsGpu, gateWords, getGpuInfo,
   setBatchEC:(b)=>{ BATCH_EC=!!b; }, getBatchEC:()=>BATCH_EC,
   setSeedChunk:_setSeedChunk, getSeedChunk:()=>_seedChunkN,   // 0 = auto (mobile-aware)
+  setMobChunk:_setMobChunk, getMobChunk:()=>_mobChunk,        // probe-chosen mobile lanes/dispatch
+  setGpuLostCb:_setGpuLostCb,                                 // app hook: real device loss (watchdog reset)
   getEffSeedChunk:_effChunk, isMobile:()=>_isMobile, setSeedDepth:_setSeedDepth,
   getGpuResets:()=>_gpuResets, resetGpuStats:_resetGpuStats,
   // base = minimum/starting cooldown; it doubles per consecutive failure up to

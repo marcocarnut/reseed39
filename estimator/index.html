@@ -145,6 +145,7 @@
   <a class="repolink" href="https://github.com/marcocarnut/reseed39" target="_blank" rel="noopener" title="Source on GitHub" aria-label="Source on GitHub"><svg viewBox="0 0 16 16" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>
 </header>
 <div id="resumeBar" style="display:none"></div>
+<div id="gpuCrashBar" style="display:none"></div>
 
 <div class="tabs">
   <div class="tab active" data-view="est" data-i18n="tabEst">Estimator</div>
@@ -247,17 +248,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b69"></script>
-<script src="../wasm/rxecore_api.js?v=b69"></script>
+<script src="../wasm/rxecore.js?v=b89"></script>
+<script src="../wasm/rxecore_api.js?v=b89"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b69"></script>
-<script src="../estimator/model.js?v=b69"></script>
-<script src="../estimator/wordset.js?v=b69"></script>
-<script src="../estimator/bip39crypto.js?v=b69"></script>
-<script src="../estimator/electrum.js?v=b69"></script>
-<script src="../estimator/gpucrack.js?v=b69"></script>
-<script src="../estimator/i18n.js?v=b69"></script>
+<script src="../estimator/bip39.js?v=b89"></script>
+<script src="../estimator/model.js?v=b89"></script>
+<script src="../estimator/wordset.js?v=b89"></script>
+<script src="../estimator/bip39crypto.js?v=b89"></script>
+<script src="../estimator/electrum.js?v=b89"></script>
+<script src="../estimator/gpucrack.js?v=b89"></script>
+<script src="../estimator/i18n.js?v=b89"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -266,7 +267,7 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b69';
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b89';
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -295,6 +296,13 @@ const VERDICT_WORD = { en:{green:'GREEN',yellow:'YELLOW',red:'RED'}, pt:{green:'
 const LOG_INTERVAL_MS = (function(){ try{
   const v = parseInt(new URLSearchParams(location.search).get('loginterval'),10);
   return (v>0) ? Math.max(50, v) : 0;   // floor 50ms; 0 = feature off
+}catch(e){ return 0; } })();
+// ?chunk=N -> force a fixed mobile GPU dispatch size (diagnostic): the benchmark
+// tests exactly N lanes/dispatch with NO crash-recovery/halving, so you can see
+// whether a specific size works on the first try. 0 = off (normal auto-calibration).
+const FORCE_CHUNK = (function(){ try{
+  const v = parseInt(new URLSearchParams(location.search).get('chunk'),10);
+  return (v>0) ? v : 0;
 }catch(e){ return 0; } })();
 const LOG_LS_KEY = 'reseed39.cracklog';
 const LOG_MAX_LINES = 20000;   // bound the timeline (~5.5h at 1s); oldest dropped
@@ -406,6 +414,16 @@ const BENCH_KEY = 'bip39rxcrack.bench.v1';
 let BENCH = null;            // {gpuId, cpuKdf, cpuSweep, gpuKdf|null, ts} or null
 let HAS_GPU = false;         // set at boot
 let CUR_GPU_ID = '';         // detected current adapter id (for a mismatch hint)
+// Coarse mobile detection. Mobile GPUs trip the driver watchdog (TDR) under
+// sustained WebGPU compute -- some phones freeze or reboot -- so on these
+// devices the benchmark duty-cycles + bounds its GPU work and caps the worker
+// count. Not a perf knob; a don't-crash-the-tab guardrail.
+const IS_MOBILE = (()=>{ try{
+  const ua=navigator.userAgent||'';
+  const touch=(navigator.maxTouchPoints||0)>1;
+  return /Mobi|Android|iPhone|iPad|iPod|Silk|Kindle/i.test(ua)
+      || (touch && Math.min(screen.width||9999, screen.height||9999) < 820);
+}catch(e){ return false; } })();
 function loadBench(){ try{ const s=localStorage.getItem(BENCH_KEY); BENCH = s?JSON.parse(s):null;
   // Pre-aggregate caches stored the sweep as a SINGLE-CORE rate; the corrected
   // model would x cores that (perfect-scaling fiction -> optimistic ETA). Drop
@@ -413,6 +431,79 @@ function loadBench(){ try{ const s=localStorage.getItem(BENCH_KEY); BENCH = s?JS
   if(BENCH && BENCH.sweepAgg==null){ BENCH=null; localStorage.removeItem(BENCH_KEY); }
 }catch(e){ BENCH=null; } }
 function saveBench(){ try{ localStorage.setItem(BENCH_KEY, JSON.stringify(BENCH)); }catch(e){} }
+// ---- mobile GPU chunk calibration by crash-recovery (Kiko's design) ----
+// A too-large GPU dispatch trips the mobile driver watchdog, which resets the GPU
+// and RELOADS THE TAB. So we turn that into the signal: before a risky GPU run we
+// persist the chunk we're about to ATTEMPT; if it completes we save it as `safe`
+// and clear the attempt; if the tab reloads with an attempt still pending, that
+// size crashed -> next time we HALVE it. Capable phones (Zenfone) succeed big on
+// the first try; the S6 halves down over a couple of reloads to a size it can run,
+// which we then remember. Keyed by GPU id so different adapters don't clash.
+const GCAL_KEY='reseed39.gpucal', GCAL_START=1024, GCAL_MIN=16, GCAL_MAXFAILS=8;
+const GCAL_HANG_MS=9000, GCAL_RESET_WAIT=8, GCAL_MAXRELOADS=14;   // hang timeout; settle seconds; hard cap on recovery reloads (halving + transient retries)
+let _gpuCalibrating=false;   // true while a (possibly too-big) benchmark GPU dispatch is running
+let _reloadingGpu=false;     // guard so a device-loss reload fires at most once
+function gcalLoad(){ try{ return JSON.parse(localStorage.getItem(GCAL_KEY))||{}; }catch(e){ return {}; } }
+function gcalSave(o){ try{ localStorage.setItem(GCAL_KEY, JSON.stringify(o)); }catch(e){} }
+// Decide the size to try next -- WITHOUT committing anything. A committed attempt
+// that crashed leaves `try` set (see gpuCommitChunk); we halve from it. Returns 0
+// if the GPU is dead, or the next size would fall below the floor / over the cap.
+function gpuNextChunk(gid){
+  const c=gcalLoad();
+  if(c.gid===gid && c.dead) return 0;
+  if(c.gid===gid && c.try){ const half=Math.floor(c.try/2);
+    return (half<GCAL_MIN || (c.fails||0)+1>=GCAL_MAXFAILS) ? 0 : half; }
+  return (c.gid===gid && c.safe) ? c.safe : GCAL_START;   // resume at known-safe, else start big
+}
+// Commit ONLY after the GPU has initialised + warmed at a safe size, i.e. right
+// before the risky full-size dispatch. This is the crux: a transient init/warm
+// failure (the GPU still re-acquiring after a reset) must NOT be counted as a
+// chunk crash -- otherwise rapid recovery reloads halve a perfectly good size all
+// the way to the floor. Only now do we charge a prior crash (fails++) and drop the
+// breadcrumb. Returns false if this commit tips us into dead.
+function gpuCommitChunk(gid, chunk){
+  let c=gcalLoad(); if(c.gid!==gid) c={gid,try:0,safe:0,fails:0,reloads:c.reloads||0};
+  if(c.try){ c.fails=(c.fails||0)+1;                    // the previous *committed* attempt crashed
+    if(c.fails>=GCAL_MAXFAILS || chunk<GCAL_MIN){ c.try=0; c.safe=0; c.dead=1; gcalSave(c); return false; } }
+  c.try=chunk; delete c.dead; gcalSave(c);              // breadcrumb: survives a watchdog crash+reload
+  return true;
+}
+function gpuAttemptOK(gid,chunk){ let c=gcalLoad(); if(c.gid!==gid) c={gid}; c.gid=gid; c.safe=chunk; c.try=0; c.fails=0; c.reloads=0; delete c.dead; gcalSave(c); }
+// Pending/dead are id-AGNOSTIC on purpose: right after a GPU reset getGpuInfo()
+// can return empty for a moment, so keying recovery on a live id would miss the
+// breadcrumb exactly when we need it (the dialog wouldn't reappear until a later
+// manual reload once the id came back). A user has one adapter, so try>0 alone is
+// a safe "an attempt crashed" signal.
+function gpuCalPending(){ const c=gcalLoad(); return c.try>0 ? c.try : 0; }   // >0 => last attempt crashed
+function gpuCalDead(){ const c=gcalLoad(); return !!c.dead; }
+// Resolve the device id, falling back to the stored one while the GPU is mid-reset
+// (CUR_GPU_ID empty) so we don't wipe an in-progress calibration record.
+function _gpuGid(){ const id=CUR_GPU_ID||''; if(id) return id; const c=gcalLoad(); return c.gid||'gpu'; }
+// Benchmark CPU results are persisted just before the (risky) GPU step, so a GPU
+// crash+reload can reopen the dialog with them already filled and redo ONLY the GPU.
+const BPART_KEY='reseed39.benchpartial';
+function benchPartialSave(o){ try{ localStorage.setItem(BPART_KEY, JSON.stringify(o)); }catch(e){} }
+function benchPartialLoad(){ try{ return JSON.parse(localStorage.getItem(BPART_KEY))||null; }catch(e){ return null; } }
+function benchPartialClear(){ try{ localStorage.removeItem(BPART_KEY); }catch(e){} }
+// Count down `secs` in the GPU benchmark step row (visible feedback) before a
+// reload / restart, so the user sees what's happening.
+async function _gpuStepCountdown(secs, msgKey){
+  for(let n=secs; n>=1; n--){ const el=$('#bs-gpuk'); if(el) el.textContent=t(msgKey).replace('{n}',n);
+    await new Promise(r=>setTimeout(r,1000)); }
+}
+// A calibration GPU op crashed or hung -> show a 5s countdown, then reload into the
+// halving recovery (the chunk breadcrumb is already persisted). Fires once. If the
+// dialog isn't open (the crash left us elsewhere) we open it so the countdown shows.
+async function _gpuCrashReload(){
+  if(_reloadingGpu) return; _reloadingGpu=true; _gpuCalibrating=false;
+  // Hard cap on total recovery reloads (real-crash halving AND transient retries),
+  // so a GPU that never comes back can't reload forever -> mark dead, fall to CPU.
+  let c=gcalLoad(); c.reloads=(c.reloads||0)+1; gcalSave(c);
+  if(c.reloads>GCAL_MAXRELOADS){ c.dead=1; c.try=0; gcalSave(c); _reloadingGpu=false; renderGpuCrashBar(); return; }
+  try{ const o=$('#benchOverlay'); if(o && !o.classList.contains('on')) openBenchModal(); }catch(_){}
+  await _gpuStepCountdown(GCAL_RESET_WAIT, 'gpuReloadIn');
+  try{ location.reload(); }catch(_){}
+}
 // Feed the measured rates into the model's calibration slots (best-of for the estimate).
 function applyBench(){
   if(!BENCH){ calCpu=null; calGpu=null; return; }
@@ -463,6 +554,96 @@ function renderResumeBar(){
   $('#resumeGo').onclick=()=>{ _resumeFrom=ck.frontier; _resumeSig=ckptSig(ck.params); restoreCrackParams(ck.params);
     bar.style.display='none'; openCrackModal(); onCrack(); };
   $('#resumeDrop').onclick=()=>{ ckptClear(); renderResumeBar(); };
+}
+// Mobile GPU crash-recovery banner (see gpuNextChunk/gpuCommitChunk). A watchdog crash reloads
+// the tab, leaving a pending attempt; on boot we detect it and auto-retry at half
+// the size until it succeeds (or bottoms out -> CPU). `state`: 'retrying' | 'ok' | ''.
+function renderGpuCrashBar(state){
+  const bar=$('#gpuCrashBar'); if(!bar) return;
+  const gid=_gpuGid();
+  const amber='display:block;margin:8px 0;padding:9px 13px;border:1px solid #ca8a04;background:rgba(202,138,4,0.13);border-radius:8px;font-size:13px';
+  const red  ='display:block;margin:8px 0;padding:9px 13px;border:1px solid #b91c1c;background:rgba(185,28,28,0.12);border-radius:8px;font-size:13px';
+  const green='display:block;margin:8px 0;padding:9px 13px;border:1px solid #15803d;background:rgba(21,128,61,0.12);border-radius:8px;font-size:13px';
+  if(state==='ok'){ const safe=(gcalLoad().safe)||0;
+    bar.setAttribute('style',green); bar.innerHTML=`<span>📱 ${t('gpuReady').replace('{n}',fmtBig(safe))}</span>`;
+    setTimeout(()=>{ if($('#gpuCrashBar')&&!gpuCalPending(gid)&&!gpuCalDead(gid)) renderGpuCrashBar(); }, 4000); return; }
+  const dead = HAS_GPU ? gpuCalDead(gid) : 0;
+  const pend = HAS_GPU ? gpuCalPending(gid) : 0;
+  if(state==='retrying' && pend){
+    bar.setAttribute('style',amber);
+    bar.innerHTML=`<span>📱 ${t('gpuRetrying').replace('{n}',fmtBig(pend)).replace('{h}',fmtBig(Math.floor(pend/2)))}</span>`
+      +`<span style="float:right"><button class="ghost" id="gpuBail">${t('gpuUseCpu')}</button></span>`;
+    $('#gpuBail').onclick=()=>{ const c=gcalLoad(); c.try=0; c.dead=1; gcalSave(c); _gpuFinalizeCpuOnly(); renderGpuCrashBar(); };
+    return;
+  }
+  if(state==='stuck'){   // GPU won't re-initialise after the reset; auto-reload doesn't help, but a user-initiated one does
+    bar.setAttribute('style',amber);
+    bar.innerHTML=`<span>📱 ${t('gpuStuck')}</span>`
+      +`<span style="float:right"><button class="act" id="gpuManualRetry" style="margin:0;padding:4px 12px">${t('gpuManualRetry')}</button> <button class="ghost" id="gpuBail2">${t('gpuUseCpu')}</button></span>`;
+    $('#gpuManualRetry').onclick=()=>{ _reloadingGpu=true; try{ location.reload(); }catch(_){} };   // user-initiated reload = the delay the GPU needs
+    $('#gpuBail2').onclick=()=>{ const c=gcalLoad(); c.try=0; c.dead=1; gcalSave(c); _gpuFinalizeCpuOnly(); renderGpuCrashBar(); };
+    return;
+  }
+  if(dead){
+    bar.setAttribute('style',red);
+    bar.innerHTML=`<span>📱 ${t('gpuDead')}</span>`
+      +`<span style="float:right"><button class="ghost" id="gpuTryAgain">${t('gpuTryAgain')}</button></span>`;
+    $('#gpuTryAgain').onclick=()=>{ gcalSave({gid,try:0,safe:0}); gpuAutoRetry(); };
+    return;
+  }
+  bar.style.display='none'; bar.innerHTML='';
+}
+// Recover from a GPU watchdog crash by REOPENING the benchmark dialog, filling in
+// the CPU results saved before the crash, and redoing ONLY the GPU test at the
+// (halved) size. If the GPU dispatch is still too big it crashes -> the tab
+// reloads -> boot re-enters here at half again. Terminates when a size survives
+// (persisted as `safe`) or bottoms out below the floor (-> CPU-only benchmark).
+async function resumeBenchGpu(){
+  if(!(HAS_GPU && window.GpuCrack)) return;
+  const gid=_gpuGid();
+  const p=benchPartialLoad();
+  if(!p || p.gid!==gid){ return gpuAutoRetry(); }   // no CPU snapshot -> quiet background retry
+  renderGpuCrashBar();                               // the dialog shows status now
+  openBenchModal();
+  const set=(id,txt)=>{ const e=$('#bs-'+id); if(e) e.textContent=txt; };
+  const run=$('#benchRun'); if(run) run.disabled=true;
+  set('cpuk', fmtBig(Math.round(p.cpuKdf))+' /s/core');
+  set('cpus', fmtBig(Math.round(p.sweepAgg))+` /s (${p.sweepCores} cores)`);
+  set('ec',   fmtBig(Math.round(p.ecMult))+' /s');
+  const finalize=(g)=>{ BENCH={ gpuId:(g>0?(CUR_GPU_ID||null):null), cpuKdf:p.cpuKdf, sweepAgg:p.sweepAgg, sweepCores:p.sweepCores, ecMult:p.ecMult, gpuKdf:(g>0?g:null), depth:p.depth, ts:Date.now() };
+    saveBench(); applyBench(); renderBenchCard(); recompute(); benchPartialClear(); };
+  try{
+    // Let the driver settle after the reset before touching the GPU again -- testing
+    // too soon can hit a transient "no usable WebGPU" while it's still re-acquiring.
+    await _gpuStepCountdown(GCAL_RESET_WAIT, 'gpuRestartIn');
+    const g=await _measGpuKdf(5000);                 // halves + measures; may crash->reload->resume again
+    if(g>0){ finalize(g); set('gpuk', fmtBig(Math.round(g))+' /s'+(window.__gpuProbeStr?'  ['+window.__gpuProbeStr+']':'')); }
+    else   { finalize(0); set('gpuk', t('gpuDeadStep')); }   // bottomed out -> CPU-only bench saved
+  }catch(e){
+    // The GPU wouldn't initialise -- it's still re-acquiring after the reset.
+    // Auto-reloading doesn't bring it back on some devices (only a user-initiated
+    // reload does), so DON'T loop: keep the CPU snapshot + pending breadcrumb and
+    // offer a manual retry (the reload it triggers gives the GPU the time it needs).
+    set('gpuk', t('gpuStuckStep')); renderGpuCrashBar('stuck');
+  }
+  if(run){ run.disabled=false; run.textContent=t('benchRun'); }
+}
+// Give up on the GPU: keep the measured CPU numbers (from the crash snapshot) as a
+// CPU-only benchmark, and drop the snapshot.
+function _gpuFinalizeCpuOnly(){ const pp=benchPartialLoad();
+  if(pp && !BENCH){ BENCH={ gpuId:null, cpuKdf:pp.cpuKdf, sweepAgg:pp.sweepAgg, sweepCores:pp.sweepCores, ecMult:pp.ecMult, gpuKdf:null, depth:pp.depth, ts:Date.now() };
+    saveBench(); applyBench(); renderBenchCard(); recompute(); }
+  benchPartialClear(); }
+// Quiet fallback when there is no CPU snapshot to reopen the dialog with: just
+// converge the safe chunk in the background so a later benchmark won't crash.
+async function gpuAutoRetry(){
+  if(!(HAS_GPU && window.GpuCrack)) return;
+  if(gpuCalDead(_gpuGid())){ renderGpuCrashBar(); return; }
+  renderGpuCrashBar('retrying');
+  try{ const g=await _measGpuKdf(2000);
+    if(g>0){ if(BENCH){ BENCH.gpuKdf=g; BENCH.gpuId=CUR_GPU_ID||BENCH.gpuId; saveBench(); applyBench(); renderBenchCard(); recompute(); } renderGpuCrashBar('ok'); }
+    else renderGpuCrashBar(); }
+  catch(e){ renderGpuCrashBar(); }
 }
 
 // ---- derivation catalogue (language-neutral) ----
@@ -537,7 +718,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b69' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b89' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -550,13 +731,26 @@ function setLang(l){
     // GPU detection + cached benchmark
     HAS_GPU = !!navigator.gpu;
     loadBench(); applyBench();
-    if(HAS_GPU && window.GpuCrack){ try{ CUR_GPU_ID = (await window.GpuCrack.getGpuInfo())||''; }catch(e){} }
+    if(HAS_GPU && window.GpuCrack){ try{ // time-box it: right after a reset requestAdapter() can hang, and that must not block boot (recovery falls back to the stored id)
+        CUR_GPU_ID = (await Promise.race([ window.GpuCrack.getGpuInfo(), new Promise(r=>setTimeout(()=>r(''),3000)) ]))||''; }catch(e){}
+      // Restore this device's crash-recovered safe dispatch size so a crack uses it
+      // even before a fresh benchmark (mobile only; desktop ignores _mobChunk).
+      if(IS_MOBILE){ const sc=gcalLoad().safe; if(sc>0) try{ window.GpuCrack.setMobChunk(sc); }catch(e){}
+        // A watchdog reset that does NOT take the whole tab down surfaces as a device
+        // loss. During a benchmark attempt the breadcrumb is already persisted, so
+        // reload straight into the halving recovery (same path as a full tab crash).
+        try{ window.GpuCrack.setGpuLostCb(()=>{ if(_gpuCalibrating) _gpuCrashReload(); }); }catch(e){} } }
     $('#booting').style.display='none';
     $('#view-est').classList.add('active');
     buildDerivs(); wireUI(); initExamplesToggle(); restoreSeedChunk(); applyBackendAvail(); applyLang(); applyTargetVis(); renderBenchCard(); recompute();
     // A #hash share-link reproduces every control (see the Share button).
     try{ if(location.hash.length>1){ applyShareState(JSON.parse(_b64urlDec(location.hash.slice(1)))); } }catch(e){}
     renderResumeBar();   // offer to resume an interrupted crack (from localStorage)
+    // Mobile GPU crash-recovery: a pending attempt on boot means the last GPU
+    // dispatch tripped the watchdog and reloaded us -> auto-retry at half the size.
+    if(IS_MOBILE && HAS_GPU && window.GpuCrack && gpuCalPending(_gpuGid())){
+      renderGpuCrashBar('retrying'); setTimeout(()=>{ resumeBenchGpu(); }, 900);
+    } else renderGpuCrashBar();
     _logBoot();          // mark this (re)load in the crack log timeline (?loginterval)
   }catch(e){
     $('#booting').innerHTML = '<span class="err">failed to load wasm core: '+e.message+'</span>';
@@ -853,6 +1047,7 @@ function benchStepRow(id,label){ return `<div class="benchstep"><span>${label}</
 function openBenchModal(){
   const steps=$('#benchSteps');
   steps.innerHTML = benchStepRow('cpuk',t('benchCpuKdf'))+benchStepRow('cpus',t('benchCpuSweep'))+benchStepRow('ec',t('benchEc'))+(HAS_GPU?benchStepRow('gpuk',t('benchGpuKdf')):'');
+  const mob=$('#benchMobileNote'); if(mob){ if(IS_MOBILE){ mob.textContent='📱 '+t('benchMobileNote'); mob.hidden=false; } else mob.hidden=true; }
   $('#benchOverlay').classList.add('on');
 }
 function closeBenchModal(){ $('#benchOverlay').classList.remove('on'); }
@@ -864,28 +1059,21 @@ async function _measCpuKdf(ms){ const C=window.BIP39Crypto;
   do{ for(let k=0;k<8;k++){ C.accountNode(C.mnemonicToSeed(_benchMn,'c'+n),84); n++; } }while(performance.now()-t0<ms);
   return n/((performance.now()-t0)/1000); }
 async function _measCpuSweep(ms){
-  // Measure the REAL aggregate multicore sweep -- the way the cracker runs it:
-  // N sweepOnly workers unrank + checksum-test in parallel. The old single-core
-  // rate x cores assumed perfect scaling and overshot ~2x (measured ~44% on an
-  // 8-core box), which made the ETA optimistic. A big 3-unknown-word set
-  // (2048^3 ~ 8.6e9) guarantees it never exhausts inside the window.
-  const cores = _benchCores();
+  // Aggregate multicore sweep = the rate CPU workers unrank + checksum-test
+  // candidates, summed across cores (how the cracker feeds the GPU, and the
+  // whole game when CPU-only). Measured from the workers' OWN swept counters
+  // over a steady window, after discarding a warmup slice.
+  //
+  // NOT from a pipeline/onProgress rate: crackWordsHybrid's 3rd progress arg is
+  // now the GPU *seed* rate, so the old "run the hybrid and read `rate`" path
+  // silently reported seed rate as sweep -- which read ~150x low on a slow-GPU
+  // Firefox box. On a GPU machine the ETA is seed-bound anyway (GPU hashes the
+  // valids; the sweep races ahead), so the honest worker-sweep number here is
+  // both correct and sufficient. A big 3-unknown-word set (2048^3 ~ 8.6e9)
+  // guarantees it never exhausts inside the window.
+  const cores = _benchCores();   // full core count (already capped to hardwareConcurrency); sweep has no watchdog to fear
   const pattern='legal winner thank year wave sausage worth useful legal winner thank year wave sausage worth useful legal winner thank year wave [:bip39-en:] [:bip39-en:] [:bip39-en:]';
   const total=2048*2048*2048;
-  // With a GPU the estimate runs on the HYBRID (GPU seeds while CPU workers
-  // sweep); there the sweep competes with GPU seeding + derive coordination for
-  // the main thread, so its real rate is BELOW a pure worker sweep. Measure the
-  // actual hybrid crack rate (unreachable target -> full sweep). No GPU -> pure
-  // worker sweep (that's what the CPU-backend estimate will run).
-  if(HAS_GPU && window.GpuCrack){
-    const wrongTcc=window.BIP39Crypto.fromHex('11'.repeat(32));
-    let rate=0; const t0=performance.now();
-    await crackWordsHybrid({ pattern, passphrase:'', requireChecksum:true,
-      plan:[{purpose:84,coin:0,account:0}], tcc:wrongTcc, taddr:null, changes:[0], gap:1,
-      total, nWorkers:cores, onProgress:(tr,to,r)=>{ if(r) rate=r; },
-      isCancelled:()=>(performance.now()-t0)>ms });
-    return rate;
-  }
   if(typeof Worker==='undefined'){                       // no workers: single-thread isolated
     const sset=RXE.parse(pattern); let m=0; const t0=performance.now();
     while(performance.now()-t0<ms){ const cs=sset.unrankBatch(m,1024); for(let k=0;k<cs.length;k++){ VALIDATOR.isValid(cs[k]); m++; } }
@@ -904,7 +1092,9 @@ async function _measCpuSweep(ms){
   if(!workers.length){ const sset=RXE.parse(pattern); let m=0; const t0=performance.now();
     while(performance.now()-t0<ms){ const cs=sset.unrankBatch(m,1024); for(let k=0;k<cs.length;k++){ VALIDATOR.isValid(cs[k]); m++; } }
     sset.free(); return m/((performance.now()-t0)/1000); }
-  await new Promise(r=>setTimeout(r,700));                // let all workers spin up (exclude startup)
+  // Discard a warmup slice (worker spin-up + cold JIT -- Firefox is slow to
+  // warm), scaled to the window so a short "rough" run isn't dominated by it.
+  await new Promise(r=>setTimeout(r, Math.min(1500, Math.max(700, ms*0.15))));
   const base=swept.reduce((a,b)=>a+b,0), t0=performance.now();
   await new Promise(r=>setTimeout(r, ms));
   const got=swept.reduce((a,b)=>a+b,0)-base, dt=(performance.now()-t0)/1000;
@@ -917,12 +1107,55 @@ async function _measEcMult(ms){ const C=window.BIP39Crypto;
   const t0=performance.now(); let n=0;
   while(performance.now()-t0<ms){ for(let i=0;i<50;i++){ C.privToPub((k0+BigInt(n))%C.SECP_N); n++; } }
   return n/((performance.now()-t0)/1000); }
+const _GP_WORDS=['abandon','ability','able','zoo','yellow','legal','winner','museum','sausage','worth'];
+function _mkGpuBatch(n){ const b=[]; for(let i=0;i<n;i++){ let s=''; for(let w=0;w<12;w++) s+=(s?' ':'')+_GP_WORDS[(i+w*7)%_GP_WORDS.length]; b.push(s); } return b; }
 async function _measGpuKdf(ms){
-  const words=['abandon','ability','able','zoo','yellow','legal','winner','museum','sausage','worth'];
-  const batch=[]; for(let i=0;i<8192;i++){ let s=''; for(let w=0;w<12;w++) s+=(s?' ':'')+words[(i+w*7)%words.length]; batch.push(s); }
-  await window.GpuCrack.gpuSeedsWords(batch.slice(0,64),'');       // warm
+  if(IS_MOBILE){
+    // Chunk chosen by crash-recovery (see gpuNextChunk/gpuCommitChunk): start big, halve on
+    // each watchdog-crash (detected as a reload with a pending attempt), remember
+    // the safe size. A too-big dispatch here reloads the tab -- the breadcrumb is
+    // already persisted, so the reload path retries smaller.
+    const gid=_gpuGid();
+    const chunk = FORCE_CHUNK>0 ? FORCE_CHUNK : gpuNextChunk(gid);
+    if(chunk<=0){ window.__gpuProbeStr='disabled (GPU too small for the seed kernel)'; return 0; }
+    window.GpuCrack.setMobChunk(chunk);
+    try{ const e=$('#bs-gpuk'); if(e) e.textContent=t('gpuTesting').replace('{n}',fmtBig(chunk)); }catch(_){}  // show the chunk being tested
+    const BATCH=Math.min(8192, Math.max(1024, chunk*4));       // several chunks so DEPTH pipelines (hides mobile readback)
+    const win=Math.min(ms,2500);
+    const batch=_mkGpuBatch(BATCH);
+    if(FORCE_CHUNK>0){                                         // ?chunk=N diagnostic: measure this exact size, no recovery/halving
+      await window.GpuCrack.gpuSeedsWords(_mkGpuBatch(64),'');
+      let ft0=performance.now(), fn=0;
+      while(performance.now()-ft0<win){ await window.GpuCrack.gpuSeedsWords(batch,''); fn+=BATCH; await new Promise(r=>setTimeout(r,0)); }
+      window.__gpuProbeStr='chunk='+chunk+' (forced)';
+      return fn/((performance.now()-ft0)/1000);
+    }
+    _gpuCalibrating=true;                                      // a soft device-loss now -> reload into halving recovery
+    // Hang watchdog: some GPUs wedge without firing device.lost, so the dispatch
+    // never returns and the tab doesn't reload on its own. If a run overruns, reload.
+    const hang=setTimeout(()=>{ _gpuCrashReload(); }, GCAL_HANG_MS);
+    let gt0=performance.now(), gn=0;
+    try{
+      // Warm/INIT first. If the GPU isn't ready (still re-acquiring after a reset)
+      // this throws -> caught upstream as a TRANSIENT (retry the same size), never
+      // committed as a chunk crash. Only after it succeeds do we commit the risky
+      // full-size run -- that's what stopped a good size (512 on the S6) from being
+      // halved to the floor by rapid recovery reloads.
+      await window.GpuCrack.gpuSeedsWords(_mkGpuBatch(64),''); // gentle warm at a safe size (clock ramp)
+      if(!gpuCommitChunk(gid,chunk)){ clearTimeout(hang); _gpuCalibrating=false; window.__gpuProbeStr='disabled (GPU too small for the seed kernel)'; return 0; }
+      gt0=performance.now();
+      while(performance.now()-gt0<win){ await window.GpuCrack.gpuSeedsWords(batch,''); gn+=BATCH;
+        await new Promise(r=>setTimeout(r,0)); }
+    } finally { clearTimeout(hang); _gpuCalibrating=false; }
+    gpuAttemptOK(gid,chunk);                                   // survived -> this size is safe; clear the breadcrumb
+    window.__gpuProbeStr='chunk='+chunk;
+    return gn/((performance.now()-gt0)/1000);
+  }
+  const BATCH=8192, batch=_mkGpuBatch(BATCH);
+  await window.GpuCrack.gpuSeedsWords(batch.slice(0,64),'');   // warm
   const t0=performance.now(); let n=0;
-  while(performance.now()-t0<ms){ await window.GpuCrack.gpuSeedsWords(batch,''); n+=8192; }
+  while(performance.now()-t0<ms){ await window.GpuCrack.gpuSeedsWords(batch,''); n+=BATCH;
+    await new Promise(r=>setTimeout(r,0)); }                   // yield: keep the tab responsive
   return n/((performance.now()-t0)/1000); }
 
 // Rough = one ~5s run per test. Thorough = 3 x ~20s runs per test, keep the
@@ -943,14 +1176,147 @@ async function runBenchAll(){
     const ecMult = await worst('ec', _measEcMult);     set('ec', fmtBig(Math.round(ecMult))+' /s');
     let gpuKdf=null, gpuId=CUR_GPU_ID||null;
     if(HAS_GPU && window.GpuCrack){
-      try{ gpuId=(await window.GpuCrack.getGpuInfo())||gpuId; gpuKdf=await worst('gpuk', _measGpuKdf); set('gpuk', fmtBig(Math.round(gpuKdf))+' /s'); }
+      // Snapshot the CPU results before the GPU step. On mobile a too-big GPU
+      // dispatch can trip the watchdog and reload the tab; recovery reopens this
+      // dialog with these filled in and redoes only the GPU (see resumeBenchGpu).
+      if(IS_MOBILE) benchPartialSave({ gid:_gpuGid(), depth:(thorough?'thorough':'rough'), cpuKdf, sweepAgg:cpuSweep, sweepCores, ecMult, ts:Date.now() });
+      try{ gpuId=(await window.GpuCrack.getGpuInfo())||gpuId; gpuKdf=await worst('gpuk', _measGpuKdf);
+           set('gpuk', fmtBig(Math.round(gpuKdf))+' /s'+((IS_MOBILE&&window.__gpuProbeStr)?'  ['+window.__gpuProbeStr+']':'')); }
       catch(e){ set('gpuk','failed: '+e.message); }
     }
     BENCH={ gpuId, cpuKdf, sweepAgg:cpuSweep, sweepCores, ecMult, gpuKdf, depth:(thorough?'thorough':'rough'), ts:Date.now() };
-    saveBench(); applyBench(); renderBenchCard(); recompute();
-    run.textContent=t('benchDoneBtn');
-    setTimeout(()=>{ closeBenchModal(); run.textContent=t('benchRun'); run.disabled=false; }, 700);
+    saveBench(); applyBench(); renderBenchCard(); recompute(); benchPartialClear();
+    // ---- Stage 2: per-mode calibration by real timed cracks (auto after Stage 1) ----
+    // Runs each mode (words/passphrase/joint) on each backend against an unreachable
+    // target for ~22s and reads the steady-state rate -> honest per-mode ETAs.
+    const gpuAvail = !!(HAS_GPU && window.GpuCrack && gpuKdf);
+    { const steps=$('#benchSteps'), bes=gpuAvail?['gpu','cpu']:['cpu'];
+      const modes=[['words',t('calWords')],['passphrase',t('calPass')],['joint',t('calJoint')]];
+      let h='<div class="benchstep" style="border-top:1px solid var(--edge);margin-top:6px;padding-top:8px"><span style="opacity:.72">'+t('calTitle')+'</span><span class="st">'+(gpuAvail?'GPU + CPU':'CPU')+'</span></div>';
+      for(const be of bes) for(const [mk,ml] of modes) h+=benchStepRow('cal-'+mk+'-'+be, ml+' · '+(be==='gpu'?'GPU':'CPU'));
+      if(steps) steps.insertAdjacentHTML('beforeend', h);
+    }
+    const cal = await calibrate(gpuAvail, (mode,be,phase,rate)=>{
+      set('cal-'+mode+'-'+be, phase==='done' ? (rate>0? fmtBig(Math.round(rate))+' /s' : '—') : t('calRunningStep'));
+    });
+    BENCH.cal2 = cal; saveBench(); applyBench(); recompute();
+    // Stay open so the user can read / copy the results (esp. the GPU probe
+    // curve) -- they close the dialog manually with the ✕ or Close button.
+    run.textContent=t('benchRun'); run.disabled=false;
   }catch(e){ run.disabled=false; run.textContent=t('benchRun'); alert('benchmark failed: '+e.message); }
+}
+// ===================== Stage 2: per-mode calibration =====================
+// The raw benchmark (Stage 1) measures isolated rates; it can't predict the real
+// end-to-end throughput of a crack because each MODE has a different bottleneck
+// (words = sweep+checksum+GPU-hash of valids+EC; passphrase = GPU-seed+EC; joint =
+// both). So we run three REAL cracks -- one per mode, on each backend -- against a
+// self-made target placed at an index sized for ~25s, and measure the achieved
+// rate. Future ETAs then use keyspace / measured_rate: honest by construction.
+const CAL_MN   = 'legal winner thank year wave sausage worth useful legal winner thank yellow';   // valid; fixed base for passphrase
+const CAL_W12  = 'slow|edge|build|grunt|acid|rich|garment|address|open|health|voyage|frozen';     // 12 distinct valid words (words/joint)
+const CAL_W11  = 'slow edge build grunt acid rich garment address open health voyage';            // joint: 11 fixed + 1 unknown
+const CAL_RUN_S = 22, CAL_PURPOSE = 84;   // each run ~22s; p2wpkh (bip84)
+// Sizing the target index for ~N seconds is circular (you'd need the rate you're
+// measuring), so instead each run goes against an UNREACHABLE target for a fixed
+// time and we read the STEADY-STATE rate = slope of the progress count over the
+// last ~60% (worker spin-up / GPU warm-up excluded). The count is in the same unit
+// the crack's progress uses -> ETA = (estimator's total for that mode) / rate.
+function _calRate(samples){
+  if(!samples.length) return 0;
+  const last=samples[samples.length-1];
+  if(samples.length<2) return last.t>0 ? last.c/(last.t/1000) : 0;   // very slow mode (few samples): rough rate beats 0
+  const cut=last.t*0.4;
+  let base=samples[0]; for(const s of samples){ if(s.t>=cut){ base=s; break; } }
+  const dt=(last.t-base.t)/1000, dc=last.c-base.c;
+  return (dt>0 && dc>0) ? dc/dt : (last.t>0 ? last.c/(last.t/1000) : 0);
+}
+function _calAddrTarget(mn, pass){ const C=window.BIP39Crypto; return C.addressTarget(C.mnemonicToSeed(mn, pass||''), CAL_PURPOSE, 0, 0, 0, 0); }
+function _calTargetHex(taddr){ return { kind:'address', addrType:taddr.type, programHex:window.BIP39Crypto.toHex(taddr.program) }; }
+const _calCap=(t0)=>()=>(performance.now()-t0)>CAL_RUN_S*1000;
+// count in "hashed" units: words = valids hashed (extra.seeded, the GPU/EC
+// bottleneck, consistent across backends); passphrase/joint = candidates (done).
+const _calCount=(mode)=>(done,tot,rate,extra)=> mode==='words' ? ((extra&&extra.seeded)||0) : done;
+
+// WORDS: 12 distinct words, unknown order {{12!?}}, checksum on. Unreachable target
+// (CAL_MN is not a permutation of CAL_W12). Rate = valids-hashed/s.
+async function _calWords(gpu){
+  const pat='(('+CAL_W12+') ){{12!?}}', set=RXE.parse(pat), total=Number(set.cardinality());
+  const taddr=_calAddrTarget(CAL_MN,''), plan=[{purpose:CAL_PURPOSE,account:0,coin:0}], nW=_benchCores();
+  const t0=performance.now(), samples=[], cnt=_calCount('words');
+  const onProgress=(d,t,r,e)=>{ samples.push({t:performance.now()-t0, c:cnt(d,t,r,e)}); };
+  const isCancelled=_calCap(t0);
+  if(gpu) await crackWordsHybrid({ pattern:pat, passphrase:'', requireChecksum:true, generate:false, plan, pathTemplate:null, accounts:1, tcc:null, taddr, changes:[0], gap:1, total, nWorkers:nW, onProgress, isCancelled });
+  else    await cpuCrackMT({ mode:'words', pattern:pat, passphrase:'', requireChecksum:true, generate:false, plan, pathTemplate:null, accounts:1, target:_calTargetHex(taddr), changes:[0], gap:1, total, nWorkers:nW, onProgress, isCancelled, single:()=>Promise.resolve({found:null}) });
+  set.free();
+  return { rate:_calRate(samples) };
+}
+// PASSPHRASE: fixed mnemonic, [a-z]{6} passphrases, unreachable target (an
+// uppercase passphrase is outside [a-z]{6}). Rate = candidates/s (GPU seed + EC).
+async function _calPass(gpu){
+  const pat='[a-z]{6}', set=RXE.parse(pat), total=Number(set.cardinality());
+  const taddr=_calAddrTarget(CAL_MN, 'ZZZZZZ');   // not in [a-z]{6} -> never hit
+  const plan=[{purpose:CAL_PURPOSE,account:0,coin:0}], nW=_benchCores();
+  const t0=performance.now(), samples=[], cnt=_calCount('passphrase');
+  const onProgress=(d,t,r,e)=>{ samples.push({t:performance.now()-t0, c:cnt(d,t,r,e)}); };
+  const isCancelled=_calCap(t0);
+  const common={ total, unrank:i=>set.unrank(BigInt(i)), unrankBatch:(s,c)=>set.unrankBatch(s,c), plan, accounts:1, onProgress, isCancelled };
+  if(gpu) await window.GpuCrack.crackAddress({ ...common, mnemonic:CAL_MN, target:taddr, changes:[0], gap:1, batchSize:2048, nWorkers:nW, workerUrl:CRACKWORKER_URL });
+  else    await cpuCrackMT({ mode:'passphrase', pattern:pat, mnemonic:CAL_MN, passphrase:'', requireChecksum:false, generate:false, plan, pathTemplate:null, accounts:1, target:_calTargetHex(taddr), changes:[0], gap:1, total, nWorkers:nW, onProgress, isCancelled, single:()=>Promise.resolve({found:null}) });
+  set.free();
+  return { rate:_calRate(samples) };
+}
+// JOINT: outer mnemonic (11 fixed + 1 unknown, checksum-filtered) x inner
+// passphrase ([a-z]{3}), unreachable target. Rate = aggregate candidates/s.
+async function _calJoint(gpu){
+  const outerPat=CAL_W11+' [:bip39-en:]', innerPat='[a-z]{3}';
+  const jointW=RXE.parse(outerPat), inner=RXE.parse(innerPat);
+  const wCard=jointW.cardinality(), innerTotal=Number(inner.cardinality());
+  const taddr=_calAddrTarget(CAL_MN, 'ZZ');   // unreachable
+  const nW=_benchCores(), t0=performance.now(), samples=[], cnt=_calCount('joint');
+  const common={ total:innerTotal, unrank:i=>inner.unrank(BigInt(i)), unrankBatch:(s,c)=>inner.unrankBatch(s,c),
+    plan:[{purpose:CAL_PURPOSE,account:0,coin:0}], accounts:1,
+    onProgress:(d,t,r,e)=>{ samples.push({t:performance.now()-t0, c:cnt(d,t,r,e)}); },
+    isCancelled:_calCap(t0) };
+  await crackJoint({ jointW, wCard, reqCsum:true, generate:false, gpu, target:'address', tcc:null, taddr, common, changes:[0], gap:1, nWorkers:nW, jointTotal:Number(wCard)*innerTotal, pathTemplate:null, innerPat });
+  jointW.free(); inner.free();
+  return { rate:_calRate(samples) };
+}
+// Run all modes x backends. onStep(mode,backend,phase,rate) for UI ('run' before,
+// 'done' after each). Returns {words:{gpu,cpu},...} of candidates/s.
+async function calibrate(gpuAvail, onStep){
+  const backends = gpuAvail ? ['gpu','cpu'] : ['cpu'];
+  const runners = { words:_calWords, passphrase:_calPass, joint:_calJoint };
+  const out={ words:{}, passphrase:{}, joint:{} };
+  const _was=cracking; cracking=true;
+  try{
+    for(const be of backends){ const gpu=be==='gpu';
+      for(const mode of ['words','passphrase','joint']){
+        if(onStep) onStep(mode,be,'run');
+        let rate=0; try{ rate=(await runners[mode](gpu)).rate; }catch(e){ rate=0; }
+        out[mode][be]=rate;
+        if(onStep) onStep(mode,be,'done',rate);
+      }
+    }
+  } finally { cracking=_was; }
+  return out;
+}
+// Look up the Stage-2 measured rate for (mode, backend), if calibrated.
+function _calRateFor(mode, backend){
+  const m=(mode==='joint'||mode==='passphrase'||mode==='words')?mode:null;
+  if(!m || !BENCH || !BENCH.cal2 || !BENCH.cal2[m]) return 0;
+  const v=BENCH.cal2[m][backend]; return (typeof v==='number' && v>0) ? v : 0;
+}
+// Replace the model's analytic ETA with keyspace / measured_rate (honest, from a
+// real timed crack). totalCandidates is in the same "hashed" unit the calibration
+// counted: valids for words, candidates for passphrase, the product for joint.
+function _applyCalibratedEta(r, backend){
+  if(!r || r.unbounded || !r.eta || r.totalCandidates==null) return;
+  const cr=_calRateFor(r.mode, backend); if(cr<=0) return;
+  const secs=Number(r.totalCandidates)/cr, E=window.BIP39Estimator;
+  r.eta.exhaustSeconds=secs; r.eta.expectedHitSeconds=secs/2;
+  r.eta.timeToExhaust=E.humanTime(secs); r.eta.expectedTimeToHit=E.humanTime(secs/2);
+  r.eta.kdfRate=cr; r.eta.calibrated=true; r.eta.rateSource=(LANG==='pt'?'quebra cronometrada':'timed crack');
+  if(E.verdictTier) r.tier=E.verdictTier(secs);
 }
 // The right-pane card summarising the stored benchmark (or a prompt to run it).
 function renderBenchCard(){
@@ -1229,7 +1595,7 @@ async function onCrack(){
         onProgress:common.onProgress, isCancelled:common.isCancelled };
       r = elecGpu ? await crackElectrumGpu(eArgs) : await crackElectrum(eArgs);   // words+GPU -> GPU-seeded; else CPU
     } else if(mode==='joint'){                                 // both axes vary: outer mnemonic x inner passphrase sweep
-      r = await crackJoint({ jointW, wCard, reqCsum, generate, gpu, target, tcc, taddr, common, changes, gap:gapN, nWorkers, jointTotal, pathTemplate });
+      r = await crackJoint({ jointW, wCard, reqCsum, generate, gpu, target, tcc, taddr, common, changes, gap:gapN, nWorkers, jointTotal, pathTemplate, innerPat:passPat });
     } else if(mode==='words'){
       if(gpu && (reqCsum||generate) && typeof Worker!=='undefined')  // parallel sweep (workers, generate rewrites the last word) + GPU seed
         r = await crackWordsHybrid({ pattern:patStr, passphrase:passFixed, requireChecksum:reqCsum, generate, plan, pathTemplate, accounts:nacct, tcc, taddr, changes, gap:gapN, total, nWorkers, onProgress:common.onProgress, isCancelled:common.isCancelled, resumeFrom, onCheckpoint });
@@ -1330,13 +1696,25 @@ async function crackJoint(o){
       const seedsDone=completedValid*pTotal+done, el=(performance.now()-t0)/1000, agg=el>0?seedsDone/el:0;
       o.common.onProgress(seedsDone, o.jointTotal, agg, { seeded: extra?extra.seeded:seedsDone, seedRate: extra?extra.seedRate:agg });
     };
-    let r;
+    // CPU inner sweep is MULTICORE (cpuCrackMT), same as the standalone passphrase
+    // crack -- it needs the inner passphrase pattern string (o.innerPat) so the
+    // workers can enumerate it. Falls back to the single-thread inner if the pattern
+    // wasn't supplied. (The OUTER mnemonic axis is still swept on this thread.)
+    let r; const C=window.BIP39Crypto;
     if(o.target==='xpub'){
       const args={...o.common, onProgress:innerProg, mnemonic:mn, targetChainCode:o.tcc, batchSize:4096};
-      r = o.gpu ? await window.GpuCrack.crackXpub(args) : await cpuCrack(args);
+      r = o.gpu ? await window.GpuCrack.crackXpub(args)
+        : o.innerPat ? await cpuCrackMT({ mode:'passphrase', pattern:o.innerPat, mnemonic:mn, passphrase:'', requireChecksum:false, generate:false,
+            plan:o.common.plan, accounts:o.common.accounts||1, target:{kind:'xpub',chainCodeHex:C.toHex(o.tcc)},
+            changes:o.changes, gap:o.gap, total:pTotal, nWorkers:o.nWorkers, onProgress:innerProg, isCancelled:o.common.isCancelled, single:()=>cpuCrack(args) })
+        : await cpuCrack(args);
     } else {
       const args={...o.common, onProgress:innerProg, mnemonic:mn, target:o.taddr, changes:o.changes, gap:o.gap, batchSize:2048, nWorkers:o.nWorkers, workerUrl:CRACKWORKER_URL};
-      r = o.gpu ? await window.GpuCrack.crackAddress(args) : await cpuCrackAddress(args);
+      r = o.gpu ? await window.GpuCrack.crackAddress(args)
+        : o.innerPat ? await cpuCrackMT({ mode:'passphrase', pattern:o.innerPat, mnemonic:mn, passphrase:'', requireChecksum:false, generate:false,
+            plan:o.common.plan, accounts:o.common.accounts||1, target:{kind:'address',addrType:o.taddr.type,programHex:C.toHex(o.taddr.program)},
+            changes:o.changes, gap:o.gap, total:pTotal, nWorkers:o.nWorkers, onProgress:innerProg, isCancelled:o.common.isCancelled, single:()=>cpuCrackAddress(args) })
+        : await cpuCrackAddress(args);
     }
     if(r && r.error) return r;
     if(r && r.stopped) return {stopped:true};
@@ -1506,6 +1884,7 @@ function cpuCrackMT(o){
       let w; try{ w=new Worker(CRACKWORKER_URL); }catch(e){ cleanup(); return resolve(o.single()); }
       workers.push(w);
       w.onmessage=(e)=>{ const m=e.data; if(finished) return;
+        if (o.isCancelled && o.isCancelled()){ finish({stopped:true}); return; }   // catch cancel under a message flood (poll can starve)
         if (m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
         else if (m.type==='hit'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); finish({found:m.candidate, path:m.path, index:m.index}); }
         else if (m.type==='done'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); if(++done>=spawned) finish({found:null}); }
@@ -1585,6 +1964,7 @@ function crackWordsHybrid(o){
     {
       for(let i=0;i<nW;i++){ let w; try{ w=new Worker(WURL); }catch(e){ break; } dWorkers.push(w); dIdle.push(w);
         w.onmessage=(e)=>{ const m=e.data; if(finished) return;
+          if(o.isCancelled && o.isCancelled()){ finish({stopped:true}); return; }
           if(m.type==='derivehit'){ const task=dPending.get(m.batchId); const hitc=task.batch[m.index]; finish({found:hitc.mn, path:m.path, index:hitc.index}); }
           else if(m.type==='derivedone'){ dPending.delete(m.batchId); dCompleted++; dIdle.push(w); drainDerive(); pump(); report(); maybeDone(); } };
         w.onerror=(ev)=>finish({error:(ev&&ev.message)||'derive worker error'});
@@ -1592,6 +1972,7 @@ function crackWordsHybrid(o){
     }
     async function pump(){
       if(seeding||finished) return; seeding=true;
+      if(o.isCancelled && o.isCancelled()){ seeding=false; finish({stopped:true}); return; }
       while(queue.length && !finished){
         // backpressure: don't seed far ahead of the derive pool
         if(dQueue.length > nW*3){ break; }
@@ -1621,6 +2002,11 @@ function crackWordsHybrid(o){
     };
     if(startAt>=o.total){ finish({found:null}); return; }
     const onSweepMsg=(w)=>(e)=>{ const m=e.data; if(finished) return;
+      // Check cancel HERE, not only in the 200ms poll: a fast sweep can flood the
+      // main thread with 'cand' messages and starve the macrotask poll, leaving
+      // Stop (and the calibration time-cap) unresponsive. The message handlers
+      // still run under that flood, so the check lands.
+      if(o.isCancelled && o.isCancelled()){ finish({stopped:true}); return; }
       if(m.type==='cand'){ sweptCur[m.id]=m.swept; for(const it of m.items) queue.push(it); report(); pump(); }
       else if(m.type==='progress'){ sweptCur[m.id]=m.swept; report(); }
       else if(m.type==='done'){
@@ -1766,6 +2152,7 @@ function recompute(){
   let r;
   try{ r = BIP39Estimator.estimate(input,{rxe:RXE,validator}); }
   catch(e){ $('#results').innerHTML='<div class="card"><h3>parse error</h3><div class="err">'+esc(e.message)+'</div></div>'; $('#strategyLine').innerHTML=''; return; }
+  _applyCalibratedEta(r, backend);   // replace the model's analytic ETA with the Stage-2 measured rate when available
   render(r, input);
   $('#strategyLine').innerHTML = strategyText(r);
   // Wrong-box guard: an address/xpub pasted into the mnemonic or passphrase box.
@@ -1915,6 +2302,7 @@ function renderDictList(){
     <h3>⏱ <span data-i18n="benchTitle">Benchmark this browser</span> <button class="x" id="benchClose">✕</button></h3>
     <div class="body">
       <div class="note" data-i18n="benchIntro" style="margin-bottom:10px"></div>
+      <div class="warnmsg" id="benchMobileNote" hidden style="margin-bottom:10px"></div>
       <div style="margin-bottom:12px"><label class="f" style="display:inline" data-i18n="benchDepth">Depth</label>
         <select id="benchMode" style="width:auto;margin-left:8px;display:inline-block">
           <option value="rough" data-i18n="benchRough">Rough (~15s)</option>

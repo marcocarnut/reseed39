@@ -464,7 +464,7 @@ function mergeRates(cal) {
 
 const _modelExports = {
   estimate, checksumSurvival, pathMultiplier,
-  humanCount, humanTime, mergeRates,
+  humanCount, humanTime, mergeRates, verdictTier,
   DEFAULT_RATES, GREEN_MAX_SEC, YELLOW_MAX_SEC, MULTS_PER_ADDRESS,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = _modelExports;
