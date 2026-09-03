@@ -248,17 +248,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b89"></script>
-<script src="../wasm/rxecore_api.js?v=b89"></script>
+<script src="../wasm/rxecore.js?v=b90"></script>
+<script src="../wasm/rxecore_api.js?v=b90"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b89"></script>
-<script src="../estimator/model.js?v=b89"></script>
-<script src="../estimator/wordset.js?v=b89"></script>
-<script src="../estimator/bip39crypto.js?v=b89"></script>
-<script src="../estimator/electrum.js?v=b89"></script>
-<script src="../estimator/gpucrack.js?v=b89"></script>
-<script src="../estimator/i18n.js?v=b89"></script>
+<script src="../estimator/bip39.js?v=b90"></script>
+<script src="../estimator/model.js?v=b90"></script>
+<script src="../estimator/wordset.js?v=b90"></script>
+<script src="../estimator/bip39crypto.js?v=b90"></script>
+<script src="../estimator/electrum.js?v=b90"></script>
+<script src="../estimator/gpucrack.js?v=b90"></script>
+<script src="../estimator/i18n.js?v=b90"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -267,7 +267,7 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b89';
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b90';
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -718,7 +718,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b89' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b90' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -1682,7 +1682,65 @@ async function onCrack(){
 // Only practical when the product is small -- the estimator's verdict warns when
 // it isn't; Stop aborts. A huge outer mnemonic set would sweep slowly on the host
 // (that axis isn't worker-parallelised here), but such a joint is RED anyway.
+// CPU joint with a PERSISTENT worker pool: spawn nW workers ONCE and reuse them
+// for every outer mnemonic's inner passphrase sweep, instead of spawning +
+// terminating a pool per mnemonic. The worker also caches the parsed passphrase
+// set (same innerPat every time), so re-parse is avoided too. The OUTER mnemonic
+// axis is still swept + checksum-filtered on this thread (unchanged). Only used
+// for the CPU address/xpub joint with a known inner pattern.
+async function crackJointCpuPooled(o){
+  const C=window.BIP39Crypto, pTotal=o.common.total, t0=performance.now();
+  const nW=Math.max(1, Math.min(o.nWorkers||1, 32));
+  const targetHex = o.target==='xpub' ? {kind:'xpub',chainCodeHex:C.toHex(o.tcc)}
+                                      : {kind:'address',addrType:o.taddr.type,programHex:C.toHex(o.taddr.program)};
+  const pool=[]; for(let k=0;k<nW;k++){ let w; try{ w=new Worker(CRACKWORKER_URL); }catch(e){ break; } pool.push(w); }
+  if(!pool.length) return null;   // no workers -> caller falls back to the single-thread loop
+  const wN = o.wCard===null ? Infinity : Number(o.wCard);
+  const cancelled=()=>!cracking || (o.common.isCancelled && o.common.isCancelled());
+  let completedValid=0, result=null;
+  // run the inner passphrase sweep for a fixed mnemonic across the pool, resolve
+  // with {found}|{stopped}|{error}|{done}. Reuses `pool` -- no spawn/terminate.
+  const innerSweep=(mn)=> new Promise((resolve)=>{
+    const per=Math.ceil(pTotal/pool.length), swept=new Array(pool.length).fill(0), seeded=new Array(pool.length).fill(0);
+    let done=0, spawned=0, settled=false;
+    const settle=(r)=>{ if(settled) return; settled=true; clearInterval(poll); pool.forEach(w=>{ w.onmessage=null; w.onerror=null; }); resolve(r); };
+    const report=()=>{ const S=swept.reduce((a,b)=>a+b,0), G=seeded.reduce((a,b)=>a+b,0), el=(performance.now()-t0)/1000||1e-6;
+      const base=completedValid*pTotal; o.common.onProgress(base+S, o.jointTotal, (base+S)/el, {seeded:base+G, seedRate:(base+G)/el}); };
+    const poll=setInterval(()=>{ if(cancelled()) settle({stopped:true}); }, 200);
+    for(let k=0;k<pool.length;k++){ const start=k*per, end=Math.min(pTotal,(k+1)*per); if(start>=end) continue; spawned++;
+      const w=pool[k];
+      w.onmessage=(e)=>{ const m=e.data; if(settled) return; if(cancelled()){ settle({stopped:true}); return; }
+        if(m.type==='progress'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); }
+        else if(m.type==='hit'){ swept[m.id]=m.swept; report(); settle({found:m.candidate, path:m.path, index:m.index}); }
+        else if(m.type==='done'){ swept[m.id]=m.swept; seeded[m.id]=m.seeded; report(); if(++done>=spawned) settle({found:null}); }
+        else if(m.type==='error'){ settle({error:m.message}); } };
+      w.onerror=(ev)=>settle({error:(ev&&ev.message)||'worker error'});
+      w.postMessage({ type:'run', id:k, wordlist:ENGLISH, pattern:o.innerPat, mode:'passphrase', mnemonic:mn, passphrase:'',
+        requireChecksum:false, generate:false, plan:o.common.plan, pathTemplate:null, accounts:o.common.accounts||1,
+        target:targetHex, changes:o.changes, gap:o.gap, start, end, progressEvery:2000 }); }
+    if(spawned===0) settle({found:null});
+  });
+  try{
+    for(let mi=0; mi<wN; mi++){
+      if(cancelled()){ result={stopped:true}; break; }
+      let mn=o.jointW.unrank(BigInt(mi));
+      if(o.generate){ mn = mn ? VALIDATOR.complete(mn) : null; if(mn===null) continue; }
+      else if(o.reqCsum && !(mn && VALIDATOR.isValid(mn))) continue;
+      const r=await innerSweep(mn);
+      if(r.error){ result=r; break; }
+      if(r.stopped){ result={stopped:true}; break; }
+      if(r.found!=null){ result={found:mn, jointPass:r.found, path:r.path, index:mi}; break; }
+      completedValid++;
+    }
+  } finally { pool.forEach(w=>{ try{ w.terminate(); }catch(e){} }); }
+  return result || {found:null};
+}
 async function crackJoint(o){
+  // Fast path: CPU joint with a known inner pattern -> a persistent worker pool
+  // reused across the outer sweep (avoids per-mnemonic spawn/terminate + re-parse).
+  if(!o.gpu && o.innerPat && typeof Worker!=='undefined'){
+    const r=await crackJointCpuPooled(o); if(r) return r;   // null => no workers, fall through
+  }
   const pTotal=o.common.total, t0=performance.now();
   const wN = o.wCard===null ? Infinity : Number(o.wCard);
   let completedValid=0;   // valid mnemonics fully swept with no hit (for the aggregate progress base)
