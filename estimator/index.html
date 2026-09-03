@@ -253,17 +253,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b94"></script>
-<script src="../wasm/rxecore_api.js?v=b94"></script>
+<script src="../wasm/rxecore.js?v=b95"></script>
+<script src="../wasm/rxecore_api.js?v=b95"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b94"></script>
-<script src="../estimator/model.js?v=b94"></script>
-<script src="../estimator/wordset.js?v=b94"></script>
-<script src="../estimator/bip39crypto.js?v=b94"></script>
-<script src="../estimator/electrum.js?v=b94"></script>
-<script src="../estimator/gpucrack.js?v=b94"></script>
-<script src="../estimator/i18n.js?v=b94"></script>
+<script src="../estimator/bip39.js?v=b95"></script>
+<script src="../estimator/model.js?v=b95"></script>
+<script src="../estimator/wordset.js?v=b95"></script>
+<script src="../estimator/bip39crypto.js?v=b95"></script>
+<script src="../estimator/electrum.js?v=b95"></script>
+<script src="../estimator/gpucrack.js?v=b95"></script>
+<script src="../estimator/i18n.js?v=b95"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -272,7 +272,7 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b94';
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b95';
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -738,7 +738,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b94' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b95' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -1295,7 +1295,7 @@ async function _calPass(gpu, tt){
   const isCancelled=_calCap(t0);
   const common={ total, unrank:i=>set.unrank(BigInt(i)), unrankBatch:(s,c)=>set.unrankBatch(s,c), plan, accounts:1, onProgress, isCancelled };
   if(gpu){ if(isAddr) await window.GpuCrack.crackAddress({ ...common, mnemonic:CAL_MN, target:taddr, changes:[0], gap:1, batchSize:2048, nWorkers:nW, workerUrl:CRACKWORKER_URL });
-           else       await window.GpuCrack.crackXpub({ ...common, mnemonic:CAL_MN, targetChainCode:tcc, batchSize:4096 }); }
+           else       await window.GpuCrack.crackXpub({ ...common, mnemonic:CAL_MN, targetChainCode:tcc, batchSize:4096, nWorkers:nW, workerUrl:CRACKWORKER_URL }); }
   else    await cpuCrackMT({ mode:'passphrase', pattern:pat, mnemonic:CAL_MN, passphrase:'', requireChecksum:false, generate:false, plan, pathTemplate:null, accounts:1, target:_calTargetHex(tt,taddr,tcc), changes:[0], gap:1, total, nWorkers:nW, onProgress, isCancelled, single:()=>Promise.resolve({found:null}) });
   set.free();
   return { rate:_calRate(samples) };
@@ -1655,7 +1655,7 @@ async function onCrack(){
       else                                                    // CPU multicore
         r = await mt(()=>cpuCrackWords({...common, passphrase:passFixed, generate, tcc, taddr, changes, gap:gapN, requireChecksum:reqCsum}));
     } else if(target==='xpub'){
-      const args={...common, mnemonic:mnFixed, targetChainCode:tcc, batchSize:4096};
+      const args={...common, mnemonic:mnFixed, targetChainCode:tcc, batchSize:4096, nWorkers, workerUrl:CRACKWORKER_URL};
       r = gpu ? await window.GpuCrack.crackXpub(args) : await mt(()=>cpuCrack(args));
     } else {
       const args={...common, mnemonic:mnFixed, target:taddr, changes, gap:gapN, batchSize:2048,
@@ -1811,7 +1811,7 @@ async function crackJoint(o){
     // wasn't supplied. (The OUTER mnemonic axis is still swept on this thread.)
     let r; const C=window.BIP39Crypto;
     if(o.target==='xpub'){
-      const args={...o.common, onProgress:innerProg, mnemonic:mn, targetChainCode:o.tcc, batchSize:4096};
+      const args={...o.common, onProgress:innerProg, mnemonic:mn, targetChainCode:o.tcc, batchSize:4096, nWorkers:o.nWorkers, workerUrl:CRACKWORKER_URL};
       r = o.gpu ? await window.GpuCrack.crackXpub(args)
         : o.innerPat ? await cpuCrackMT({ mode:'passphrase', pattern:o.innerPat, mnemonic:mn, passphrase:'', requireChecksum:false, generate:false,
             plan:o.common.plan, accounts:o.common.accounts||1, target:{kind:'xpub',chainCodeHex:C.toHex(o.tcc)},
@@ -2413,7 +2413,7 @@ function renderDictList(){
     <div class="body">
       <div class="note" data-i18n="benchIntro" style="margin-bottom:10px"></div>
       <div class="warnmsg" id="benchMobileNote" hidden style="margin-bottom:10px"></div>
-      <div class="warnmsg" data-i18n="benchTimeNote" style="margin-bottom:10px">⏳ The full benchmark can take about five minutes.</div>
+      <div class="warnmsg" data-i18n="benchTimeNote" style="margin-bottom:10px">⏳ The full benchmark runs three stages (about five minutes), and your device may feel very sluggish while it runs.</div>
       <div class="benchtabs" id="benchTabs">
         <button class="btab on" data-stage="1" data-i18n="benchTab1">Stage 1 · raw</button>
         <button class="btab" data-stage="2" data-i18n="benchTab2">Stage 2 · address</button>
