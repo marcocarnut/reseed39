@@ -257,8 +257,70 @@ async function benchmark(n){
 
 // Crack an xpub passphrase. opts: { mnemonic, targetChainCode(Uint8Array 32),
 // plan:[{purpose,account,coin}], total(Number), unrank(i)->string, batchSize,
-// onProgress(done,total,rate), isCancelled()->bool }.
+// nWorkers, workerUrl, onProgress(done,total,rate), isCancelled()->bool }.
+// Parallel when workers are available (the chain-code derive runs in the pool,
+// like the address EC path); single-thread inline otherwise.
 async function crackXpub(opts){
+  const nW = Math.max(1, Math.min(opts.nWorkers||1, (self.navigator&&navigator.hardwareConcurrency)||8, 32));
+  if (typeof Worker==='undefined' || nW<=1 || !opts.workerUrl) return _crackXpubInline(opts);
+  return _crackXpubParallel(opts, nW);
+}
+// Parallel xpub: GPU seeds a batch, a worker pool does the (EC-free) BIP32
+// hardened-derive + chain-code compare off the main thread -- mirrors
+// _crackAddressParallel with an xpub derive message (worker handles targetKind).
+async function _crackXpubParallel(opts, nW){
+  const g = await initGpu();
+  const C = window.BIP39Crypto;
+  const mid = C.hmacMidstates(C.utf8(C.nfkd(opts.mnemonic)));
+  const plan = opts.plan && opts.plan.length ? opts.plan : [{purpose:84,account:0,coin:0}];
+  const total = opts.total, B = opts.batchSize||4096;
+  const chainCodeHex = C.toHex(opts.targetChainCode);
+  return new Promise((resolve)=>{
+    const workers=[], idle=[], pending=new Map(); const queue=[];
+    let finished=false, batchId=0, dispatched=0, completed=0, sweepDone=false, seeded=0, poll=0;
+    const t0=performance.now();
+    const cleanup=()=>{ clearInterval(poll); workers.forEach(w=>{try{w.terminate()}catch(e){}}); };
+    const finish=(r)=>{ if(finished) return; finished=true; cleanup(); resolve(r); };
+    const report=()=>{ if(opts.onProgress){ const el=(performance.now()-t0)/1000||1e-6; opts.onProgress(Math.min(seeded,total), total, seeded/el, {seeded, seedRate:seeded/el}); } };
+    const drain=()=>{ while(idle.length && queue.length && !finished){ const w=idle.shift(), task=queue.shift();
+      pending.set(task.batchId, task);
+      w.postMessage({ type:'derive', batchId:task.batchId, seedsBuf:task.seedsBuf, n:task.n, startIndex:task.start,
+        targetKind:'xpub', chainCodeHex, plan }, [task.seedsBuf]); } };
+    for (let i=0;i<nW;i++){
+      let w; try{ w=new Worker(opts.workerUrl); }catch(e){ cleanup(); return resolve(_crackXpubInline(opts)); }
+      workers.push(w); idle.push(w);
+      w.onmessage=(e)=>{ const m=e.data; if(finished) return;
+        if(opts.isCancelled && opts.isCancelled()){ finish({ stopped:true }); return; }   // don't let a message flood starve the poll
+        if(m.type==='derivehit'){ const info=pending.get(m.batchId); const j=m.index-info.start; finish({ found:info.passes[j], path:m.path, index: info.gidx ? info.gidx[j] : m.index }); }
+        else if(m.type==='derivedone'){ pending.delete(m.batchId); completed++; idle.push(w); drain();
+          if(sweepDone && completed>=dispatched && !finished) finish({ found:null }); }
+      };
+    }
+    poll=setInterval(()=>{ if(opts.isCancelled && opts.isCancelled()) finish({ stopped:true }); }, 200);
+    (async ()=>{
+      try{
+        for (let start=0; start<total && !finished; start+=B){
+          if(opts.isCancelled && opts.isCancelled()){ finish({ stopped:true }); return; }
+          const n=Math.min(B, total-start);
+          const cands = opts.unrankBatch ? opts.unrankBatch(start, n) : null;
+          let passes, gidx=null;   // maxlen: keep only <=_maxLen, remember original indices
+          if(_maxLen){ passes=[]; gidx=[]; for(let i=0;i<n;i++){ const p=cands?cands[i]:opts.unrank(start+i); if(p!=null && p.length<=_maxLen){ passes.push(p); gidx.push(start+i); } } }
+          else { passes=new Array(n); for (let i=0;i<n;i++) passes[i]=cands?cands[i]:opts.unrank(start+i); }
+          seeded+=n; if(passes.length===0){ report(); await new Promise(r=>setTimeout(r,0)); continue; }
+          const seeds = await gpuSeeds(g, mid, opts.mnemonic, passes);
+          if (finished) return;
+          queue.push({ batchId:batchId++, seedsBuf:seeds.buffer, n:passes.length, start, passes, gidx });
+          dispatched++; report(); drain();
+          await new Promise(r=>setTimeout(r,0));
+          while (queue.length > nW*3 && !finished) await new Promise(r=>setTimeout(r,4));   // backpressure: derive pool is the bottleneck
+        }
+        sweepDone=true;
+        if (completed>=dispatched && !finished) finish({ found:null });
+      }catch(e){ finish({ error:e.message }); }
+    })();
+  });
+}
+async function _crackXpubInline(opts){
   const g = await initGpu();
   const C = window.BIP39Crypto;
   const mid = C.hmacMidstates(C.utf8(C.nfkd(opts.mnemonic)));
