@@ -126,6 +126,11 @@
   .benchstep{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--edge);font-family:var(--mono);font-size:12.5px}
   .benchstep:last-child{border-bottom:0}
   .benchstep .st{color:var(--dim)}
+  .benchtabs{display:flex;gap:4px;margin:6px 0 10px}
+  .btab{flex:1;padding:6px 8px;font-size:12px;border:1px solid var(--edge);background:var(--panel2);color:var(--dim);border-radius:7px;cursor:pointer}
+  .btab.on{color:var(--fg);border-color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent)}
+  .benchspin{display:inline-block;width:12px;height:12px;border:2px solid var(--edge);border-top-color:var(--accent);border-radius:50%;animation:benchspin .7s linear infinite;vertical-align:middle}
+  @keyframes benchspin{to{transform:rotate(360deg)}}
   .benchcard{background:var(--panel2);border:1px solid var(--edge);border-radius:9px;padding:10px 12px;margin-bottom:12px;font-size:12.5px}
   .benchcard .row2{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:space-between}
   .benchcard .gid{font-family:var(--mono);color:var(--accent);font-size:11.5px;word-break:break-word}
@@ -248,17 +253,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b93"></script>
-<script src="../wasm/rxecore_api.js?v=b93"></script>
+<script src="../wasm/rxecore.js?v=b94"></script>
+<script src="../wasm/rxecore_api.js?v=b94"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b93"></script>
-<script src="../estimator/model.js?v=b93"></script>
-<script src="../estimator/wordset.js?v=b93"></script>
-<script src="../estimator/bip39crypto.js?v=b93"></script>
-<script src="../estimator/electrum.js?v=b93"></script>
-<script src="../estimator/gpucrack.js?v=b93"></script>
-<script src="../estimator/i18n.js?v=b93"></script>
+<script src="../estimator/bip39.js?v=b94"></script>
+<script src="../estimator/model.js?v=b94"></script>
+<script src="../estimator/wordset.js?v=b94"></script>
+<script src="../estimator/bip39crypto.js?v=b94"></script>
+<script src="../estimator/electrum.js?v=b94"></script>
+<script src="../estimator/gpucrack.js?v=b94"></script>
+<script src="../estimator/i18n.js?v=b94"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -267,7 +272,7 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b93';
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b94';
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -733,7 +738,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b93' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b94' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -1043,6 +1048,8 @@ function wireUI(){
   // modals
   $('#benchRun').onclick=runBenchAll;
   $('#benchClose').onclick=$('#benchCancel').onclick=closeBenchModal;
+  $$('#benchTabs .btab').forEach(b=>b.onclick=()=>benchTab(+b.dataset.stage));
+  $('#benchShare').onclick=shareBenchmark;
   $('#sampleClose').onclick=$('#sampleCloseB').onclick=()=>$('#sampleOverlay').classList.remove('on');
   $('#shareBtn').onclick=openShareModal;
   window.addEventListener('online', renderOnlineBanner);
@@ -1060,10 +1067,16 @@ function schedule(){ clearTimeout(debounce); debounce=setTimeout(recompute,300);
 // in THIS browser (same crypto the cracker uses), not guessed. Results + the GPU
 // id are cached in localStorage so it isn't needed every visit.
 function benchStepRow(id,label){ return `<div class="benchstep"><span>${label}</span><span class="st" id="bs-${id}">—</span></div>`; }
+const BENCH_SPIN = '<span class="benchspin"></span>';   // running indicator (replaces the ambiguous "…")
+// Show one of the three benchmark stage panes; highlight its tab.
+function benchTab(n){ [1,2,3].forEach(i=>{ const p=$('#benchStage'+i); if(p) p.hidden=(i!==n); });
+  $$('#benchTabs .btab').forEach(b=>b.classList.toggle('on', +b.dataset.stage===n)); }
 function openBenchModal(){
-  const steps=$('#benchSteps');
-  steps.innerHTML = benchStepRow('cpuk',t('benchCpuKdf'))+benchStepRow('cpus',t('benchCpuSweep'))+benchStepRow('ec',t('benchEc'))+(HAS_GPU?benchStepRow('gpuk',t('benchGpuKdf')):'');
+  $('#benchStage1').innerHTML = benchStepRow('cpuk',t('benchCpuKdf'))+benchStepRow('cpus',t('benchCpuSweep'))+benchStepRow('ec',t('benchEc'))+(HAS_GPU?benchStepRow('gpuk',t('benchGpuKdf')):'');
+  $('#benchStage2').innerHTML=''; $('#benchStage3').innerHTML='';   // filled by runBenchAll (need gpuAvail from Stage 1)
+  const sb=$('#benchShare'); if(sb) sb.hidden=true;
   const mob=$('#benchMobileNote'); if(mob){ if(IS_MOBILE){ mob.textContent='📱 '+t('benchMobileNote'); mob.hidden=false; } else mob.hidden=true; }
+  benchTab(1);
   $('#benchOverlay').classList.add('on');
 }
 function closeBenchModal(){ $('#benchOverlay').classList.remove('on'); }
@@ -1174,52 +1187,55 @@ async function _measGpuKdf(ms){
     await new Promise(r=>setTimeout(r,0)); }                   // yield: keep the tab responsive
   return n/((performance.now()-t0)/1000); }
 
-// Rough = one ~5s run per test. Thorough = 3 x ~20s runs per test, keep the
-// WORST (min) -- long enough for thermal throttling, so the sustained rate wins.
+// Stage 1 = raw primitives (~15s). Stage 2/3 = per-mode timed cracks calibrated
+// against ADDRESS then XPUB targets (~2min each). The full run is ~5 min.
 async function runBenchAll(){
   const run=$('#benchRun'); run.disabled=true;
-  const set=(id,txt)=>{ const e=$('#bs-'+id); if(e) e.textContent=txt; };
+  const set=(id,html)=>{ const e=$('#bs-'+id); if(e) e.innerHTML=html; };   // innerHTML: lets us show the spinner
   const yield_=()=>new Promise(r=>setTimeout(r,30));
-  const thorough = $('#benchMode').value==='thorough';
-  const per = thorough?20000:5000, runs = thorough?3:1;
-  const worst = async (id, meas)=>{ let v=Infinity;
-    for(let r=0;r<runs;r++){ set(id, runs>1?`${t('benchRunN')} ${r+1}/${runs}…`:'…'); await yield_(); v=Math.min(v, await meas(per)); set(id, fmtBig(Math.round(v))+(runs>1?` /s (${t('benchRunN')} ${r+1})`:' /s')); }
-    return v; };
+  const per=5000;
+  const meas=async(id,fn,fmt)=>{ set(id, BENCH_SPIN); await yield_(); const v=await fn(per); set(id, fmt(v)); return v; };
   try{
-    const cpuKdf = await worst('cpuk', _measCpuKdf);   set('cpuk', fmtBig(Math.round(cpuKdf))+' /s/core');
+    benchTab(1);
+    const cpuKdf = await meas('cpuk', _measCpuKdf, v=>fmtBig(Math.round(v))+' /s/core');
     const sweepCores = _benchCores();
-    const cpuSweep = await worst('cpus', _measCpuSweep); set('cpus', fmtBig(Math.round(cpuSweep))+` /s (${sweepCores} cores)`);
-    const ecMult = await worst('ec', _measEcMult);     set('ec', fmtBig(Math.round(ecMult))+' /s');
+    const cpuSweep = await meas('cpus', _measCpuSweep, v=>fmtBig(Math.round(v))+` /s (${sweepCores} cores)`);
+    const ecMult = await meas('ec', _measEcMult, v=>fmtBig(Math.round(v))+' /s');
     let gpuKdf=null, gpuId=CUR_GPU_ID||null;
     if(HAS_GPU && window.GpuCrack){
       // Snapshot the CPU results before the GPU step. On mobile a too-big GPU
       // dispatch can trip the watchdog and reload the tab; recovery reopens this
       // dialog with these filled in and redoes only the GPU (see resumeBenchGpu).
-      if(IS_MOBILE) benchPartialSave({ gid:_gpuGid(), depth:(thorough?'thorough':'rough'), cpuKdf, sweepAgg:cpuSweep, sweepCores, ecMult, ts:Date.now() });
-      try{ gpuId=(await window.GpuCrack.getGpuInfo())||gpuId; gpuKdf=await worst('gpuk', _measGpuKdf);
-           set('gpuk', fmtBig(Math.round(gpuKdf))+' /s'+((IS_MOBILE&&window.__gpuProbeStr)?'  ['+window.__gpuProbeStr+']':'')); }
+      if(IS_MOBILE) benchPartialSave({ gid:_gpuGid(), cpuKdf, sweepAgg:cpuSweep, sweepCores, ecMult, ts:Date.now() });
+      try{ gpuId=(await window.GpuCrack.getGpuInfo())||gpuId;
+           gpuKdf=await meas('gpuk', _measGpuKdf, v=>fmtBig(Math.round(v))+' /s'+((IS_MOBILE&&window.__gpuProbeStr)?'  ['+window.__gpuProbeStr+']':'')); }
       catch(e){ set('gpuk','failed: '+e.message); }
     }
-    BENCH={ gpuId, cpuKdf, sweepAgg:cpuSweep, sweepCores, ecMult, gpuKdf, depth:(thorough?'thorough':'rough'), ts:Date.now() };
+    BENCH={ gpuId, cpuKdf, sweepAgg:cpuSweep, sweepCores, ecMult, gpuKdf, ts:Date.now() };
     saveBench(); applyBench(); renderBenchCard(); recompute(); benchPartialClear();
-    // ---- Stage 2: per-mode calibration by real timed cracks (auto after Stage 1) ----
-    // Runs each mode (words/passphrase/joint) on each backend against an unreachable
-    // target for ~22s and reads the steady-state rate -> honest per-mode ETAs.
+    // ---- Stage 2 (address) + Stage 3 (xpub): per-mode calibration ----
     const gpuAvail = !!(HAS_GPU && window.GpuCrack && gpuKdf);
-    { const steps=$('#benchSteps'), bes=gpuAvail?['gpu','cpu']:['cpu'];
-      const modes=[['words',t('calWords')],['passphrase',t('calPass')],['joint',t('calJoint')]];
-      let h='<div class="benchstep" style="border-top:1px solid var(--edge);margin-top:6px;padding-top:8px"><span style="opacity:.72">'+t('calTitle')+'</span><span class="st">'+(gpuAvail?'GPU + CPU':'CPU')+'</span></div>';
-      for(const be of bes) for(const [mk,ml] of modes) h+=benchStepRow('cal-'+mk+'-'+be, ml+' · '+(be==='gpu'?'GPU':'CPU'));
-      if(steps) steps.insertAdjacentHTML('beforeend', h);
-    }
-    const cal = await calibrate(gpuAvail, (mode,be,phase,rate)=>{
-      set('cal-'+mode+'-'+be, phase==='done' ? (rate>0? fmtBig(Math.round(rate))+' /s' : '—') : t('calRunningStep'));
-    });
-    BENCH.cal2 = cal; saveBench(); applyBench(); recompute();
-    // Stay open so the user can read / copy the results (esp. the GPU probe
-    // curve) -- they close the dialog manually with the ✕ or Close button.
+    const cal2 = {};
+    cal2.address = await runStageCalib(2, 'address', gpuAvail);
+    cal2.xpub    = await runStageCalib(3, 'xpub',    gpuAvail);
+    BENCH.cal2 = cal2; saveBench(); applyBench(); recompute();
+    const sb=$('#benchShare'); if(sb) sb.hidden=false;
     run.textContent=t('benchRun'); run.disabled=false;
   }catch(e){ run.disabled=false; run.textContent=t('benchRun'); alert('benchmark failed: '+e.message); }
+}
+// Build the calibration rows into stage pane `n`, switch to that tab, run the
+// per-mode timed cracks against target type `tt`, fill the rows, return the rates.
+async function runStageCalib(n, tt, gpuAvail){
+  benchTab(n);
+  const pane=$('#benchStage'+n), bes=gpuAvail?['gpu','cpu']:['cpu'];
+  const modes=[['words',t('calWords')],['passphrase',t('calPass')],['joint',t('calJoint')]];
+  let h='';
+  for(const be of bes) for(const [mk,ml] of modes) h+=benchStepRow('cal-'+tt+'-'+mk+'-'+be, ml+' · '+(be==='gpu'?'GPU':'CPU'));
+  pane.innerHTML=h;
+  return await calibrate(gpuAvail, tt, (mode,be,phase,rate)=>{
+    const e=$('#bs-cal-'+tt+'-'+mode+'-'+be);
+    if(e) e.innerHTML = (phase==='done') ? (rate>0? fmtBig(Math.round(rate))+' /s' : '—') : BENCH_SPIN;
+  });
 }
 // ===================== Stage 2: per-mode calibration =====================
 // The raw benchmark (Stage 1) measures isolated rates; it can't predict the real
@@ -1247,59 +1263,60 @@ function _calRate(samples){
   return (dt>0 && dc>0) ? dc/dt : (last.t>0 ? last.c/(last.t/1000) : 0);
 }
 function _calAddrTarget(mn, pass){ const C=window.BIP39Crypto; return C.addressTarget(C.mnemonicToSeed(mn, pass||''), CAL_PURPOSE, 0, 0, 0, 0); }
-function _calTargetHex(taddr){ return { kind:'address', addrType:taddr.type, programHex:window.BIP39Crypto.toHex(taddr.program) }; }
+function _calXpubTarget(mn, pass){ const C=window.BIP39Crypto; return C.accountNode(C.mnemonicToSeed(mn, pass||''), CAL_PURPOSE, 0, 0).c; }   // account chain code (EC-free compare)
+function _calTargetHex(tt, taddr, tcc){ const C=window.BIP39Crypto;
+  return tt==='xpub' ? { kind:'xpub', chainCodeHex:C.toHex(tcc) } : { kind:'address', addrType:taddr.type, programHex:C.toHex(taddr.program) }; }
 const _calCap=(t0)=>()=>(performance.now()-t0)>CAL_RUN_S*1000;
 // count in "hashed" units: words = valids hashed (extra.seeded, the GPU/EC
 // bottleneck, consistent across backends); passphrase/joint = candidates (done).
 const _calCount=(mode)=>(done,tot,rate,extra)=> mode==='words' ? ((extra&&extra.seeded)||0) : done;
 
 // WORDS: 12 distinct words, unknown order {{12!?}}, checksum on. Unreachable target
-// (CAL_MN is not a permutation of CAL_W12). Rate = valids-hashed/s.
-async function _calWords(gpu){
+// (CAL_MN is not a permutation of CAL_W12). `tt`: 'address' | 'xpub'.
+async function _calWords(gpu, tt){
   const pat='(('+CAL_W12+') ){{12!?}}', set=RXE.parse(pat), total=Number(set.cardinality());
-  const taddr=_calAddrTarget(CAL_MN,''), plan=[{purpose:CAL_PURPOSE,account:0,coin:0}], nW=_benchCores();
+  const isAddr=tt!=='xpub', taddr=isAddr?_calAddrTarget(CAL_MN,''):null, tcc=isAddr?null:_calXpubTarget(CAL_MN,'');
+  const plan=[{purpose:CAL_PURPOSE,account:0,coin:0}], nW=_benchCores();
   const t0=performance.now(), samples=[], cnt=_calCount('words');
   const onProgress=(d,t,r,e)=>{ samples.push({t:performance.now()-t0, c:cnt(d,t,r,e)}); };
   const isCancelled=_calCap(t0);
-  if(gpu) await crackWordsHybrid({ pattern:pat, passphrase:'', requireChecksum:true, generate:false, plan, pathTemplate:null, accounts:1, tcc:null, taddr, changes:[0], gap:1, total, nWorkers:nW, onProgress, isCancelled });
-  else    await cpuCrackMT({ mode:'words', pattern:pat, passphrase:'', requireChecksum:true, generate:false, plan, pathTemplate:null, accounts:1, target:_calTargetHex(taddr), changes:[0], gap:1, total, nWorkers:nW, onProgress, isCancelled, single:()=>Promise.resolve({found:null}) });
+  if(gpu) await crackWordsHybrid({ pattern:pat, passphrase:'', requireChecksum:true, generate:false, plan, pathTemplate:null, accounts:1, tcc, taddr, changes:[0], gap:1, total, nWorkers:nW, onProgress, isCancelled });
+  else    await cpuCrackMT({ mode:'words', pattern:pat, passphrase:'', requireChecksum:true, generate:false, plan, pathTemplate:null, accounts:1, target:_calTargetHex(tt,taddr,tcc), changes:[0], gap:1, total, nWorkers:nW, onProgress, isCancelled, single:()=>Promise.resolve({found:null}) });
   set.free();
   return { rate:_calRate(samples) };
 }
-// PASSPHRASE: fixed mnemonic, [a-z]{6} passphrases, unreachable target (an
-// uppercase passphrase is outside [a-z]{6}). Rate = candidates/s (GPU seed + EC).
-async function _calPass(gpu){
+// PASSPHRASE: fixed mnemonic, [a-z]{6}, unreachable target (uppercase isn't in the set).
+async function _calPass(gpu, tt){
   const pat='[a-z]{6}', set=RXE.parse(pat), total=Number(set.cardinality());
-  const taddr=_calAddrTarget(CAL_MN, 'ZZZZZZ');   // not in [a-z]{6} -> never hit
+  const isAddr=tt!=='xpub', taddr=isAddr?_calAddrTarget(CAL_MN,'ZZZZZZ'):null, tcc=isAddr?null:_calXpubTarget(CAL_MN,'ZZZZZZ');
   const plan=[{purpose:CAL_PURPOSE,account:0,coin:0}], nW=_benchCores();
   const t0=performance.now(), samples=[], cnt=_calCount('passphrase');
   const onProgress=(d,t,r,e)=>{ samples.push({t:performance.now()-t0, c:cnt(d,t,r,e)}); };
   const isCancelled=_calCap(t0);
   const common={ total, unrank:i=>set.unrank(BigInt(i)), unrankBatch:(s,c)=>set.unrankBatch(s,c), plan, accounts:1, onProgress, isCancelled };
-  if(gpu) await window.GpuCrack.crackAddress({ ...common, mnemonic:CAL_MN, target:taddr, changes:[0], gap:1, batchSize:2048, nWorkers:nW, workerUrl:CRACKWORKER_URL });
-  else    await cpuCrackMT({ mode:'passphrase', pattern:pat, mnemonic:CAL_MN, passphrase:'', requireChecksum:false, generate:false, plan, pathTemplate:null, accounts:1, target:_calTargetHex(taddr), changes:[0], gap:1, total, nWorkers:nW, onProgress, isCancelled, single:()=>Promise.resolve({found:null}) });
+  if(gpu){ if(isAddr) await window.GpuCrack.crackAddress({ ...common, mnemonic:CAL_MN, target:taddr, changes:[0], gap:1, batchSize:2048, nWorkers:nW, workerUrl:CRACKWORKER_URL });
+           else       await window.GpuCrack.crackXpub({ ...common, mnemonic:CAL_MN, targetChainCode:tcc, batchSize:4096 }); }
+  else    await cpuCrackMT({ mode:'passphrase', pattern:pat, mnemonic:CAL_MN, passphrase:'', requireChecksum:false, generate:false, plan, pathTemplate:null, accounts:1, target:_calTargetHex(tt,taddr,tcc), changes:[0], gap:1, total, nWorkers:nW, onProgress, isCancelled, single:()=>Promise.resolve({found:null}) });
   set.free();
   return { rate:_calRate(samples) };
 }
-// JOINT: outer mnemonic (11 fixed + 1 unknown, checksum-filtered) x inner
-// passphrase ([a-z]{3}), unreachable target. Rate = aggregate candidates/s.
-async function _calJoint(gpu){
+// JOINT: outer mnemonic (11 fixed + 1 unknown, checksum-filtered) x inner [a-z]{3}.
+async function _calJoint(gpu, tt){
   const outerPat=CAL_W11+' [:bip39-en:]', innerPat='[a-z]{3}';
   const jointW=RXE.parse(outerPat), inner=RXE.parse(innerPat);
   const wCard=jointW.cardinality(), innerTotal=Number(inner.cardinality());
-  const taddr=_calAddrTarget(CAL_MN, 'ZZ');   // unreachable
+  const isAddr=tt!=='xpub', taddr=isAddr?_calAddrTarget(CAL_MN,'ZZ'):null, tcc=isAddr?null:_calXpubTarget(CAL_MN,'ZZ');
   const nW=_benchCores(), t0=performance.now(), samples=[], cnt=_calCount('joint');
   const common={ total:innerTotal, unrank:i=>inner.unrank(BigInt(i)), unrankBatch:(s,c)=>inner.unrankBatch(s,c),
     plan:[{purpose:CAL_PURPOSE,account:0,coin:0}], accounts:1,
     onProgress:(d,t,r,e)=>{ samples.push({t:performance.now()-t0, c:cnt(d,t,r,e)}); },
     isCancelled:_calCap(t0) };
-  await crackJoint({ jointW, wCard, reqCsum:true, generate:false, gpu, target:'address', tcc:null, taddr, common, changes:[0], gap:1, nWorkers:nW, jointTotal:Number(wCard)*innerTotal, pathTemplate:null, innerPat });
+  await crackJoint({ jointW, wCard, reqCsum:true, generate:false, gpu, target:tt, tcc, taddr, common, changes:[0], gap:1, nWorkers:nW, jointTotal:Number(wCard)*innerTotal, pathTemplate:null, innerPat });
   jointW.free(); inner.free();
   return { rate:_calRate(samples) };
 }
-// Run all modes x backends. onStep(mode,backend,phase,rate) for UI ('run' before,
-// 'done' after each). Returns {words:{gpu,cpu},...} of candidates/s.
-async function calibrate(gpuAvail, onStep){
+// Run all modes x backends for target type `tt`. onStep(mode,backend,phase,rate).
+async function calibrate(gpuAvail, tt, onStep){
   const backends = gpuAvail ? ['gpu','cpu'] : ['cpu'];
   const runners = { words:_calWords, passphrase:_calPass, joint:_calJoint };
   const out={ words:{}, passphrase:{}, joint:{} };
@@ -1308,7 +1325,7 @@ async function calibrate(gpuAvail, onStep){
     for(const be of backends){ const gpu=be==='gpu';
       for(const mode of ['words','passphrase','joint']){
         if(onStep) onStep(mode,be,'run');
-        let rate=0; try{ rate=(await runners[mode](gpu)).rate; }catch(e){ rate=0; }
+        let rate=0; try{ rate=(await runners[mode](gpu, tt)).rate; }catch(e){ rate=0; }
         out[mode][be]=rate;
         if(onStep) onStep(mode,be,'done',rate);
       }
@@ -1316,23 +1333,41 @@ async function calibrate(gpuAvail, onStep){
   } finally { cracking=_was; }
   return out;
 }
-// Look up the Stage-2 measured rate for (mode, backend), if calibrated.
-function _calRateFor(mode, backend){
-  const m=(mode==='joint'||mode==='passphrase'||mode==='words')?mode:null;
-  if(!m || !BENCH || !BENCH.cal2 || !BENCH.cal2[m]) return 0;
-  const v=BENCH.cal2[m][backend]; return (typeof v==='number' && v>0) ? v : 0;
+// Look up the measured rate for (mode, backend, target type), if calibrated.
+// cal2 = { address:{words:{gpu,cpu},...}, xpub:{...} }.
+function _calRateFor(mode, backend, tt){
+  const m=(mode==='joint'||mode==='passphrase'||mode==='words')?mode:null, k=(tt==='xpub')?'xpub':'address';
+  const c=BENCH&&BENCH.cal2; if(!m || !c || !c[k] || !c[k][m]) return 0;
+  const v=c[k][m][backend]; return (typeof v==='number' && v>0) ? v : 0;
 }
 // Replace the model's analytic ETA with keyspace / measured_rate (honest, from a
 // real timed crack). totalCandidates is in the same "hashed" unit the calibration
 // counted: valids for words, candidates for passphrase, the product for joint.
 function _applyCalibratedEta(r, backend){
   if(!r || r.unbounded || !r.eta || r.totalCandidates==null) return;
-  const cr=_calRateFor(r.mode, backend); if(cr<=0) return;
+  const cr=_calRateFor(r.mode, backend, r.targetType); if(cr<=0) return;
   const secs=Number(r.totalCandidates)/cr, E=window.BIP39Estimator;
   r.eta.exhaustSeconds=secs; r.eta.expectedHitSeconds=secs/2;
   r.eta.timeToExhaust=E.humanTime(secs); r.eta.expectedTimeToHit=E.humanTime(secs/2);
   r.eta.kdfRate=cr; r.eta.calibrated=true; r.eta.rateSource=(LANG==='pt'?'quebra cronometrada':'timed crack');
   if(E.verdictTier) r.tier=E.verdictTier(secs);
+}
+// Copy a plain-text summary of the benchmark to the clipboard so users can send it
+// to us (no POST -> keeps the SPA self-contained). Non-sensitive: GPU id + rates +
+// UA, never any seed material.
+async function shareBenchmark(){
+  if(!BENCH) return;
+  const rnd=v=>(v?fmtBig(Math.round(v)):'—');
+  const L=['reseed39 benchmark', 'gpu: '+(BENCH.gpuId||'CPU only'),
+    'stage1: cpu-kdf '+rnd(BENCH.cpuKdf)+'/s/core · sweep '+rnd(BENCH.sweepAgg)+'/s ('+(BENCH.sweepCores||'?')+' cores) · ec '+rnd(BENCH.ecMult)+'/s · gpu-seed '+rnd(BENCH.gpuKdf)+'/s'];
+  const c=BENCH.cal2||{};
+  for(const tt of ['address','xpub']){ if(!c[tt]) continue; L.push(tt+':');
+    for(const mode of ['words','passphrase','joint']){ const m=c[tt][mode]||{}; L.push('  '+mode+': gpu '+rnd(m.gpu)+'/s · cpu '+rnd(m.cpu)+'/s'); } }
+  L.push('ua: '+navigator.userAgent, 'ts: '+new Date(BENCH.ts||Date.now()).toISOString());
+  const text=L.join('\n'), btn=$('#benchShare'), prev=btn&&btn.textContent;
+  const ok=()=>{ if(btn){ btn.textContent='✓ '+t('benchShared'); setTimeout(()=>{ if(btn) btn.textContent=prev; },1800); } };
+  try{ await navigator.clipboard.writeText(text); ok(); }
+  catch(e){ try{ const ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); ok(); }catch(_){ alert(text); } }
 }
 // The right-pane card summarising the stored benchmark (or a prompt to run it).
 function renderBenchCard(){
@@ -2378,15 +2413,19 @@ function renderDictList(){
     <div class="body">
       <div class="note" data-i18n="benchIntro" style="margin-bottom:10px"></div>
       <div class="warnmsg" id="benchMobileNote" hidden style="margin-bottom:10px"></div>
-      <div style="margin-bottom:12px"><label class="f" style="display:inline" data-i18n="benchDepth">Depth</label>
-        <select id="benchMode" style="width:auto;margin-left:8px;display:inline-block">
-          <option value="rough" data-i18n="benchRough">Rough (~15s)</option>
-          <option value="thorough" data-i18n="benchThorough">Thorough (~3 min, worst-of-3)</option>
-        </select></div>
-      <div id="benchSteps"></div>
+      <div class="warnmsg" data-i18n="benchTimeNote" style="margin-bottom:10px">⏳ The full benchmark can take about five minutes.</div>
+      <div class="benchtabs" id="benchTabs">
+        <button class="btab on" data-stage="1" data-i18n="benchTab1">Stage 1 · raw</button>
+        <button class="btab" data-stage="2" data-i18n="benchTab2">Stage 2 · address</button>
+        <button class="btab" data-stage="3" data-i18n="benchTab3">Stage 3 · xpub</button>
+      </div>
+      <div id="benchStage1"></div>
+      <div id="benchStage2" hidden></div>
+      <div id="benchStage3" hidden></div>
     </div>
     <div class="foot">
       <button class="ghost" id="benchCancel" data-i18n="close">Close</button>
+      <button class="ghost" id="benchShare" hidden data-i18n="benchShare" style="margin-top:0">📋 Share results</button>
       <button class="act" id="benchRun" style="margin-top:0" data-i18n="benchRun">Run benchmark</button>
     </div>
   </div>
