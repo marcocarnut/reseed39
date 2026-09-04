@@ -253,17 +253,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b100"></script>
-<script src="../wasm/rxecore_api.js?v=b100"></script>
+<script src="../wasm/rxecore.js?v=b101"></script>
+<script src="../wasm/rxecore_api.js?v=b101"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b100"></script>
-<script src="../estimator/model.js?v=b100"></script>
-<script src="../estimator/wordset.js?v=b100"></script>
-<script src="../estimator/bip39crypto.js?v=b100"></script>
-<script src="../estimator/electrum.js?v=b100"></script>
-<script src="../estimator/gpucrack.js?v=b100"></script>
-<script src="../estimator/i18n.js?v=b100"></script>
+<script src="../estimator/bip39.js?v=b101"></script>
+<script src="../estimator/model.js?v=b101"></script>
+<script src="../estimator/wordset.js?v=b101"></script>
+<script src="../estimator/bip39crypto.js?v=b101"></script>
+<script src="../estimator/electrum.js?v=b101"></script>
+<script src="../estimator/gpucrack.js?v=b101"></script>
+<script src="../estimator/i18n.js?v=b101"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -272,8 +272,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b100';
-const APP_VERSION = 'b100';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b101';
+const APP_VERSION = 'b101';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -739,7 +739,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b100' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b101' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -2561,9 +2561,9 @@ function renderDictList(){
     <div class="body">
       <div class="hint" data-i18n="labelIntro" style="margin-top:0">Optionally tag this result so we can tell it apart in the performance database (e.g. the machine, browser, or conditions). Then copy the JSON and send it to us.</div>
       <label class="f" data-i18n="labelField" style="margin-top:12px">Label (optional)</label>
-      <input id="labelInput" type="text" style="width:100%" placeholder="e.g. melbar — Firefox, plugged in">
+      <input id="labelInput" type="text" style="width:100%" placeholder="e.g. machine name, browser name/version, etc.">
       <label class="f" data-i18n="labelNoteField" style="margin-top:8px">Note (optional)</label>
-      <textarea id="labelNote" rows="2" style="width:100%" placeholder="e.g. warm start, ran a 3-min crack right before"></textarea>
+      <textarea id="labelNote" rows="2" style="width:100%" placeholder="e.g. GPU make/model, warm start, ran a 3-min crack right before"></textarea>
       <div class="hint" data-i18n="labelPrivacy" style="margin-top:12px">The JSON contains only device/GPU capabilities, measured rates, and your browser id — never any seed material.</div>
     </div>
     <div class="foot">
