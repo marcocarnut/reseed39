@@ -256,6 +256,26 @@ async function getGpuInfo(){
   } catch(e){ return _webglRenderer() || 'WebGPU'; }
 }
 
+// Adapter limits + features for the perf DB (non-sensitive: hardware capabilities,
+// no seed material). Curated limits that bear on compute throughput.
+const _GPU_LIMIT_KEYS = ['maxBufferSize','maxStorageBufferBindingSize','maxComputeInvocationsPerWorkgroup',
+  'maxComputeWorkgroupSizeX','maxComputeWorkgroupSizeY','maxComputeWorkgroupSizeZ',
+  'maxComputeWorkgroupStorageSize','maxComputeWorkgroupsPerDimension',
+  'maxStorageBuffersPerShaderStage','maxBindGroups'];
+async function getGpuDetails(){
+  if (!navigator.gpu) return null;
+  try {
+    const adapter = await navigator.gpu.requestAdapter({ powerPreference:'high-performance' });
+    if (!adapter) return null;
+    const L = adapter.limits || {};
+    const limits = {};
+    for (const k of _GPU_LIMIT_KEYS){ const v=L[k]; if (typeof v==='number') limits[k]=v; }
+    let features = [];
+    try { features = [...adapter.features]; } catch(_){}
+    return { limits, features };
+  } catch(e){ return null; }
+}
+
 // Measure raw GPU seed throughput (seeds/s).
 async function benchmark(n){
   n = n||8192;
@@ -741,7 +761,7 @@ async function gateWords(mnemonics, passphrase){
 }
 
 window.GpuCrack = { initGpu, gpuSeeds, benchmark, crackXpub, crackAddress, MAXSALT,
-  initGpuWords, gpuSeedsWords, crackWordsGpu, gateWords, getGpuInfo,
+  initGpuWords, gpuSeedsWords, crackWordsGpu, gateWords, getGpuInfo, getGpuDetails,
   setBatchEC:(b)=>{ BATCH_EC=!!b; }, getBatchEC:()=>BATCH_EC,
   setSeedChunk:_setSeedChunk, getSeedChunk:()=>_seedChunkN,   // 0 = auto (mobile-aware)
   setMobChunk:_setMobChunk, getMobChunk:()=>_mobChunk,        // probe-chosen mobile lanes/dispatch

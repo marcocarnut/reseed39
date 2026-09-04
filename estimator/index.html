@@ -253,17 +253,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b99"></script>
-<script src="../wasm/rxecore_api.js?v=b99"></script>
+<script src="../wasm/rxecore.js?v=b100"></script>
+<script src="../wasm/rxecore_api.js?v=b100"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b99"></script>
-<script src="../estimator/model.js?v=b99"></script>
-<script src="../estimator/wordset.js?v=b99"></script>
-<script src="../estimator/bip39crypto.js?v=b99"></script>
-<script src="../estimator/electrum.js?v=b99"></script>
-<script src="../estimator/gpucrack.js?v=b99"></script>
-<script src="../estimator/i18n.js?v=b99"></script>
+<script src="../estimator/bip39.js?v=b100"></script>
+<script src="../estimator/model.js?v=b100"></script>
+<script src="../estimator/wordset.js?v=b100"></script>
+<script src="../estimator/bip39crypto.js?v=b100"></script>
+<script src="../estimator/electrum.js?v=b100"></script>
+<script src="../estimator/gpucrack.js?v=b100"></script>
+<script src="../estimator/i18n.js?v=b100"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -272,8 +272,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b99';
-const APP_VERSION = 'b99';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b100';
+const APP_VERSION = 'b100';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -739,7 +739,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b99' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b100' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -1050,7 +1050,9 @@ function wireUI(){
   $('#benchRun').onclick=()=>{ if(_benchRunning) _benchStop=true; else runBenchAll(); };   // toggles Run <-> Stop
   $('#benchClose').onclick=$('#benchCancel').onclick=closeBenchModal;
   $$('#benchTabs .btab').forEach(b=>b.onclick=()=>benchTab(+b.dataset.stage));
-  $('#benchShare').onclick=shareBenchmark;
+  $('#benchShare').onclick=openLabelDialog;
+  $('#labelClose').onclick=$('#labelCancel').onclick=closeLabelDialog;
+  $('#labelCopy').onclick=submitLabelShare;
   $('#sampleClose').onclick=$('#sampleCloseB').onclick=()=>$('#sampleOverlay').classList.remove('on');
   $('#shareBtn').onclick=openShareModal;
   window.addEventListener('online', renderOnlineBanner);
@@ -1059,7 +1061,7 @@ function wireUI(){
   $('#shareCopy').onclick=async()=>{ try{ await navigator.clipboard.writeText($('#shareUrl').value); const b=$('#shareCopy'); b.textContent='✓ '+t('shareCopied'); setTimeout(()=>b.textContent='📋 '+t('shareCopy'),1600); }catch(e){ $('#shareUrl').select(); } };
   $('#shareNative').onclick=async()=>{ try{ await navigator.share({ title:'(re)seed39', text:t('shareNativeText'), url:$('#shareUrl').value }); }catch(e){} };   // native OS share sheet (mobile)
   $('#crackClose').onclick=()=>{ if(cracking) cracking=false; $('#crackOverlay').classList.remove('on'); };
-  [$('#benchOverlay'),$('#sampleOverlay'),$('#crackOverlay')].forEach(o=>o.addEventListener('click',e=>{ if(e.target===o){ if(o.id==='benchOverlay'&&_benchRunning) return; if(o.id==='crackOverlay'&&cracking) cracking=false; o.classList.remove('on'); } }));
+  [$('#benchOverlay'),$('#sampleOverlay'),$('#crackOverlay'),$('#labelOverlay')].forEach(o=>o.addEventListener('click',e=>{ if(e.target===o){ if(o.id==='benchOverlay'&&_benchRunning) return; if(o.id==='crackOverlay'&&cracking) cracking=false; o.classList.remove('on'); } }));
 }
 function schedule(){ clearTimeout(debounce); debounce=setTimeout(recompute,300); }
 
@@ -1265,7 +1267,11 @@ async function runBenchAll(){
     await sleep(2000); if(stopped()) return done('idle');
     cal2.xpub    = await runStageCalib(3, 'xpub',    gpuAvail);
     if(stopped()) return done('idle');
-    BENCH.cal2 = cal2; saveBench(); applyBench(); recompute();
+    BENCH.cal2 = cal2;
+    // Capture hardware/UA context for the shareable perf-DB row (non-sensitive).
+    try{ BENCH.uaData = await _collectUAData(); }catch(_){}
+    try{ BENCH.gpuDetails = (HAS_GPU && window.GpuCrack && window.GpuCrack.getGpuDetails) ? await window.GpuCrack.getGpuDetails() : null; }catch(_){}
+    saveBench(); applyBench(); recompute();
     done('done');   // success: hide Run/Stop, offer Close + Share
   }catch(e){ done('idle'); alert('benchmark failed: '+e.message); }
 }
@@ -1403,21 +1409,47 @@ function _applyCalibratedEta(r, backend){
 // Copy the benchmark as JSON so it can be pasted straight into our benchmark
 // database (no POST -> keeps the SPA self-contained). Non-sensitive: GPU id +
 // rates + UA, never any seed material.
-async function shareBenchmark(){
+// navigator.userAgentData (Chromium client hints) — brand/platform + async
+// high-entropy fields. Non-sensitive, and it's what disambiguates browser+OS
+// far better than the UA string. Null on Firefox/Safari (no userAgentData).
+async function _collectUAData(){
+  const uad=navigator.userAgentData; if(!uad) return null;
+  const out={ brands:uad.brands||null, mobile:!!uad.mobile, platform:uad.platform||null };
+  try{ Object.assign(out, await uad.getHighEntropyValues(['architecture','bitness','model','platformVersion','uaFullVersion','fullVersionList'])); }catch(_){}
+  return out;
+}
+// Build the shareable benchmark JSON (rates + hardware caps + UA; NEVER seed
+// material) with an optional user label/note, copy it to the clipboard.
+async function shareBenchmark(label, note){
   if(!BENCH) return;
   const r=v=>Math.round(v||0);
   const rc=(cal)=>{ const o={}; for(const tt in (cal||{})){ o[tt]={}; for(const m in cal[tt]){ o[tt][m]={ gpu:r(cal[tt][m].gpu), cpu:r(cal[tt][m].cpu) }; } } return o; };
   let mem=null; try{ mem=navigator.deviceMemory||null; }catch(e){}   // GB (Chrome only)
-  const data={ tool:'reseed39', schema:1, build:APP_VERSION, ts:new Date(BENCH.ts||Date.now()).toISOString(),
-    gpu:BENCH.gpuId||null, ua:navigator.userAgent,
+  const data={ tool:'reseed39', schema:2, build:APP_VERSION, ts:new Date(BENCH.ts||Date.now()).toISOString(),
+    label:(label||'').trim()||null, note:(note||'').trim()||null,
+    gpu:BENCH.gpuId||null, ua:navigator.userAgent, uaData:BENCH.uaData||null,
     device:{ cores:navigator.hardwareConcurrency||null, benchCores:BENCH.sweepCores||0, mobile:IS_MOBILE, memoryGB:mem },
+    gpuLimits:(BENCH.gpuDetails&&BENCH.gpuDetails.limits)||null, gpuFeatures:(BENCH.gpuDetails&&BENCH.gpuDetails.features)||null,
     calSeconds:CAL_RUN_S,
     stage1:{ cpuKdf:r(BENCH.cpuKdf), sweep:r(BENCH.sweepAgg), sweepCores:BENCH.sweepCores||0, ec:r(BENCH.ecMult), gpuSeed:r(BENCH.gpuKdf) },
     calibration: rc(BENCH.cal2) };
-  const text=JSON.stringify(data,null,2), btn=$('#benchShare'), prev=btn&&btn.textContent;
-  const ok=()=>{ if(btn){ btn.textContent='✓ '+t('benchShared'); setTimeout(()=>{ if(btn) btn.textContent=prev; },1800); } };
-  try{ await navigator.clipboard.writeText(text); ok(); }
-  catch(e){ try{ const ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); ok(); }catch(_){ alert(text); } }
+  const text=JSON.stringify(data,null,2);
+  try{ await navigator.clipboard.writeText(text); return true; }
+  catch(e){ try{ const ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); return true; }catch(_){ alert(text); return false; } }
+}
+const LABEL_KEY='reseed39.label';
+function openLabelDialog(){
+  let last=''; try{ last=localStorage.getItem(LABEL_KEY)||''; }catch(_){}
+  const li=$('#labelInput'), no=$('#labelNote'); if(li) li.value=last; if(no) no.value='';
+  $('#labelOverlay').classList.add('on'); if(li) setTimeout(()=>li.focus(),0);
+}
+function closeLabelDialog(){ $('#labelOverlay').classList.remove('on'); }
+async function submitLabelShare(){
+  const label=($('#labelInput')&&$('#labelInput').value)||'', note=($('#labelNote')&&$('#labelNote').value)||'';
+  try{ localStorage.setItem(LABEL_KEY, label.trim()); }catch(_){}
+  const ok=await shareBenchmark(label, note);
+  const btn=$('#labelCopy'); if(btn && ok){ const prev=btn.textContent; btn.textContent='✓ '+t('benchShared'); setTimeout(()=>{ closeLabelDialog(); btn.textContent=prev; },900); }
+  else if(ok) closeLabelDialog();
 }
 // The right-pane card summarising the stored benchmark (or a prompt to run it).
 function renderBenchCard(){
@@ -2520,6 +2552,24 @@ function renderDictList(){
     <h3>🎲 <span data-i18n="dryRun">Dry-run sample</span> <span class="pill" data-i18n="viaUnrank">via librxe unrank</span> <button class="x" id="sampleClose">✕</button></h3>
     <div class="body sample" id="sampleBody"></div>
     <div class="foot"><button class="ghost" id="sampleCloseB" data-i18n="close">Close</button></div>
+  </div>
+</div>
+<!-- Benchmark share: optional user label/note before copying the JSON -->
+<div class="overlay" id="labelOverlay">
+  <div class="modal">
+    <h3>📋 <span data-i18n="labelTitle">Share benchmark results</span> <button class="x" id="labelClose">✕</button></h3>
+    <div class="body">
+      <div class="hint" data-i18n="labelIntro" style="margin-top:0">Optionally tag this result so we can tell it apart in the performance database (e.g. the machine, browser, or conditions). Then copy the JSON and send it to us.</div>
+      <label class="f" data-i18n="labelField" style="margin-top:12px">Label (optional)</label>
+      <input id="labelInput" type="text" style="width:100%" placeholder="e.g. melbar — Firefox, plugged in">
+      <label class="f" data-i18n="labelNoteField" style="margin-top:8px">Note (optional)</label>
+      <textarea id="labelNote" rows="2" style="width:100%" placeholder="e.g. warm start, ran a 3-min crack right before"></textarea>
+      <div class="hint" data-i18n="labelPrivacy" style="margin-top:12px">The JSON contains only device/GPU capabilities, measured rates, and your browser id — never any seed material.</div>
+    </div>
+    <div class="foot">
+      <button class="ghost" id="labelCancel" data-i18n="cancel">Cancel</button>
+      <button class="act" id="labelCopy" data-i18n="labelCopy" style="margin-top:0">📋 Copy JSON</button>
+    </div>
   </div>
 </div>
 <!-- Share / bookmark modal -->
