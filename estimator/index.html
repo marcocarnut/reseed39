@@ -253,17 +253,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b98"></script>
-<script src="../wasm/rxecore_api.js?v=b98"></script>
+<script src="../wasm/rxecore.js?v=b99"></script>
+<script src="../wasm/rxecore_api.js?v=b99"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b98"></script>
-<script src="../estimator/model.js?v=b98"></script>
-<script src="../estimator/wordset.js?v=b98"></script>
-<script src="../estimator/bip39crypto.js?v=b98"></script>
-<script src="../estimator/electrum.js?v=b98"></script>
-<script src="../estimator/gpucrack.js?v=b98"></script>
-<script src="../estimator/i18n.js?v=b98"></script>
+<script src="../estimator/bip39.js?v=b99"></script>
+<script src="../estimator/model.js?v=b99"></script>
+<script src="../estimator/wordset.js?v=b99"></script>
+<script src="../estimator/bip39crypto.js?v=b99"></script>
+<script src="../estimator/electrum.js?v=b99"></script>
+<script src="../estimator/gpucrack.js?v=b99"></script>
+<script src="../estimator/i18n.js?v=b99"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -272,8 +272,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b98';
-const APP_VERSION = 'b98';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b99';
+const APP_VERSION = 'b99';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -739,7 +739,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b98' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b99' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -1047,7 +1047,7 @@ function wireUI(){
       m.textContent = ok ? t('crackLogCopied') : t('crackLogEmpty'); setTimeout(()=>{ if(m.textContent===(ok?t('crackLogCopied'):t('crackLogEmpty'))) m.textContent=prev; }, 2000); } }; } }
   $('#dAdd').onclick=addDict;
   // modals
-  $('#benchRun').onclick=runBenchAll;
+  $('#benchRun').onclick=()=>{ if(_benchRunning) _benchStop=true; else runBenchAll(); };   // toggles Run <-> Stop
   $('#benchClose').onclick=$('#benchCancel').onclick=closeBenchModal;
   $$('#benchTabs .btab').forEach(b=>b.onclick=()=>benchTab(+b.dataset.stage));
   $('#benchShare').onclick=shareBenchmark;
@@ -1059,7 +1059,7 @@ function wireUI(){
   $('#shareCopy').onclick=async()=>{ try{ await navigator.clipboard.writeText($('#shareUrl').value); const b=$('#shareCopy'); b.textContent='✓ '+t('shareCopied'); setTimeout(()=>b.textContent='📋 '+t('shareCopy'),1600); }catch(e){ $('#shareUrl').select(); } };
   $('#shareNative').onclick=async()=>{ try{ await navigator.share({ title:'(re)seed39', text:t('shareNativeText'), url:$('#shareUrl').value }); }catch(e){} };   // native OS share sheet (mobile)
   $('#crackClose').onclick=()=>{ if(cracking) cracking=false; $('#crackOverlay').classList.remove('on'); };
-  [$('#benchOverlay'),$('#sampleOverlay'),$('#crackOverlay')].forEach(o=>o.addEventListener('click',e=>{ if(e.target===o){ if(o.id==='crackOverlay'&&cracking) cracking=false; o.classList.remove('on'); } }));
+  [$('#benchOverlay'),$('#sampleOverlay'),$('#crackOverlay')].forEach(o=>o.addEventListener('click',e=>{ if(e.target===o){ if(o.id==='benchOverlay'&&_benchRunning) return; if(o.id==='crackOverlay'&&cracking) cracking=false; o.classList.remove('on'); } }));
 }
 function schedule(){ clearTimeout(debounce); debounce=setTimeout(recompute,300); }
 
@@ -1069,18 +1069,53 @@ function schedule(){ clearTimeout(debounce); debounce=setTimeout(recompute,300);
 // id are cached in localStorage so it isn't needed every visit.
 function benchStepRow(id,label){ return `<div class="benchstep"><span>${label}</span><span class="st" id="bs-${id}">—</span></div>`; }
 const BENCH_SPIN = '<span class="benchspin"></span>';   // running indicator (replaces the ambiguous "…")
+let _benchStop=false, _benchRunning=false;
 // Show one of the three benchmark stage panes; highlight its tab.
 function benchTab(n){ [1,2,3].forEach(i=>{ const p=$('#benchStage'+i); if(p) p.hidden=(i!==n); });
   $$('#benchTabs .btab').forEach(b=>b.classList.toggle('on', +b.dataset.stage===n)); }
+// Modal button states. running: only Stop. done (fresh full run): only Close + Share.
+// idle/stopped: Run (or Re-run if we have results) + Close, Share only when results exist.
+function benchUI(state){
+  const run=$('#benchRun'), close=$('#benchCancel'), x=$('#benchClose'), share=$('#benchShare');
+  const has=!!(BENCH && BENCH.cal2);
+  const showX=(v)=>{ if(x) x.style.visibility=v?'':'hidden'; };
+  if(state==='running'){ if(run){ run.hidden=false; run.textContent=t('benchStop'); run.disabled=false; } if(close) close.hidden=true; showX(false); if(share) share.hidden=true; }
+  else if(state==='done'){ if(run) run.hidden=true; if(close) close.hidden=false; showX(true); if(share) share.hidden=false; }
+  else { if(run){ run.hidden=false; run.textContent = has ? t('benchReRun') : t('benchRun'); run.disabled=false; } if(close) close.hidden=false; showX(true); if(share) share.hidden=!has; }
+}
+// Fill a Stage 2/3 pane from stored rates (for reviewing a prior benchmark).
+function fillCalPane(n, tt, rates){
+  const pane=$('#benchStage'+n); if(!pane) return;
+  const modes=[['words',t('calWords')],['passphrase',t('calPass')],['joint',t('calJoint')]];
+  const cpuLbl=_benchCores()+' '+t('cpuCores');
+  let h='';
+  for(const be of ['gpu','cpu']) for(const [mk,ml] of modes){
+    const v = rates && rates[mk] ? rates[mk][be] : null;
+    const res = (v>0)? fmtBig(Math.round(v))+'/s' : (be==='gpu' && !HAS_GPU ? t('gpuUnavail') : '—');
+    h+=`<div class="benchstep"><span>${ml} · ${be==='gpu'?'GPU':cpuLbl}</span><span class="st" id="bs-cal-${tt}-${mk}-${be}">${res}</span></div>`;
+  }
+  pane.innerHTML=h;
+}
+// Populate every pane from the cached BENCH (so a prior benchmark can be reviewed).
+function renderBenchResults(){
+  const set=(id,html)=>{ const e=$('#bs-'+id); if(e) e.innerHTML=html; };
+  if(!BENCH) return;
+  set('cpuk', BENCH.cpuKdf?fmtBig(Math.round(BENCH.cpuKdf))+'/s/core':'—');
+  set('cpus', BENCH.sweepAgg?fmtBig(Math.round(BENCH.sweepAgg))+`/s (${BENCH.sweepCores||'?'} cores)`:'—');
+  set('ec',   BENCH.ecMult?fmtBig(Math.round(BENCH.ecMult))+'/s':'—');
+  set('gpuk', BENCH.gpuKdf?fmtBig(Math.round(BENCH.gpuKdf))+'/s':(HAS_GPU?'—':t('gpuUnavail')));
+  const cal=BENCH.cal2||{}; fillCalPane(2,'address',cal.address); fillCalPane(3,'xpub',cal.xpub);
+}
 function openBenchModal(){
   $('#benchStage1').innerHTML = benchStepRow('cpuk',t('benchCpuKdf'))+benchStepRow('cpus',t('benchCpuSweep'))+benchStepRow('ec',t('benchEc'))+benchStepRow('gpuk',t('benchGpuKdf'));
-  $('#benchStage2').innerHTML=''; $('#benchStage3').innerHTML='';   // filled by runBenchAll (need gpuAvail from Stage 1)
-  const sb=$('#benchShare'); if(sb) sb.hidden=true;
+  $('#benchStage2').innerHTML=''; $('#benchStage3').innerHTML='';
   const mob=$('#benchMobileNote'); if(mob){ if(IS_MOBILE){ mob.textContent='📱 '+t('benchMobileNote'); mob.hidden=false; } else mob.hidden=true; }
+  renderBenchResults();   // show the previous benchmark's full results if we have them
   benchTab(1);
+  benchUI('idle');        // Run / Re-run + Close (+ Share only if there are results)
   $('#benchOverlay').classList.add('on');
 }
-function closeBenchModal(){ $('#benchOverlay').classList.remove('on'); }
+function closeBenchModal(){ if(_benchRunning) return; $('#benchOverlay').classList.remove('on'); }   // can't close mid-run
 // One measurement run of each kind, for `ms` milliseconds -> rate (per second).
 const _benchMn='legal winner thank year wave sausage worth useful legal winner thank yellow';
 async function _measCpuKdf(ms){ const C=window.BIP39Crypto;
@@ -1191,18 +1226,23 @@ async function _measGpuKdf(ms){
 // Stage 1 = raw primitives (~15s). Stage 2/3 = per-mode timed cracks calibrated
 // against ADDRESS then XPUB targets (~2min each). The full run is ~5 min.
 async function runBenchAll(){
-  const run=$('#benchRun'); run.disabled=true;
+  _benchStop=false; _benchRunning=true; benchUI('running');
   const set=(id,html)=>{ const e=$('#bs-'+id); if(e) e.innerHTML=html; };   // innerHTML: lets us show the spinner
   const yield_=()=>new Promise(r=>setTimeout(r,30));
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   const per=5000;
+  const stopped=()=>_benchStop;
+  const done=(state)=>{ _benchRunning=false; _benchStop=false; benchUI(state); };
   const meas=async(id,fn,fmt)=>{ set(id, BENCH_SPIN); await yield_(); const v=await fn(per); set(id, fmt(v)); return v; };
   try{
     benchTab(1);
     const cpuKdf = await meas('cpuk', _measCpuKdf, v=>fmtBig(Math.round(v))+'/s/core');
+    if(stopped()) return done('idle');
     const sweepCores = _benchCores();
     const cpuSweep = await meas('cpus', _measCpuSweep, v=>fmtBig(Math.round(v))+`/s (${sweepCores} cores)`);
+    if(stopped()) return done('idle');
     const ecMult = await meas('ec', _measEcMult, v=>fmtBig(Math.round(v))+'/s');
+    if(stopped()) return done('idle');
     let gpuKdf=null, gpuId=CUR_GPU_ID||null;
     if(HAS_GPU && window.GpuCrack){
       // Snapshot the CPU results before the GPU step. On mobile a too-big GPU
@@ -1213,17 +1253,21 @@ async function runBenchAll(){
            gpuKdf=await meas('gpuk', _measGpuKdf, v=>fmtBig(Math.round(v))+'/s'+((IS_MOBILE&&window.__gpuProbeStr)?'  ['+window.__gpuProbeStr+']':'')); }
       catch(e){ set('gpuk','failed: '+e.message); }
     } else { set('gpuk', t('gpuUnavail')); }   // no WebGPU: list the test, mark it unavailable
+    if(stopped()) return done('idle');
     BENCH={ gpuId, cpuKdf, sweepAgg:cpuSweep, sweepCores, ecMult, gpuKdf, ts:Date.now() };
     saveBench(); applyBench(); renderBenchCard(); recompute(); benchPartialClear();
     // ---- Stage 2 (address) + Stage 3 (xpub): per-mode calibration ----
     const gpuAvail = !!(HAS_GPU && window.GpuCrack && gpuKdf);
     const cal2 = {};
-    await sleep(2000); cal2.address = await runStageCalib(2, 'address', gpuAvail);   // pause so the previous stage's results can be read
-    await sleep(2000); cal2.xpub    = await runStageCalib(3, 'xpub',    gpuAvail);
+    await sleep(2000); if(stopped()) return done('idle');
+    cal2.address = await runStageCalib(2, 'address', gpuAvail);   // pause so the previous stage's results can be read
+    if(stopped()) return done('idle');
+    await sleep(2000); if(stopped()) return done('idle');
+    cal2.xpub    = await runStageCalib(3, 'xpub',    gpuAvail);
+    if(stopped()) return done('idle');
     BENCH.cal2 = cal2; saveBench(); applyBench(); recompute();
-    const sb=$('#benchShare'); if(sb) sb.hidden=false;
-    run.textContent=t('benchRun'); run.disabled=false;
-  }catch(e){ run.disabled=false; run.textContent=t('benchRun'); alert('benchmark failed: '+e.message); }
+    done('done');   // success: hide Run/Stop, offer Close + Share
+  }catch(e){ done('idle'); alert('benchmark failed: '+e.message); }
 }
 // Build the calibration rows into stage pane `n`, switch to that tab, run the
 // per-mode timed cracks against target type `tt`, fill the rows, return the rates.
@@ -1270,7 +1314,7 @@ function _calAddrTarget(mn, pass){ const C=window.BIP39Crypto; return C.addressT
 function _calXpubTarget(mn, pass){ const C=window.BIP39Crypto; return C.accountNode(C.mnemonicToSeed(mn, pass||''), CAL_PURPOSE, 0, 0).c; }   // account chain code (EC-free compare)
 function _calTargetHex(tt, taddr, tcc){ const C=window.BIP39Crypto;
   return tt==='xpub' ? { kind:'xpub', chainCodeHex:C.toHex(tcc) } : { kind:'address', addrType:taddr.type, programHex:C.toHex(taddr.program) }; }
-const _calCap=(t0)=>()=>(performance.now()-t0)>CAL_RUN_S*1000;
+const _calCap=(t0)=>()=>_benchStop||(performance.now()-t0)>CAL_RUN_S*1000;   // Stop aborts the in-flight calibration run
 // count in "hashed" units: words = valids hashed (extra.seeded, the GPU/EC
 // bottleneck, consistent across backends); passphrase/joint = candidates (done).
 const _calCount=(mode)=>(done,tot,rate,extra)=> mode==='words' ? ((extra&&extra.seeded)||0) : done;
