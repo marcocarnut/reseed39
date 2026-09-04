@@ -253,17 +253,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b97"></script>
-<script src="../wasm/rxecore_api.js?v=b97"></script>
+<script src="../wasm/rxecore.js?v=b98"></script>
+<script src="../wasm/rxecore_api.js?v=b98"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b97"></script>
-<script src="../estimator/model.js?v=b97"></script>
-<script src="../estimator/wordset.js?v=b97"></script>
-<script src="../estimator/bip39crypto.js?v=b97"></script>
-<script src="../estimator/electrum.js?v=b97"></script>
-<script src="../estimator/gpucrack.js?v=b97"></script>
-<script src="../estimator/i18n.js?v=b97"></script>
+<script src="../estimator/bip39.js?v=b98"></script>
+<script src="../estimator/model.js?v=b98"></script>
+<script src="../estimator/wordset.js?v=b98"></script>
+<script src="../estimator/bip39crypto.js?v=b98"></script>
+<script src="../estimator/electrum.js?v=b98"></script>
+<script src="../estimator/gpucrack.js?v=b98"></script>
+<script src="../estimator/i18n.js?v=b98"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -272,7 +272,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b97';
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b98';
+const APP_VERSION = 'b98';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -738,7 +739,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b97' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b98' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -1362,7 +1363,11 @@ async function shareBenchmark(){
   if(!BENCH) return;
   const r=v=>Math.round(v||0);
   const rc=(cal)=>{ const o={}; for(const tt in (cal||{})){ o[tt]={}; for(const m in cal[tt]){ o[tt][m]={ gpu:r(cal[tt][m].gpu), cpu:r(cal[tt][m].cpu) }; } } return o; };
-  const data={ tool:'reseed39', ts:new Date(BENCH.ts||Date.now()).toISOString(), gpu:BENCH.gpuId||null, ua:navigator.userAgent,
+  let mem=null; try{ mem=navigator.deviceMemory||null; }catch(e){}   // GB (Chrome only)
+  const data={ tool:'reseed39', schema:1, build:APP_VERSION, ts:new Date(BENCH.ts||Date.now()).toISOString(),
+    gpu:BENCH.gpuId||null, ua:navigator.userAgent,
+    device:{ cores:navigator.hardwareConcurrency||null, benchCores:BENCH.sweepCores||0, mobile:IS_MOBILE, memoryGB:mem },
+    calSeconds:CAL_RUN_S,
     stage1:{ cpuKdf:r(BENCH.cpuKdf), sweep:r(BENCH.sweepAgg), sweepCores:BENCH.sweepCores||0, ec:r(BENCH.ecMult), gpuSeed:r(BENCH.gpuKdf) },
     calibration: rc(BENCH.cal2) };
   const text=JSON.stringify(data,null,2), btn=$('#benchShare'), prev=btn&&btn.textContent;
