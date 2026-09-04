@@ -226,18 +226,34 @@ async function gpuSeeds(g, mid, mnemonic, passphrases){
   return out;
 }
 
-// A short identifier for the current WebGPU adapter (for the benchmark cache).
+// The real GPU name via WebGL's WEBGL_debug_renderer_info -- Firefox masks the
+// WebGPU adapter.info fields (anti-fingerprinting) so they come back empty, but it
+// still exposes the WebGL renderer string (e.g. "AMD Radeon Graphics (renoir...)").
+function _webglRenderer(){
+  try{
+    if (typeof document==='undefined') return null;
+    const c=document.createElement('canvas');
+    const gl=c.getContext('webgl2')||c.getContext('webgl')||c.getContext('experimental-webgl');
+    if(!gl) return null;
+    const ext=gl.getExtension('WEBGL_debug_renderer_info');
+    const s=(ext && gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) || gl.getParameter(gl.RENDERER);
+    return s ? String(s).trim().slice(0,80) : null;
+  }catch(e){ return null; }
+}
+// A short identifier for the current adapter (for the benchmark cache + share DB).
+// Prefer the WebGPU adapter info; when it's empty (Firefox masks it) fall back to
+// the WebGL renderer string so the name isn't just "WebGPU".
 async function getGpuInfo(){
-  if (!navigator.gpu) return null;
+  if (!navigator.gpu) return _webglRenderer();
   try {
     const adapter = await navigator.gpu.requestAdapter({ powerPreference:'high-performance' });
-    if (!adapter) return null;
+    if (!adapter) return _webglRenderer();
     let info = adapter.info;
     if (!info && adapter.requestAdapterInfo) info = await adapter.requestAdapterInfo();
-    if (!info) return 'WebGPU';
-    const parts = [info.vendor, info.architecture, info.device, info.description].filter(Boolean);
-    return parts.length ? parts.join(' ').trim().slice(0,80) : 'WebGPU';
-  } catch(e){ return 'WebGPU'; }
+    const parts = info ? [info.vendor, info.architecture, info.device, info.description].filter(Boolean) : [];
+    const name = parts.length ? parts.join(' ').trim().slice(0,80) : '';
+    return name || _webglRenderer() || 'WebGPU';
+  } catch(e){ return _webglRenderer() || 'WebGPU'; }
 }
 
 // Measure raw GPU seed throughput (seeds/s).
