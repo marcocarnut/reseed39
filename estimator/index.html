@@ -196,6 +196,7 @@
       <legend data-i18n="target">Target</legend>
       <label class="f" data-i18n="addrLabel">Paste your full address or xpub</label>
       <input id="addr" type="text" placeholder="bc1q… / 1… / 3… / bc1p… / xpub… / ypub… / zpub…">
+      <div class="tip" id="addrTip" style="display:none"></div>
       <div class="hint" id="addrInfo"></div>
       <div class="row" style="margin-top:8px;align-items:center">
         <div style="flex:0 0 auto"><div class="seg" id="targetSeg">
@@ -253,17 +254,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b101"></script>
-<script src="../wasm/rxecore_api.js?v=b101"></script>
+<script src="../wasm/rxecore.js?v=b102"></script>
+<script src="../wasm/rxecore_api.js?v=b102"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b101"></script>
-<script src="../estimator/model.js?v=b101"></script>
-<script src="../estimator/wordset.js?v=b101"></script>
-<script src="../estimator/bip39crypto.js?v=b101"></script>
-<script src="../estimator/electrum.js?v=b101"></script>
-<script src="../estimator/gpucrack.js?v=b101"></script>
-<script src="../estimator/i18n.js?v=b101"></script>
+<script src="../estimator/bip39.js?v=b102"></script>
+<script src="../estimator/model.js?v=b102"></script>
+<script src="../estimator/wordset.js?v=b102"></script>
+<script src="../estimator/bip39crypto.js?v=b102"></script>
+<script src="../estimator/electrum.js?v=b102"></script>
+<script src="../estimator/gpucrack.js?v=b102"></script>
+<script src="../estimator/i18n.js?v=b102"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -272,8 +273,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b101';
-const APP_VERSION = 'b101';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b102';
+const APP_VERSION = 'b102';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -739,7 +740,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b101' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b102' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -889,8 +890,8 @@ function applyPreset(p){
 function _b64urlEnc(s){ return btoa(unescape(encodeURIComponent(s))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
 function _b64urlDec(b){ b=b.replace(/-/g,'+').replace(/_/g,'/'); while(b.length%4)b+='='; return decodeURIComponent(escape(atob(b))); }
 function setTip(which,text){
-  const box = which==='mn'?$('#wordsPat'):$('#passPat');
-  const el  = which==='mn'?$('#mnTip'):$('#passTip');
+  const box = which==='mn'?$('#wordsPat'):which==='addr'?$('#addr'):$('#passPat');
+  const el  = which==='mn'?$('#mnTip'):which==='addr'?$('#addrTip'):$('#passTip');
   if(!box||!el) return;
   box.title = text||'';                                  // native hover tooltip
   if(text){ el.textContent='💡 '+text; el.style.display=''; } else { el.textContent=''; el.style.display='none'; }
@@ -904,7 +905,8 @@ function buildShareState(){
     rc:$('#reqChecksum').checked?1:0, bk:segVal('#backendSeg','data-b'), lg:LANG,
     co:$('#customPathOn').checked?1:0, cp:$('#customPath').value,
     tm:(($('#shareMnTip')&&$('#shareMnTip').value.trim())||$('#wordsPat').title||''),
-    tpp:(($('#sharePassTip')&&$('#sharePassTip').value.trim())||$('#passPat').title||'') };
+    tpp:(($('#sharePassTip')&&$('#sharePassTip').value.trim())||$('#passPat').title||''),
+    ta:(($('#shareAddrTip')&&$('#shareAddrTip').value.trim())||$('#addr').title||'') };
 }
 function shareLink(){ return location.origin+location.pathname+'#'+_b64urlEnc(JSON.stringify(buildShareState())); }
 function applyShareState(s){
@@ -923,7 +925,7 @@ function applyShareState(s){
     if(s.co!=null) $('#customPathOn').checked=!!s.co;
     if(s.bk){ const b=$('#backendSeg button[data-b="'+s.bk+'"]'); if(b && !b.disabled) setSeg('#backendSeg','data-b',s.bk); }
     if(s.lg && s.lg!==LANG) setLang(s.lg);
-    setTip('mn',s.tm||''); setTip('pass',s.tpp||'');
+    setTip('mn',s.tm||''); setTip('pass',s.tpp||''); setTip('addr',s.ta||'');
     applyTargetVis();
   }catch(e){}
   finally{ _restoring=false; }
@@ -933,8 +935,9 @@ function applyShareState(s){
 function openShareModal(){
   $('#shareMnTip').value = $('#wordsPat').title||'';
   $('#sharePassTip').value = $('#passPat').title||'';
-  const upd=()=>{ setTip('mn',$('#shareMnTip').value.trim()); setTip('pass',$('#sharePassTip').value.trim()); $('#shareUrl').value=shareLink(); };
-  $('#shareMnTip').oninput=upd; $('#sharePassTip').oninput=upd;
+  $('#shareAddrTip').value = $('#addr').title||'';
+  const upd=()=>{ setTip('mn',$('#shareMnTip').value.trim()); setTip('pass',$('#sharePassTip').value.trim()); setTip('addr',$('#shareAddrTip').value.trim()); $('#shareUrl').value=shareLink(); };
+  $('#shareMnTip').oninput=upd; $('#sharePassTip').oninput=upd; $('#shareAddrTip').oninput=upd;
   upd();
   $('#shareNative').style.display = (navigator.share) ? '' : 'none';   // native OS share sheet (mobile / supported browsers)
   $('#shareOverlay').classList.add('on');
@@ -2590,6 +2593,8 @@ function renderDictList(){
         <input id="shareMnTip" type="text" style="width:100%" placeholder="e.g. one unknown word at the end">
         <label class="f" data-i18n="sharePassTip" style="margin-top:8px">Passphrase note</label>
         <input id="sharePassTip" type="text" style="width:100%" placeholder="e.g. blank — no passphrase">
+        <label class="f" data-i18n="shareAddrTip" style="margin-top:8px">Address note</label>
+        <input id="shareAddrTip" type="text" style="width:100%" placeholder="e.g. first receive address, BIP84">
       </div>
       <div class="warnmsg" data-i18n="sharePrivacy" style="margin-top:14px">⚠ This link encodes your inputs, including the Mnemonic and Passphrase boxes. Don't share a link built from a REAL seed — use it for example/placeholder patterns.</div>
     </div>
