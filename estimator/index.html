@@ -253,17 +253,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b95"></script>
-<script src="../wasm/rxecore_api.js?v=b95"></script>
+<script src="../wasm/rxecore.js?v=b96"></script>
+<script src="../wasm/rxecore_api.js?v=b96"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b95"></script>
-<script src="../estimator/model.js?v=b95"></script>
-<script src="../estimator/wordset.js?v=b95"></script>
-<script src="../estimator/bip39crypto.js?v=b95"></script>
-<script src="../estimator/electrum.js?v=b95"></script>
-<script src="../estimator/gpucrack.js?v=b95"></script>
-<script src="../estimator/i18n.js?v=b95"></script>
+<script src="../estimator/bip39.js?v=b96"></script>
+<script src="../estimator/model.js?v=b96"></script>
+<script src="../estimator/wordset.js?v=b96"></script>
+<script src="../estimator/bip39crypto.js?v=b96"></script>
+<script src="../estimator/electrum.js?v=b96"></script>
+<script src="../estimator/gpucrack.js?v=b96"></script>
+<script src="../estimator/i18n.js?v=b96"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -272,7 +272,7 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b95';
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b96';
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -619,9 +619,9 @@ async function resumeBenchGpu(){
   openBenchModal();
   const set=(id,txt)=>{ const e=$('#bs-'+id); if(e) e.textContent=txt; };
   const run=$('#benchRun'); if(run) run.disabled=true;
-  set('cpuk', fmtBig(Math.round(p.cpuKdf))+' /s/core');
-  set('cpus', fmtBig(Math.round(p.sweepAgg))+` /s (${p.sweepCores} cores)`);
-  set('ec',   fmtBig(Math.round(p.ecMult))+' /s');
+  set('cpuk', fmtBig(Math.round(p.cpuKdf))+'/s/core');
+  set('cpus', fmtBig(Math.round(p.sweepAgg))+`/s (${p.sweepCores} cores)`);
+  set('ec',   fmtBig(Math.round(p.ecMult))+'/s');
   const finalize=(g)=>{ BENCH={ gpuId:(g>0?(CUR_GPU_ID||null):null), cpuKdf:p.cpuKdf, sweepAgg:p.sweepAgg, sweepCores:p.sweepCores, ecMult:p.ecMult, gpuKdf:(g>0?g:null), depth:p.depth, ts:Date.now() };
     saveBench(); applyBench(); renderBenchCard(); recompute(); benchPartialClear(); };
   try{
@@ -629,7 +629,7 @@ async function resumeBenchGpu(){
     // too soon can hit a transient "no usable WebGPU" while it's still re-acquiring.
     await _gpuStepCountdown(GCAL_RESET_WAIT, 'gpuRestartIn');
     const g=await _measGpuKdf(5000);                 // halves + measures; may crash->reload->resume again
-    if(g>0){ finalize(g); set('gpuk', fmtBig(Math.round(g))+' /s'+(window.__gpuProbeStr?'  ['+window.__gpuProbeStr+']':'')); }
+    if(g>0){ finalize(g); set('gpuk', fmtBig(Math.round(g))+'/s'+(window.__gpuProbeStr?'  ['+window.__gpuProbeStr+']':'')); }
     else   { finalize(0); set('gpuk', t('gpuDeadStep')); }   // bottomed out -> CPU-only bench saved
   }catch(e){
     // The GPU wouldn't initialise -- it's still re-acquiring after the reset.
@@ -738,7 +738,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b95' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b96' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -828,7 +828,7 @@ const PRESETS = [
     sub:{en:'Electrum segwit seed, one unknown word (bc1q…)',pt:'seed segwit Electrum, uma palavra desconhecida (bc1q…)'},
     words:'bitter grass shiver impose acquire brush forget axis eager alone wine [:electrum-en:]',
     pass:'', target:'address', purposes:['electrum'] },
-  { title:{en:'Joint (longshot): words × passphrase',pt:'Conjunto (tiro longo): palavras × frase-senha'},
+  { title:{en:'Combined (longshot): words × passphrase',pt:'Combinado (tiro longo): palavras × frase-senha'},
     sub:{en:'product keyspace, both axes vary, xpub',pt:'espaço produto, os dois eixos variam, xpub'},
     words:'legal winner thank year wave sausage worth useful legal winner thank [:bip39-en:]',
     pass:'[a-z]{1,3}', target:'xpub', purposes:['bip84'] },
@@ -1072,7 +1072,7 @@ const BENCH_SPIN = '<span class="benchspin"></span>';   // running indicator (re
 function benchTab(n){ [1,2,3].forEach(i=>{ const p=$('#benchStage'+i); if(p) p.hidden=(i!==n); });
   $$('#benchTabs .btab').forEach(b=>b.classList.toggle('on', +b.dataset.stage===n)); }
 function openBenchModal(){
-  $('#benchStage1').innerHTML = benchStepRow('cpuk',t('benchCpuKdf'))+benchStepRow('cpus',t('benchCpuSweep'))+benchStepRow('ec',t('benchEc'))+(HAS_GPU?benchStepRow('gpuk',t('benchGpuKdf')):'');
+  $('#benchStage1').innerHTML = benchStepRow('cpuk',t('benchCpuKdf'))+benchStepRow('cpus',t('benchCpuSweep'))+benchStepRow('ec',t('benchEc'))+benchStepRow('gpuk',t('benchGpuKdf'));
   $('#benchStage2').innerHTML=''; $('#benchStage3').innerHTML='';   // filled by runBenchAll (need gpuAvail from Stage 1)
   const sb=$('#benchShare'); if(sb) sb.hidden=true;
   const mob=$('#benchMobileNote'); if(mob){ if(IS_MOBILE){ mob.textContent='📱 '+t('benchMobileNote'); mob.hidden=false; } else mob.hidden=true; }
@@ -1193,14 +1193,15 @@ async function runBenchAll(){
   const run=$('#benchRun'); run.disabled=true;
   const set=(id,html)=>{ const e=$('#bs-'+id); if(e) e.innerHTML=html; };   // innerHTML: lets us show the spinner
   const yield_=()=>new Promise(r=>setTimeout(r,30));
+  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   const per=5000;
   const meas=async(id,fn,fmt)=>{ set(id, BENCH_SPIN); await yield_(); const v=await fn(per); set(id, fmt(v)); return v; };
   try{
     benchTab(1);
-    const cpuKdf = await meas('cpuk', _measCpuKdf, v=>fmtBig(Math.round(v))+' /s/core');
+    const cpuKdf = await meas('cpuk', _measCpuKdf, v=>fmtBig(Math.round(v))+'/s/core');
     const sweepCores = _benchCores();
-    const cpuSweep = await meas('cpus', _measCpuSweep, v=>fmtBig(Math.round(v))+` /s (${sweepCores} cores)`);
-    const ecMult = await meas('ec', _measEcMult, v=>fmtBig(Math.round(v))+' /s');
+    const cpuSweep = await meas('cpus', _measCpuSweep, v=>fmtBig(Math.round(v))+`/s (${sweepCores} cores)`);
+    const ecMult = await meas('ec', _measEcMult, v=>fmtBig(Math.round(v))+'/s');
     let gpuKdf=null, gpuId=CUR_GPU_ID||null;
     if(HAS_GPU && window.GpuCrack){
       // Snapshot the CPU results before the GPU step. On mobile a too-big GPU
@@ -1208,16 +1209,16 @@ async function runBenchAll(){
       // dialog with these filled in and redoes only the GPU (see resumeBenchGpu).
       if(IS_MOBILE) benchPartialSave({ gid:_gpuGid(), cpuKdf, sweepAgg:cpuSweep, sweepCores, ecMult, ts:Date.now() });
       try{ gpuId=(await window.GpuCrack.getGpuInfo())||gpuId;
-           gpuKdf=await meas('gpuk', _measGpuKdf, v=>fmtBig(Math.round(v))+' /s'+((IS_MOBILE&&window.__gpuProbeStr)?'  ['+window.__gpuProbeStr+']':'')); }
+           gpuKdf=await meas('gpuk', _measGpuKdf, v=>fmtBig(Math.round(v))+'/s'+((IS_MOBILE&&window.__gpuProbeStr)?'  ['+window.__gpuProbeStr+']':'')); }
       catch(e){ set('gpuk','failed: '+e.message); }
-    }
+    } else { set('gpuk', t('gpuUnavail')); }   // no WebGPU: list the test, mark it unavailable
     BENCH={ gpuId, cpuKdf, sweepAgg:cpuSweep, sweepCores, ecMult, gpuKdf, ts:Date.now() };
     saveBench(); applyBench(); renderBenchCard(); recompute(); benchPartialClear();
     // ---- Stage 2 (address) + Stage 3 (xpub): per-mode calibration ----
     const gpuAvail = !!(HAS_GPU && window.GpuCrack && gpuKdf);
     const cal2 = {};
-    cal2.address = await runStageCalib(2, 'address', gpuAvail);
-    cal2.xpub    = await runStageCalib(3, 'xpub',    gpuAvail);
+    await sleep(2000); cal2.address = await runStageCalib(2, 'address', gpuAvail);   // pause so the previous stage's results can be read
+    await sleep(2000); cal2.xpub    = await runStageCalib(3, 'xpub',    gpuAvail);
     BENCH.cal2 = cal2; saveBench(); applyBench(); recompute();
     const sb=$('#benchShare'); if(sb) sb.hidden=false;
     run.textContent=t('benchRun'); run.disabled=false;
@@ -1227,14 +1228,16 @@ async function runBenchAll(){
 // per-mode timed cracks against target type `tt`, fill the rows, return the rates.
 async function runStageCalib(n, tt, gpuAvail){
   benchTab(n);
-  const pane=$('#benchStage'+n), bes=gpuAvail?['gpu','cpu']:['cpu'];
+  const pane=$('#benchStage'+n);
   const modes=[['words',t('calWords')],['passphrase',t('calPass')],['joint',t('calJoint')]];
-  let h='';
-  for(const be of bes) for(const [mk,ml] of modes) h+=benchStepRow('cal-'+tt+'-'+mk+'-'+be, ml+' · '+(be==='gpu'?'GPU':'CPU'));
+  const cpuLbl=_benchCores()+' '+t('cpuCores');   // e.g. "8 CPU cores"
+  let h='';   // always list BOTH backends (GPU rows say "GPU unavailable" when there's no WebGPU)
+  for(const be of ['gpu','cpu']) for(const [mk,ml] of modes) h+=benchStepRow('cal-'+tt+'-'+mk+'-'+be, ml+' · '+(be==='gpu'?'GPU':cpuLbl));
   pane.innerHTML=h;
+  if(!gpuAvail) for(const [mk] of modes){ const e=$('#bs-cal-'+tt+'-'+mk+'-gpu'); if(e) e.textContent=t('gpuUnavail'); }
   return await calibrate(gpuAvail, tt, (mode,be,phase,rate)=>{
     const e=$('#bs-cal-'+tt+'-'+mode+'-'+be);
-    if(e) e.innerHTML = (phase==='done') ? (rate>0? fmtBig(Math.round(rate))+' /s' : '—') : BENCH_SPIN;
+    if(e) e.innerHTML = (phase==='done') ? (rate>0? fmtBig(Math.round(rate))+'/s' : '—') : BENCH_SPIN;
   });
 }
 // ===================== Stage 2: per-mode calibration =====================
@@ -1247,7 +1250,7 @@ async function runStageCalib(n, tt, gpuAvail){
 const CAL_MN   = 'legal winner thank year wave sausage worth useful legal winner thank yellow';   // valid; fixed base for passphrase
 const CAL_W12  = 'slow|edge|build|grunt|acid|rich|garment|address|open|health|voyage|frozen';     // 12 distinct valid words (words/joint)
 const CAL_W11  = 'slow edge build grunt acid rich garment address open health voyage';            // joint: 11 fixed + 1 unknown
-const CAL_RUN_S = 22, CAL_PURPOSE = 84;   // each run ~22s; p2wpkh (bip84)
+const CAL_RUN_S = 15, CAL_PURPOSE = 84;   // each run ~15s; p2wpkh (bip84)
 // Sizing the target index for ~N seconds is circular (you'd need the rate you're
 // measuring), so instead each run goes against an UNREACHABLE target for a fixed
 // time and we read the STEADY-STATE rate = slope of the progress count over the
@@ -1352,19 +1355,17 @@ function _applyCalibratedEta(r, backend){
   r.eta.kdfRate=cr; r.eta.calibrated=true; r.eta.rateSource=(LANG==='pt'?'quebra cronometrada':'timed crack');
   if(E.verdictTier) r.tier=E.verdictTier(secs);
 }
-// Copy a plain-text summary of the benchmark to the clipboard so users can send it
-// to us (no POST -> keeps the SPA self-contained). Non-sensitive: GPU id + rates +
-// UA, never any seed material.
+// Copy the benchmark as JSON so it can be pasted straight into our benchmark
+// database (no POST -> keeps the SPA self-contained). Non-sensitive: GPU id +
+// rates + UA, never any seed material.
 async function shareBenchmark(){
   if(!BENCH) return;
-  const rnd=v=>(v?fmtBig(Math.round(v)):'—');
-  const L=['reseed39 benchmark', 'gpu: '+(BENCH.gpuId||'CPU only'),
-    'stage1: cpu-kdf '+rnd(BENCH.cpuKdf)+'/s/core · sweep '+rnd(BENCH.sweepAgg)+'/s ('+(BENCH.sweepCores||'?')+' cores) · ec '+rnd(BENCH.ecMult)+'/s · gpu-seed '+rnd(BENCH.gpuKdf)+'/s'];
-  const c=BENCH.cal2||{};
-  for(const tt of ['address','xpub']){ if(!c[tt]) continue; L.push(tt+':');
-    for(const mode of ['words','passphrase','joint']){ const m=c[tt][mode]||{}; L.push('  '+mode+': gpu '+rnd(m.gpu)+'/s · cpu '+rnd(m.cpu)+'/s'); } }
-  L.push('ua: '+navigator.userAgent, 'ts: '+new Date(BENCH.ts||Date.now()).toISOString());
-  const text=L.join('\n'), btn=$('#benchShare'), prev=btn&&btn.textContent;
+  const r=v=>Math.round(v||0);
+  const rc=(cal)=>{ const o={}; for(const tt in (cal||{})){ o[tt]={}; for(const m in cal[tt]){ o[tt][m]={ gpu:r(cal[tt][m].gpu), cpu:r(cal[tt][m].cpu) }; } } return o; };
+  const data={ tool:'reseed39', ts:new Date(BENCH.ts||Date.now()).toISOString(), gpu:BENCH.gpuId||null, ua:navigator.userAgent,
+    stage1:{ cpuKdf:r(BENCH.cpuKdf), sweep:r(BENCH.sweepAgg), sweepCores:BENCH.sweepCores||0, ec:r(BENCH.ecMult), gpuSeed:r(BENCH.gpuKdf) },
+    calibration: rc(BENCH.cal2) };
+  const text=JSON.stringify(data,null,2), btn=$('#benchShare'), prev=btn&&btn.textContent;
   const ok=()=>{ if(btn){ btn.textContent='✓ '+t('benchShared'); setTimeout(()=>{ if(btn) btn.textContent=prev; },1800); } };
   try{ await navigator.clipboard.writeText(text); ok(); }
   catch(e){ try{ const ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); ok(); }catch(_){ alert(text); } }
@@ -1381,7 +1382,7 @@ function renderBenchCard(){
       <span>🖥 <b>${t('benchCached')}</b></span>
       <button class="ghost" id="benchOpen">${t('benchRedo')}</button></div>
       <div class="gid">${esc(BENCH.gpuId||'CPU only')}</div>
-      <div class="note" style="margin-top:4px">CPU ${fmtBig(Math.round(BENCH.cpuKdf))} /s/core · sweep ${fmtBig(Math.round(BENCH.sweepAgg||BENCH.cpuSweep||0))} /s${BENCH.sweepAgg?` (${BENCH.sweepCores} cores)`:'/core'}${BENCH.ecMult?` · EC ${fmtBig(Math.round(BENCH.ecMult))} /s`:''}${BENCH.gpuKdf?` · GPU ${fmtBig(Math.round(BENCH.gpuKdf))} /s`:''}</div>
+      <div class="note" style="margin-top:4px">CPU ${fmtBig(Math.round(BENCH.cpuKdf))}/s/core · sweep ${fmtBig(Math.round(BENCH.sweepAgg||BENCH.cpuSweep||0))}/s${BENCH.sweepAgg?` (${BENCH.sweepCores} cores)`:'/core'}${BENCH.ecMult?` · EC ${fmtBig(Math.round(BENCH.ecMult))}/s`:''}${BENCH.gpuKdf?` · GPU ${fmtBig(Math.round(BENCH.gpuKdf))}/s`:''}</div>
       ${mismatch?`<div class="warnmsg" style="margin-top:4px">⚠ ${t('benchMismatch')}</div>`:''}`;
   }
   const b=$('#benchOpen'); if(b) b.onclick=openBenchModal;
