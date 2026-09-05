@@ -26,6 +26,20 @@ the design. This brief is *how to start*.
   Makefile shape, multi-GPU fork/exec, `--range`/`--count`, `multigpu.sh`, librxe as an
   external dep `RXE_DIR=../rxe`). Its CUDA secp256k1 is the reference for the later address
   path.
+- **CUDA toolkit reality (scouted 2026‑09‑05):** the box has **only CUDA 11.8** (`nvcc` not
+  on PATH; `libnvrtc.so.11.8.89` present) but a **new driver 595.71.05**. Blackwell
+  (RTX 5090, **sm_120**) needs the 12.8+/13 toolkit for *native* codegen — gpuhub warns
+  about this. **Two paths, use both in order:**
+  1. **Now, no install — the bip38 pattern that already runs here:** nvrtc(11.8) compiles
+     the kernel to **`compute_90` PTX** (the highest 11.8 knows) and **driver 595 JIT‑forwards
+     it to sm_120** at load. Fully functional (bip38's binary runs on this box). Use this
+     for **Phase 1 (gates) and Phase 2 (crack correctness)** — don't let a toolkit install
+     block correctness work.
+  2. **Before serious perf measurement — install CUDA 13** (`apt-get` is available on the
+     box) for native sm_120 nvrtc/nvcc codegen (Blackwell instructions matter for the
+     PBKDF2 kernel, which is the whole bottleneck) and to clear the warning. Confirm first
+     exactly how bip38rxcrack builds/runs today and mirror it.
+  Report the CUDA version you settle on with your Phase‑1 results.
 
 ## Repos to clone on the box
 - `reseed39` — the oracle (crypto + vectors) **and** this plan/brief (`cli/`).
