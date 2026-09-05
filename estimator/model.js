@@ -327,7 +327,7 @@ function estimate(input, deps) {
       if (survival.exactFallback)
         notes.push('note: sampling found no valid mnemonic (they are rare here -- most [a-z]{n} tokens are not wordlist words), so it was recounted exactly. This count matches what the search will actually test.');
       if (survival.belowSampleResolution)
-        warnings.push('the sample found no checksum-valid mnemonic and the set is too big to count exactly -- the true count is small but non-zero (the search still tests all candidates). Prefer [:bip39en:] for the unknown word(s) over [a-z]{n} so candidates stay real words.');
+        warnings.push('the sample found no checksum-valid mnemonic and the set is too big to count exactly -- the true count is small but non-zero (the search still tests all candidates). Prefer [:bip39:] for the unknown word(s) over [a-z]{n} so candidates stay real words.');
     }
   } else {
     notes.push('passphrase mode: mnemonic is fixed & already checksum-valid -- checksum filter is a no-op here (PLAN §7).');

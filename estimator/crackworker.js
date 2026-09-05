@@ -22,8 +22,8 @@ async function ensureCore(wordlist){
   if (core) return;
   C = globalThis.BIP39Crypto;
   core = await globalThis.RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile: p => '../wasm/'+p+_v } });
-  core.registerDict('bip39-en', wordlist);
-  ['bip39en','bip39','en','english','electrum-en','electrumen','electrum'].forEach(a=>{ try{ core.registerDict(a, wordlist); }catch(e){} });
+  core.registerDict('bip39', wordlist);
+  ['bip39-en','bip39en','en','english','electrum-en','electrumen','electrum'].forEach(a=>{ try{ core.registerDict(a, wordlist); }catch(e){} });
   Object.entries(globalThis.BIP39.NTH_TOKENS).forEach(([W,tok])=>{ try{ core.registerDict(tok, globalThis.BIP39.scaffoldWords(wordlist, +W)); }catch(e){} });
   V = globalThis.BIP39.makeValidator(wordlist);
 }

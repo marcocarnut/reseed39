@@ -173,7 +173,7 @@
 
     <div id="wordsBox">
       <label class="f" data-i18n="mnemonic">Mnemonic</label>
-      <textarea id="wordsPat" rows="3">legal winner thank year wave sausage worth useful legal winner thank [:bip39-en:]</textarea>
+      <textarea id="wordsPat" rows="3">legal winner thank year wave sausage worth useful legal winner thank [:bip39:]</textarea>
       <div class="tip" id="mnTip" style="display:none"></div>
       <div class="hint" id="wordsHint" data-i18n-html="wordsHint"></div>
       <label class="derivrow" style="cursor:pointer;margin-top:8px">
@@ -255,17 +255,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b107"></script>
-<script src="../wasm/rxecore_api.js?v=b107"></script>
+<script src="../wasm/rxecore.js?v=b108"></script>
+<script src="../wasm/rxecore_api.js?v=b108"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b107"></script>
-<script src="../estimator/model.js?v=b107"></script>
-<script src="../estimator/wordset.js?v=b107"></script>
-<script src="../estimator/bip39crypto.js?v=b107"></script>
-<script src="../estimator/electrum.js?v=b107"></script>
-<script src="../estimator/gpucrack.js?v=b107"></script>
-<script src="../estimator/i18n.js?v=b107"></script>
+<script src="../estimator/bip39.js?v=b108"></script>
+<script src="../estimator/model.js?v=b108"></script>
+<script src="../estimator/wordset.js?v=b108"></script>
+<script src="../estimator/bip39crypto.js?v=b108"></script>
+<script src="../estimator/electrum.js?v=b108"></script>
+<script src="../estimator/gpucrack.js?v=b108"></script>
+<script src="../estimator/i18n.js?v=b108"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -274,8 +274,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b107';
-const APP_VERSION = 'b107';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b108';
+const APP_VERSION = 'b108';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -741,11 +741,11 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b107' } });
-    RXE.registerDict('bip39-en', englishWords);
-    registered.set('bip39-en', englishWords.length);
-    // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
-    ['bip39en','bip39','en','english'].forEach(a=>{ try{ RXE.registerDict(a, englishWords); }catch(e){} });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b108' } });
+    RXE.registerDict('bip39', englishWords);
+    registered.set('bip39', englishWords.length);
+    // Aliases so older patterns/links keep resolving: [:bip39:] / [:bip39:] / [:en:] / [:english:].
+    ['bip39-en','bip39en','en','english'].forEach(a=>{ try{ RXE.registerDict(a, englishWords); }catch(e){} });
     // Electrum's English wordlist is byte-identical to BIP39's, so [:electrum-en:] aliases it.
     ['electrum-en','electrumen','electrum'].forEach(a=>{ try{ RXE.registerDict(a, englishWords); }catch(e){} });
     // [:Nth:] last-word scaffolds (generate-checksum mode): 2^(11-CS) stride reps.
@@ -815,11 +815,11 @@ const PRESETS = [
       ad:'36TaauZymS8sLXYh9HqYeqMvShJcMajK7j', tg:'address', pu:['bip49'], ac:'1', ch:'1', gp:'1', rc:1, bk:'gpu', tm:'', tpp:'' } },
   { title:{en:'12-word: one missing word',pt:'12 palavras: uma faltando'},
     sub:{en:'dictionary at last position, xpub (BIP44)',pt:'dicionário na última posição, xpub (BIP44)'},
-    share:{ v:1, wp:'legal winner thank year wave sausage worth useful legal winner thank [:bip39-en:]', pp:'',
+    share:{ v:1, wp:'legal winner thank year wave sausage worth useful legal winner thank [:bip39:]', pp:'',
       ad:'xpub6DX8dG8o1ApsuBzhpNBgx6bv4hABR5kF52ZZ8griQQRZJeMoQqW3gG25zSSMQSSd3eQu8aeeAjr1PWviLdP6UJ1vYQGfPCUhTD17PAjMk9J', tg:'xpub', pu:['bip44'], ac:'1', ch:'1', gp:'1', rc:1, bk:'gpu' } },
   { title:{en:'12-word: two missing words',pt:'12 palavras: duas faltando'},
     sub:{en:'sampled checksum survival, xpub (BIP84)',pt:'sobrevivência de checksum amostrada, xpub (BIP84)'},
-    share:{ v:1, wp:'legal winner thank year wave sausage worth useful legal winner [:bip39-en:] [:bip39-en:]', pp:'',
+    share:{ v:1, wp:'legal winner thank year wave sausage worth useful legal winner [:bip39:] [:bip39:]', pp:'',
       ad:'zpub6qfxp4P9wHkk5zUJ9jq9GTxv8uNiv3uq7D6DHAE57J47KgWfugoipFn9w7PZoEAJx7Xw1yaZC5QT6mgGWWvPktgQwr9Gy6LTpU8vwf9AWjJ', tg:'xpub', pu:['bip84'], ac:'1', ch:'1', gp:'1', rc:1, bk:'gpu' } },
   { title:{en:'Words: known set, unknown order',pt:'Palavras: conjunto conhecido, ordem desconhecida'},
     sub:{en:'12 known words, all permutations (12!) + checksum, address',pt:'12 palavras conhecidas, todas as permutações (12!) + checksum, endereço'},
@@ -833,7 +833,7 @@ const PRESETS = [
       ad:'bc1q3g5tmkmlvxryhh843v4dz026avatc0zzr6h3af', tg:'address', pu:['electrum'], ac:'1', ch:'1', gp:'1', rc:1, bk:'gpu' } },
   { title:{en:'Combined (longshot): words × passphrase',pt:'Combinado (tiro longo): palavras × frase-senha'},
     sub:{en:'product keyspace, both axes vary, xpub',pt:'espaço produto, os dois eixos variam, xpub'},
-    share:{ v:1, wp:'legal winner thank year wave sausage worth useful legal winner thank [:bip39-en:]', pp:'[a-z]{1,3}',
+    share:{ v:1, wp:'legal winner thank year wave sausage worth useful legal winner thank [:bip39:]', pp:'[a-z]{1,3}',
       ad:'zpub6qtPJmDf7SNnmCdng9jKaxwdW8qDX5B2biLrtPjkGiqXKEfoQe2qDDDtc1w2b9sRzA5rfhS7FsXjGiKNXMNHzNYdWEcnCd3JBQTofdgsnPR', tg:'xpub', pu:['bip84'], ac:'1', ch:'1', gp:'1', rc:1, bk:'gpu' } },
   { title:{en:'24-word: three missing words',pt:'24 palavras: três palavras faltando'},
     sub:{en:'last 3 words lost — checksum + [:Nth:], address (BIP44)',pt:'últimas 3 palavras perdidas — checksum + [:Nth:], endereço (BIP44)'},
@@ -1152,7 +1152,7 @@ async function _measCpuSweep(ms){
   // both correct and sufficient. A big 3-unknown-word set (2048^3 ~ 8.6e9)
   // guarantees it never exhausts inside the window.
   const cores = _benchCores();   // full core count (already capped to hardwareConcurrency); sweep has no watchdog to fear
-  const pattern='legal winner thank year wave sausage worth useful legal winner thank year wave sausage worth useful legal winner thank year wave [:bip39-en:] [:bip39-en:] [:bip39-en:]';
+  const pattern='legal winner thank year wave sausage worth useful legal winner thank year wave sausage worth useful legal winner thank year wave [:bip39:] [:bip39:] [:bip39:]';
   const total=2048*2048*2048;
   if(typeof Worker==='undefined'){                       // no workers: single-thread isolated
     const sset=RXE.parse(pattern); let m=0; const t0=performance.now();
@@ -1369,7 +1369,7 @@ async function _calPass(gpu, tt){
 }
 // JOINT: outer mnemonic (11 fixed + 1 unknown, checksum-filtered) x inner [a-z]{3}.
 async function _calJoint(gpu, tt){
-  const outerPat=CAL_W11+' [:bip39-en:]', innerPat='[a-z]{3}';
+  const outerPat=CAL_W11+' [:bip39:]', innerPat='[a-z]{3}';
   const jointW=RXE.parse(outerPat), inner=RXE.parse(innerPat);
   const wCard=jointW.cardinality(), innerTotal=Number(inner.cardinality());
   const isAddr=tt!=='xpub', taddr=isAddr?_calAddrTarget(CAL_MN,'ZZ'):null, tcc=isAddr?null:_calXpubTarget(CAL_MN,'ZZ');

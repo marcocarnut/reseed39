@@ -94,7 +94,7 @@ Pick a **common case** on the left (or start blank), write the **mnemonic** and/
 pattern as an rxe regex, paste your **address or xpub** (the target type and likely derivation are
 inferred automatically), **benchmark once**, read the verdict, then **Search** — pause, stop, and
 resume as needed. A **Dictionaries** tab registers a `[:name:]` wordlist for use in patterns; the
-official BIP39 English list is preloaded as `[:bip39-en:]` (with `bip39`, `en`, `english` aliases),
+official BIP39 English list is preloaded as `[:bip39:]` (with `bip39-en`, `en`, `english` aliases),
 and the Electrum English list — byte-identical to BIP39's — as `[:electrum-en:]`.
 
 ### Pattern quick-reference
@@ -103,7 +103,7 @@ and the Electrum English list — byte-identical to BIP39's — as `[:electrum-e
 |---|---|---|
 | passphrase prefix + a couple of digits | `Correct(horse|Horse)?\d{0,2}` | classic passphrase mode |
 | all the words, not the order | `((w1|…|w12) ){{12!?}}` | librxe ordered-permutation; checksum prunes hard |
-| one forgotten word | `w1 … [:bip39-en:] … w12` | ≤2048 candidates × checksum |
+| one forgotten word | `w1 … [:bip39:] … w12` | ≤2048 candidates × checksum |
 | a typo in one word | `… (river|rivet|rover) …` | alternation at that position |
 | both fuzzy | mnemonic pattern **and** passphrase pattern | joint = product; keep both tight |
 
