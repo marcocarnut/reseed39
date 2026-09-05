@@ -69,7 +69,7 @@
   input[type=text],textarea,select{width:100%;background:#0c1120;border:1px solid var(--edge);color:var(--ink);
           border-radius:7px;padding:8px 10px;font-family:var(--mono);font-size:13px}
   textarea{resize:vertical;white-space:pre-wrap;word-break:break-word;line-height:1.45}
-  #wordsPat.badinput{border-color:var(--red);box-shadow:0 0 0 1px rgba(239,83,80,.35)}
+  #wordsPat.badinput{border-color:var(--red);box-shadow:0 0 0 2px rgba(239,83,80,.55)}
   .row{display:flex;gap:10px;flex-wrap:wrap}
   .row>div{flex:1;min-width:90px}
   .seg{display:inline-flex;border:1px solid var(--edge);border-radius:7px;overflow:hidden;flex-wrap:wrap}
@@ -170,7 +170,10 @@
   </div>
 
   <div class="pane form">
-    <h2 data-i18n="searchShape">Search shape</h2>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin:0 0 10px">
+      <h2 data-i18n="searchShape" style="margin:0">Search shape</h2>
+      <button class="ghost" id="permBtn" data-i18n-title="permTip" title="Reorder known words" style="margin:0;padding:3px 9px;font-size:15px;line-height:1">🔀</button>
+    </div>
 
     <div id="wordsBox">
       <label class="f" data-i18n-html="mnemonic">Mnemonic</label>
@@ -256,17 +259,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b111"></script>
-<script src="../wasm/rxecore_api.js?v=b111"></script>
+<script src="../wasm/rxecore.js?v=b112"></script>
+<script src="../wasm/rxecore_api.js?v=b112"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b111"></script>
-<script src="../estimator/model.js?v=b111"></script>
-<script src="../estimator/wordset.js?v=b111"></script>
-<script src="../estimator/bip39crypto.js?v=b111"></script>
-<script src="../estimator/electrum.js?v=b111"></script>
-<script src="../estimator/gpucrack.js?v=b111"></script>
-<script src="../estimator/i18n.js?v=b111"></script>
+<script src="../estimator/bip39.js?v=b112"></script>
+<script src="../estimator/model.js?v=b112"></script>
+<script src="../estimator/wordset.js?v=b112"></script>
+<script src="../estimator/bip39crypto.js?v=b112"></script>
+<script src="../estimator/electrum.js?v=b112"></script>
+<script src="../estimator/gpucrack.js?v=b112"></script>
+<script src="../estimator/i18n.js?v=b112"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -275,8 +278,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b111';
-const APP_VERSION = 'b111';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b112';
+const APP_VERSION = 'b112';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -726,6 +729,7 @@ function applyLang(){
   $$('[data-i18n]').forEach(el=>{ el.textContent = t(el.getAttribute('data-i18n')); });
   $$('[data-i18n-html]').forEach(el=>{ el.innerHTML = t(el.getAttribute('data-i18n-html')); });
   $$('[data-i18n-ph]').forEach(el=>{ el.placeholder = t(el.getAttribute('data-i18n-ph')); });
+  $$('[data-i18n-title]').forEach(el=>{ el.title = t(el.getAttribute('data-i18n-title')); });
   buildPresets();
   renderDictList();
   renderOnlineBanner();   // re-render the pre-title banner in the new language
@@ -742,7 +746,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b111' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b112' } });
     RXE.registerDict('bip39', englishWords);
     registered.set('bip39', englishWords.length);
     // Aliases so older patterns/links keep resolving: [:bip39-en:] / [:bip39en:] / [:en:] / [:english:].
@@ -1035,6 +1039,15 @@ function wireUI(){
   $$('#targetSeg button').forEach(b=>b.onclick=()=>{setSeg('#targetSeg','data-t',b.dataset.t);applyTargetVis();recompute();});
   $$('#backendSeg button').forEach(b=>b.onclick=()=>{ if(b.disabled) return; setSeg('#backendSeg','data-b',b.dataset.b); });
   ['#passPat','#wordsPat','#accts','#gap','#cores'].forEach(s=>$(s).addEventListener('input',schedule));
+  // Permute: rewrite runs of known words into ordered-permutation groups. Acts on
+  // the selection if there is one, else the whole mnemonic field.
+  $('#permBtn').onclick=()=>{
+    const ta=$('#wordsPat'), v=ta.value; let s=ta.selectionStart, e=ta.selectionEnd;
+    let before='', mid=v, after='';
+    if(s!=null && e!=null && e>s){ before=v.slice(0,s); mid=v.slice(s,e); after=v.slice(e); }
+    ta.value = before + permutifyText(mid) + after;
+    ta.dispatchEvent(new Event('input',{bubbles:true})); ta.focus();
+  };
   $('#change').addEventListener('change',recompute);
   $('#reqChecksum').addEventListener('change',recompute);
   // Custom derivation path: toggle reveals the field; a preset fills it; the
@@ -2320,6 +2333,18 @@ function mnShapeError(r, reqCsum){
   return null;
 }
 function mnBadMsg(b){ return b.reason==='len' ? t('mnBadLen').replace('%n', b.n) : t('mnBadWord').replace('%w', esc(b.word)); }
+// Permute button: turn each run of ≥2 consecutive literal words (a plain [A-Za-z]
+// word -- not _, [:dict:], (a|b), {{…}}, etc.) into an ordered-permutation group
+// ((w1|…|wN) ){{N!?}}. Non-word tokens (and lone words) pass through unchanged.
+function permutifyText(text){
+  const isWord = tk => /^[A-Za-z]+$/.test(tk);
+  const tokens = (text||'').trim().split(/\s+/).filter(Boolean);
+  const out=[]; let run=[];
+  const flush=()=>{ if(run.length>=2) out.push(`((${run.join('|')}) ){{${run.length}!?}}`); else if(run.length===1) out.push(run[0]); run=[]; };
+  for(const tk of tokens){ if(isWord(tk)) run.push(tk); else { flush(); out.push(tk); } }
+  flush();
+  return out.join(' ');
+}
 function recompute(){
   autoResetCrack();   // editing a search input clears a finished crack result (see fn)
   freeLive();
