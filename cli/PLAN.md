@@ -167,6 +167,13 @@ index space by **range**, **lowest‑index‑wins** merge across children, exit 
 candidate‑index range, so this composes cleanly. Expect ~1.97× on 2 GPUs (measured on the
 bip38 side).
 
+**Note: the box currently has 1 GPU** (Kiko scaled it down for billing; more added when
+needed). **Architect for N GPUs from day one** — the fork/exec‑per‑GPU + range‑shard +
+lowest‑index‑merge path must exist and be exercised even with `-G 1` (one child). Testing
+on a single GPU still validates the full sharding/merge/exit‑code machinery (one shard);
+multi‑GPU scaling gets confirmed when Kiko re‑adds the second 5090. Don't hard‑code a
+single device anywhere.
+
 ---
 
 ## 8. Correctness law (non‑negotiable)
@@ -246,20 +253,53 @@ the cold peak — read the steady slope, same lesson as the estimator's Stage‑
 - Sanity check against the bip38 numbers (scrypt, ~1k cand/s on a 5090): PBKDF2‑SHA512 is
   vastly lighter than scrypt, so 3+ orders of magnitude more candidates/s is expected.
 
-## 12. Open questions for Kiko (decide before the box‑agent starts)
+## 12. Resolved decisions (Kiko, 2026‑09‑04)
 
-1. **Repo:** `cli/` inside reseed39, or a **new standalone repo** (like bip38rxcrack got
-   its own)? A sibling repo keeps the CUDA/build heft out of the web app and mirrors the
-   bip38 split; I lean that way. It'd take librxe **and** the reseed39 crypto vectors as
-   deps.
-2. **rxejit BIP39 sink vs standalone CUDA kernel:** add the sink to rxejit (max reuse of
-   its enumeration/multi‑GPU/`{{}}` machinery) vs a bip38‑style standalone kernel that
-   borrows rxejit's unrank logic. I lean **rxejit sink** — but it needs the sink to see
-   odometer **digits** (§2), which may be a small rxejit extension. Worth a spike first.
-3. **xpub‑only v1?** The EC‑free xpub path is the cleanest, fastest, and covers Kiko's own
-   use case; address can follow in phase 4. Ship xpub end‑to‑end first?
-4. **Which box + access:** confirm the gpuhub dual‑5090 box, the (reassigned‑on‑restart)
-   SSH port, and that the box‑agent commits branch‑only while I integrate (bip38 model).
+1. **Repo: standalone `bip39rxcrack`** (GitHub `marcocarnut/bip39rxcrack`), for parity
+   with the existing `bip38rxcrack`. Takes librxe (`RXE_DIR=../rxe`) and the reseed39
+   crypto **vectors** as deps. (Note: the browser app's local dir is *also* named
+   `bip39rxcrack` but tracks GitHub `reseed39` — the CLI is a **separate** clone/repo.)
+2. **Standalone CUDA kernel** (not an rxejit sink). Rationale: the BIP39‑specific surface
+   is large — the `[:Nth:]` dictionary family, derivation paths, address/change/gap,
+   target decoding — so a dedicated kernel that *borrows rxejit's unrank logic* is cleaner
+   than bending rxejit's sink interface around all of it. Still reuse rxejit's on‑GPU
+   `{{n!}}`/`{{k}}` unrank math and multi‑GPU sharding as reference.
+3. **xpub‑only v1**, but **full (re)seed39 feature parity is the north star** (§13). Ship
+   the EC‑free xpub path end‑to‑end first; address/change/gap/Electrum follow.
+4. **Box:** dual‑5090 gpuhub box, `ssh -p 48851 root@connect.singapore-a.gpuhub.com` (port
+   reassigned on restart — reconfirm each session). **Currently 1 GPU** (billing) — see §7
+   note. Collab = bip38 model: box‑agent builds/measures branch‑only, I'm correctness
+   authority + sole git integrator.
+
+## 13. Parity with (re)seed39 — the job‑file contract
+
+**North star:** in a real recovery the *preparation* is done in (re)seed39 (build the
+pattern, paste the target, pick purposes/paths, dry‑run the count/ETA), and whatever it
+produces must run on `bip39rxcrack` **with little or no modification.**
+
+Mechanism: **the (re)seed39 share‑state JSON is the CLI's job file.** That object already
+carries the full spec — `wp` (mnemonic pattern), `pp` (passphrase pattern), `ad` (target),
+`tg` (address|xpub), `pu` (purposes), `ac`/`ch`/`gp` (accounts/change/gap), `rc` (checksum
+flag), `co`/`cp` (custom path). The CLI should accept it directly:
+
+```
+bip39rxcrack --job job.json           # the exported share-state, verbatim
+bip39rxcrack --link '…#<b64url>'      # or the share link (decode the fragment)
+```
+
+Consequences that must hold from v1, even where the feature isn't implemented yet:
+- **Same rxe pattern grammar** (librxe is shared, so this is free) — incl. `[:bip39-en:]`
+  and the `[:Nth:]` family. A pattern that counts in the browser must enumerate identically
+  on the CLI (same odometer order → same indices → gate the index of a known planted seed).
+- **Same target auto‑detect + purpose/script‑type rules** as `decodeAddress`/`pubToTarget`.
+- **Recognize but politely reject** unimplemented job fields in v1 (e.g. address target,
+  Electrum) with a clear "not yet in the CLI — use (re)seed39 or a later build" message,
+  rather than silently ignoring them. Never *misinterpret* a field.
+- Add `--emit-job` to (re)seed39 later (a "download job file" button) so the round‑trip is
+  one click. For now the existing share‑link/JSON is the interchange.
+
+This contract is why v2+ stays cheap: each new CLI feature just lights up a field the job
+file already carries.
 
 ---
 
