@@ -97,8 +97,9 @@
   .tip.mclamp .tiptext{flex:1;min-width:0}
   .tip.mclamp:not(.open) .tiptext{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .tip .tipmore{flex:none;color:var(--accent);cursor:pointer;font-size:11.5px;white-space:nowrap}
-  #prognosisToast{position:fixed;left:50%;transform:translateX(-50%);bottom:16px;background:var(--accent);color:#04102a;padding:8px 16px;border-radius:22px;font-weight:600;font-size:13px;box-shadow:0 6px 20px rgba(0,0,0,.45);cursor:pointer;z-index:60;display:none;border:0}
-  #prognosisToast.show{display:block}
+  #prognosisToast{position:fixed;left:50%;transform:translateX(-50%);bottom:16px;background:#f5820b;color:#241300;padding:9px 18px;border-radius:22px;font-weight:700;font-size:13px;cursor:pointer;z-index:60;display:none;border:0}
+  #prognosisToast.show{display:block;animation:toastpulse 1.5s ease-in-out infinite}
+  @keyframes toastpulse{0%,100%{box-shadow:0 5px 16px rgba(0,0,0,.4)}50%{box-shadow:0 5px 24px rgba(245,130,11,.85)}}
   .verdict{display:flex;align-items:center;gap:10px;font-size:15px;font-weight:650;padding:11px 13px;border-radius:9px;margin-bottom:14px}
   .verdict .dot{width:13px;height:13px;border-radius:50%}
   .verdict.green{background:rgba(46,193,107,.13);color:var(--green)} .verdict.green .dot{background:var(--green)}
@@ -208,7 +209,6 @@
       <div class="hint" id="passHint" data-i18n="passHint"></div>
     </div>
 
-    <div class="hint" id="strategyLine" style="margin:6px 0 2px"></div>
     <div id="boxWarn" style="margin:2px 0"></div>
 
     <fieldset>
@@ -273,17 +273,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b117"></script>
-<script src="../wasm/rxecore_api.js?v=b117"></script>
+<script src="../wasm/rxecore.js?v=b118"></script>
+<script src="../wasm/rxecore_api.js?v=b118"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b117"></script>
-<script src="../estimator/model.js?v=b117"></script>
-<script src="../estimator/wordset.js?v=b117"></script>
-<script src="../estimator/bip39crypto.js?v=b117"></script>
-<script src="../estimator/electrum.js?v=b117"></script>
-<script src="../estimator/gpucrack.js?v=b117"></script>
-<script src="../estimator/i18n.js?v=b117"></script>
+<script src="../estimator/bip39.js?v=b118"></script>
+<script src="../estimator/model.js?v=b118"></script>
+<script src="../estimator/wordset.js?v=b118"></script>
+<script src="../estimator/bip39crypto.js?v=b118"></script>
+<script src="../estimator/electrum.js?v=b118"></script>
+<script src="../estimator/gpucrack.js?v=b118"></script>
+<script src="../estimator/i18n.js?v=b118"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -292,8 +292,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b117';
-const APP_VERSION = 'b117';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b118';
+const APP_VERSION = 'b118';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -760,7 +760,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b117' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b118' } });
     RXE.registerDict('bip39', englishWords);
     registered.set('bip39', englishWords.length);
     // Aliases so older patterns/links keep resolving: [:bip39-en:] / [:bip39en:] / [:en:] / [:english:].
@@ -892,6 +892,7 @@ function applyPreset(p){
   if(window.matchMedia && window.matchMedia('(max-width:860px)').matches){
     const f=document.querySelector('.pane.form');
     if(f) setTimeout(()=>f.scrollIntoView({behavior:'smooth',block:'start'}),60);
+    _toastForce=true; setTimeout(updatePrognosisToast,150);   // nudge to the prognosis
   }
   // Unified UI: a preset just seeds both axes; the tool infers the crack strategy
   // from cardinality (a fixed mnemonic + a passphrase pattern => passphrase axis,
@@ -2386,15 +2387,17 @@ function mnBadMsg(b){ return b.reason==='len' ? t('mnBadLen').replace('%n', b.n)
 // Mobile nudge: once the user has scrolled into the long Search-shape section and
 // the prognosis isn't on screen yet, float a "↓ Go to Prognosis ↓" pill that jumps
 // there -- the prognosis is the payoff and is easy to miss below all the fields.
+let _toastForce=false;   // set when a preset is tapped (mobile) -> nudge until the prognosis is reached
 function updatePrognosisToast(){
   const toast=$('#prognosisToast'); if(!toast) return;
   const mobile = window.matchMedia && window.matchMedia('(max-width:860px)').matches;
-  const form=document.querySelector('.pane.form'), res=$('#results');
-  if(!mobile || !form || !res){ toast.classList.remove('show'); return; }
-  const vh=window.innerHeight, fr=form.getBoundingClientRect(), rr=res.getBoundingClientRect();
-  const scrolledIntoForm = fr.top < -20;                 // past the top of the Search-shape section
+  const res=$('#results');
+  if(!mobile || !res){ toast.classList.remove('show'); return; }
+  const vh=window.innerHeight, rr=res.getBoundingClientRect();
   const prognosisVisible = rr.top < vh*0.85 && rr.bottom > 0;
-  toast.classList.toggle('show', scrolledIntoForm && !prognosisVisible);
+  if(prognosisVisible) _toastForce=false;                 // reached it -> drop the forced nudge
+  const scrolled = window.scrollY > vh*0.2;               // started scrolling down (shows earlier)
+  toast.classList.toggle('show', (_toastForce || scrolled) && !prognosisVisible);
 }
 // Info dialogs for the mnemonic / passphrase fields (the ⓘ buttons).
 function openInfo(which){
@@ -2468,11 +2471,10 @@ function recompute(){
   }
   let r;
   try{ r = BIP39Estimator.estimate(input,{rxe:RXE,validator}); }
-  catch(e){ $('#results').innerHTML='<div class="card"><h3>parse error</h3><div class="err">'+esc(e.message)+'</div></div>'; $('#strategyLine').innerHTML=''; return; }
+  catch(e){ $('#results').innerHTML='<div class="card"><h3>parse error</h3><div class="err">'+esc(e.message)+'</div></div>'; return; }
   r._mnBad = mnShapeError(r, input.requireChecksum);   // malformed mnemonic -> 0 candidates, red border, no crack
   _applyCalibratedEta(r, backend);   // replace the model's analytic ETA with the Stage-2 measured rate when available
-  render(r, input);
-  $('#strategyLine').innerHTML = r._mnBad ? '' : strategyText(r);
+  render(r, input);   // strategy line ("Searching the mnemonic/passphrase…") now lives in the prognosis box
   // Wrong-box guard: an address/xpub pasted into the mnemonic or passphrase box.
   const mnBad=looksLikeTargetPaste($('#wordsPat').value), passBad=looksLikeTargetPaste($('#passPat').value);
   let bw = (mnBad||passBad) ? '<span class="warnmsg">'+t(mnBad?'wrongBoxMn':'wrongBoxPass')+'</span>' : '';
@@ -2522,6 +2524,7 @@ function render(r, input){
   // Timings (prognosis + ETA) only after a benchmark; before that, sizes only.
   // The prognosis pane holds its own title and the Crack button (right-flushed),
   // so cracking is only offered once benchmarked -- which is fine.
+  const strat = strategyText(r);   // "Searching the mnemonic/passphrase…" -> shown in the prognosis box
   if(BENCH){
     const tl = tierLabel(r.tier.key);
     const timeStr = r.unbounded?t('unbounded'):(r.eta?etaDisp(r.eta.exhaustSeconds):'');
@@ -2531,9 +2534,10 @@ function render(r, input){
         ${crackable?`<button class="act" id="openCrack" style="margin:0;padding:5px 13px;font-size:13px">${t('crackOpen')}</button>`:''}
       </div>
       <div>${tl} — ${timeStr}</div>
+      ${strat?`<div style="font-size:12px;opacity:.85;font-weight:400">${strat}</div>`:''}
     </div>`;
   } else {
-    html += `<div class="cta"><div style="margin-bottom:8px">${t('benchGate')}</div><button class="act" id="ctaBench" style="margin-top:0">${t('benchDo')}</button></div>`;
+    html += `<div class="cta"><div style="margin-bottom:8px">${t('benchGate')}</div>${strat?`<div class="hint" style="margin-bottom:10px">${strat}</div>`:''}<button class="act" id="ctaBench" style="margin-top:0">${t('benchDo')}</button></div>`;
   }
 
   const totalStr = r.totalCandidates===null ? null : r.totalCandidates.toString();
