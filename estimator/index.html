@@ -69,7 +69,7 @@
   input[type=text],textarea,select{width:100%;background:#0c1120;border:1px solid var(--edge);color:var(--ink);
           border-radius:7px;padding:8px 10px;font-family:var(--mono);font-size:13px}
   textarea{resize:vertical;white-space:pre-wrap;word-break:break-word;line-height:1.45}
-  #wordsPat.badinput{border-color:var(--red);box-shadow:0 0 0 2px rgba(239,83,80,.55)}
+  #wordsPat.badinput{border-color:var(--red);box-shadow:inset 0 0 0 1px var(--red)}
   .row{display:flex;gap:10px;flex-wrap:wrap}
   .row>div{flex:1;min-width:90px}
   .seg{display:inline-flex;border:1px solid var(--edge);border-radius:7px;overflow:hidden;flex-wrap:wrap}
@@ -172,7 +172,7 @@
   <div class="pane form">
     <div style="display:flex;align-items:center;justify-content:space-between;margin:0 0 10px">
       <h2 data-i18n="searchShape" style="margin:0">Search shape</h2>
-      <button class="ghost" id="permBtn" data-i18n-title="permTip" title="Reorder known words" style="margin:0;padding:3px 9px;font-size:15px;line-height:1">🔀</button>
+      <button class="ghost" id="permBtn" data-i18n-title="permTip" title="Reorder known words" style="margin:0;padding:3px 10px;font-size:17px;line-height:1">⇄</button>
     </div>
 
     <div id="wordsBox">
@@ -259,17 +259,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b112"></script>
-<script src="../wasm/rxecore_api.js?v=b112"></script>
+<script src="../wasm/rxecore.js?v=b114"></script>
+<script src="../wasm/rxecore_api.js?v=b114"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b112"></script>
-<script src="../estimator/model.js?v=b112"></script>
-<script src="../estimator/wordset.js?v=b112"></script>
-<script src="../estimator/bip39crypto.js?v=b112"></script>
-<script src="../estimator/electrum.js?v=b112"></script>
-<script src="../estimator/gpucrack.js?v=b112"></script>
-<script src="../estimator/i18n.js?v=b112"></script>
+<script src="../estimator/bip39.js?v=b114"></script>
+<script src="../estimator/model.js?v=b114"></script>
+<script src="../estimator/wordset.js?v=b114"></script>
+<script src="../estimator/bip39crypto.js?v=b114"></script>
+<script src="../estimator/electrum.js?v=b114"></script>
+<script src="../estimator/gpucrack.js?v=b114"></script>
+<script src="../estimator/i18n.js?v=b114"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -278,8 +278,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b112';
-const APP_VERSION = 'b112';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b114';
+const APP_VERSION = 'b114';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -746,7 +746,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b112' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b114' } });
     RXE.registerDict('bip39', englishWords);
     registered.set('bip39', englishWords.length);
     // Aliases so older patterns/links keep resolving: [:bip39-en:] / [:bip39en:] / [:en:] / [:english:].
@@ -1042,11 +1042,18 @@ function wireUI(){
   // Permute: rewrite runs of known words into ordered-permutation groups. Acts on
   // the selection if there is one, else the whole mnemonic field.
   $('#permBtn').onclick=()=>{
-    const ta=$('#wordsPat'), v=ta.value; let s=ta.selectionStart, e=ta.selectionEnd;
-    let before='', mid=v, after='';
-    if(s!=null && e!=null && e>s){ before=v.slice(0,s); mid=v.slice(s,e); after=v.slice(e); }
-    ta.value = before + permutifyText(mid) + after;
-    ta.dispatchEvent(new Event('input',{bubbles:true})); ta.focus();
+    const ta=$('#wordsPat'); ta.focus();
+    let s=ta.selectionStart, e=ta.selectionEnd;
+    if(!(s!=null && e!=null && e>s)){ s=0; e=ta.value.length; }   // no selection -> whole field
+    const rep=permutifyText(ta.value.slice(s,e));
+    const expected = ta.value.slice(0,s) + rep + ta.value.slice(e);
+    ta.setSelectionRange(s,e);
+    // Prefer execCommand('insertText'): it records on the NATIVE undo stack, so
+    // Ctrl+Z reverts the permute as if the user typed it (and it fires its own
+    // 'input' event). It can silently no-op in some contexts, so verify it took
+    // and fall back to a direct value set (no undo, but always works).
+    let done=false; try{ done = document.execCommand('insertText', false, rep) && ta.value===expected; }catch(_){}
+    if(!done){ ta.value = expected; ta.dispatchEvent(new Event('input',{bubbles:true})); }
   };
   $('#change').addEventListener('change',recompute);
   $('#reqChecksum').addEventListener('change',recompute);
