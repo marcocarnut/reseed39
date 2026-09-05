@@ -255,17 +255,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b108"></script>
-<script src="../wasm/rxecore_api.js?v=b108"></script>
+<script src="../wasm/rxecore.js?v=b109"></script>
+<script src="../wasm/rxecore_api.js?v=b109"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b108"></script>
-<script src="../estimator/model.js?v=b108"></script>
-<script src="../estimator/wordset.js?v=b108"></script>
-<script src="../estimator/bip39crypto.js?v=b108"></script>
-<script src="../estimator/electrum.js?v=b108"></script>
-<script src="../estimator/gpucrack.js?v=b108"></script>
-<script src="../estimator/i18n.js?v=b108"></script>
+<script src="../estimator/bip39.js?v=b109"></script>
+<script src="../estimator/model.js?v=b109"></script>
+<script src="../estimator/wordset.js?v=b109"></script>
+<script src="../estimator/bip39crypto.js?v=b109"></script>
+<script src="../estimator/electrum.js?v=b109"></script>
+<script src="../estimator/gpucrack.js?v=b109"></script>
+<script src="../estimator/i18n.js?v=b109"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -274,8 +274,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b108';
-const APP_VERSION = 'b108';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b109';
+const APP_VERSION = 'b109';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -741,7 +741,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b108' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b109' } });
     RXE.registerDict('bip39', englishWords);
     registered.set('bip39', englishWords.length);
     // Aliases so older patterns/links keep resolving: [:bip39:] / [:bip39:] / [:en:] / [:english:].
@@ -831,8 +831,8 @@ const PRESETS = [
     sub:{en:'Electrum segwit seed, one unknown word (bc1q…)',pt:'seed segwit Electrum, uma palavra desconhecida (bc1q…)'},
     share:{ v:1, wp:'bitter grass shiver impose acquire brush forget axis eager alone wine [:electrum-en:]', pp:'',
       ad:'bc1q3g5tmkmlvxryhh843v4dz026avatc0zzr6h3af', tg:'address', pu:['electrum'], ac:'1', ch:'1', gp:'1', rc:1, bk:'gpu' } },
-  { title:{en:'Combined (longshot): words × passphrase',pt:'Combinado (tiro longo): palavras × frase-senha'},
-    sub:{en:'product keyspace, both axes vary, xpub',pt:'espaço produto, os dois eixos variam, xpub'},
+  { title:{en:'Missing words AND forgotten passphrase',pt:'Palavras faltando E frase-senha esquecida'},
+    sub:{en:'Two problems at once',pt:'Dois problemas de uma vez'},
     share:{ v:1, wp:'legal winner thank year wave sausage worth useful legal winner thank [:bip39:]', pp:'[a-z]{1,3}',
       ad:'zpub6qtPJmDf7SNnmCdng9jKaxwdW8qDX5B2biLrtPjkGiqXKEfoQe2qDDDtc1w2b9sRzA5rfhS7FsXjGiKNXMNHzNYdWEcnCd3JBQTofdgsnPR', tg:'xpub', pu:['bip84'], ac:'1', ch:'1', gp:'1', rc:1, bk:'gpu' } },
   { title:{en:'24-word: three missing words',pt:'24 palavras: três palavras faltando'},
@@ -1071,7 +1071,7 @@ function wireUI(){
   window.addEventListener('online', renderOnlineBanner);
   window.addEventListener('offline', renderOnlineBanner);
   $('#shareClose').onclick=$('#shareCloseB').onclick=()=>$('#shareOverlay').classList.remove('on');
-  $('#shareCopy').onclick=async()=>{ try{ await navigator.clipboard.writeText($('#shareUrl').value); const b=$('#shareCopy'); b.textContent='✓ '+t('shareCopied'); setTimeout(()=>b.textContent='📋 '+t('shareCopy'),1600); }catch(e){ $('#shareUrl').select(); } };
+  $('#shareCopy').onclick=async()=>{ try{ await navigator.clipboard.writeText($('#shareUrl').value); const b=$('#shareCopy'); b.textContent='✓ '+t('shareCopied'); setTimeout(()=>b.textContent=t('shareCopy'),1600); }catch(e){ $('#shareUrl').select(); } };
   $('#shareNative').onclick=async()=>{ try{ await navigator.share({ title:'(re)³seed39', text:t('shareNativeText'), url:$('#shareUrl').value }); }catch(e){} };   // native OS share sheet (mobile)
   $('#crackClose').onclick=()=>{ if(cracking) cracking=false; $('#crackOverlay').classList.remove('on'); };
   [$('#benchOverlay'),$('#sampleOverlay'),$('#crackOverlay'),$('#labelOverlay')].forEach(o=>o.addEventListener('click',e=>{ if(e.target===o){ if(o.id==='benchOverlay'&&_benchRunning) return; if(o.id==='crackOverlay'&&cracking) cracking=false; o.classList.remove('on'); } }));
@@ -2528,7 +2528,7 @@ function renderDictList(){
 <!-- Search modal -->
 <div class="overlay" id="crackOverlay">
   <div class="modal">
-    <h3>🔓 <span data-i18n="crackTitle">Search in your browser</span> <button class="x" id="crackClose">✕</button></h3>
+    <h3>🔍 <span data-i18n="crackTitle">Search in your browser</span> <button class="x" id="crackClose">✕</button></h3>
     <div class="body">
       <div class="hint" id="crackSummary" style="margin-bottom:10px"></div>
       <div class="warnmsg" data-i18n="crackSluggish" style="margin-bottom:10px">⚠ Your device may feel very sluggish while the search is running.</div>
@@ -2549,7 +2549,7 @@ function renderDictList(){
           <input id="gpuMaxResets" class="num" type="text" value="20" style="display:inline;width:40px"></span>
         <span id="seedChunkWrap" title="GPU lanes per submit. Auto = whole batch on desktop (fast), small on a phone (safe). Set a number to force it; lower it if a mobile GPU's anti-lockup watchdog still crashes the tab."><label class="f" style="display:inline" data-i18n="gpuSeedChunk">GPU lanes/submit</label>
           <input id="seedChunk" class="num" type="text" value="" placeholder="auto" style="display:inline;width:64px"></span>
-        <button class="act" id="crackBtn" data-i18n="crackBtn" style="margin-top:0">🔓 Search here</button>
+        <button class="act" id="crackBtn" data-i18n="crackBtn" style="margin-top:0">🔍 Search here</button>
         <button class="act" id="crackStopBtn" data-i18n="crackStopBtn" style="margin-top:0;display:none">■ Stop</button>
         <button class="act" id="crackCopyLog" data-i18n="crackCopyLog" style="margin-top:0;display:none">📋 Copy log</button>
         <span class="hint" id="crackMsg"></span>
