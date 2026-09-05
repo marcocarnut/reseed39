@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>(re)seed39 — BIP39 / Electrum seed recovery</title>
+<title>(re)³seed39 — BIP39 / Electrum seed recovery</title>
 <link rel="icon" href="data:,">
 <style>
   :root{
@@ -17,6 +17,7 @@
   header h1{font-size:19px;margin:0;font-weight:700;letter-spacing:-.2px}
   header h1 .re{color:var(--accent)}
   header .motto{color:var(--dim);font-style:italic;font-size:12.5px}
+  header .motto .re{color:var(--accent);font-style:normal;font-weight:600}
   header .warn{margin-left:auto;color:var(--yellow);font-size:12px;max-width:340px;text-align:right}
   /* pre-title network banner: warn while online, reassure while offline */
   .netbar{padding:9px 18px;font-size:13px;line-height:1.4;border-bottom:1px solid var(--edge)}
@@ -143,8 +144,8 @@
 <body>
 <div id="onlineBanner" class="netbar"></div>
 <header>
-  <h1><span class="re">(re)</span>seed39</h1>
-  <span class="motto" data-i18n="tagline">Cracking hard is alright, but smart is better.</span>
+  <h1><span class="re">(re)</span><sup class="re">3</sup>seed39</h1>
+  <span class="motto" data-i18n-html="tagline"><span class="re">(re)</span>cover expressing what you <span class="re">(re)</span>member with <span class="re">(re)</span>gular expressions</span>
   <button class="ghost" id="shareBtn" style="margin-left:auto" data-i18n="shareBtn">🔗 Share</button>
   <span class="langSeg" id="langSeg"><button data-l="en" class="on">EN</button><button data-l="pt">PT</button></span>
   <a class="repolink" href="https://github.com/marcocarnut/reseed39" target="_blank" rel="noopener" title="Source on GitHub" aria-label="Source on GitHub"><svg viewBox="0 0 16 16" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>
@@ -254,17 +255,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b105"></script>
-<script src="../wasm/rxecore_api.js?v=b105"></script>
+<script src="../wasm/rxecore.js?v=b107"></script>
+<script src="../wasm/rxecore_api.js?v=b107"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b105"></script>
-<script src="../estimator/model.js?v=b105"></script>
-<script src="../estimator/wordset.js?v=b105"></script>
-<script src="../estimator/bip39crypto.js?v=b105"></script>
-<script src="../estimator/electrum.js?v=b105"></script>
-<script src="../estimator/gpucrack.js?v=b105"></script>
-<script src="../estimator/i18n.js?v=b105"></script>
+<script src="../estimator/bip39.js?v=b107"></script>
+<script src="../estimator/model.js?v=b107"></script>
+<script src="../estimator/wordset.js?v=b107"></script>
+<script src="../estimator/bip39crypto.js?v=b107"></script>
+<script src="../estimator/electrum.js?v=b107"></script>
+<script src="../estimator/gpucrack.js?v=b107"></script>
+<script src="../estimator/i18n.js?v=b107"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -273,8 +274,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b105';
-const APP_VERSION = 'b105';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b107';
+const APP_VERSION = 'b107';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -740,7 +741,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b105' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b107' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -1071,7 +1072,7 @@ function wireUI(){
   window.addEventListener('offline', renderOnlineBanner);
   $('#shareClose').onclick=$('#shareCloseB').onclick=()=>$('#shareOverlay').classList.remove('on');
   $('#shareCopy').onclick=async()=>{ try{ await navigator.clipboard.writeText($('#shareUrl').value); const b=$('#shareCopy'); b.textContent='✓ '+t('shareCopied'); setTimeout(()=>b.textContent='📋 '+t('shareCopy'),1600); }catch(e){ $('#shareUrl').select(); } };
-  $('#shareNative').onclick=async()=>{ try{ await navigator.share({ title:'(re)seed39', text:t('shareNativeText'), url:$('#shareUrl').value }); }catch(e){} };   // native OS share sheet (mobile)
+  $('#shareNative').onclick=async()=>{ try{ await navigator.share({ title:'(re)³seed39', text:t('shareNativeText'), url:$('#shareUrl').value }); }catch(e){} };   // native OS share sheet (mobile)
   $('#crackClose').onclick=()=>{ if(cracking) cracking=false; $('#crackOverlay').classList.remove('on'); };
   [$('#benchOverlay'),$('#sampleOverlay'),$('#crackOverlay'),$('#labelOverlay')].forEach(o=>o.addEventListener('click',e=>{ if(e.target===o){ if(o.id==='benchOverlay'&&_benchRunning) return; if(o.id==='crackOverlay'&&cracking) cracking=false; o.classList.remove('on'); } }));
 }
@@ -1415,7 +1416,7 @@ function _applyCalibratedEta(r, backend){
   const secs=Number(r.totalCandidates)/cr, E=window.BIP39Estimator;
   r.eta.exhaustSeconds=secs; r.eta.expectedHitSeconds=secs/2;
   r.eta.timeToExhaust=E.humanTime(secs); r.eta.expectedTimeToHit=E.humanTime(secs/2);
-  r.eta.kdfRate=cr; r.eta.calibrated=true; r.eta.rateSource=(LANG==='pt'?'quebra cronometrada':'timed crack');
+  r.eta.kdfRate=cr; r.eta.calibrated=true; r.eta.rateSource=(LANG==='pt'?'busca cronometrada':'timed search');
   if(E.verdictTier) r.tier=E.verdictTier(secs);
 }
 // Copy the benchmark as JSON so it can be pasted straight into our benchmark
@@ -2524,13 +2525,13 @@ function renderDictList(){
     </div>
   </div>
 </div>
-<!-- Crack modal -->
+<!-- Search modal -->
 <div class="overlay" id="crackOverlay">
   <div class="modal">
-    <h3>🔓 <span data-i18n="crackTitle">Crack in your browser</span> <button class="x" id="crackClose">✕</button></h3>
+    <h3>🔓 <span data-i18n="crackTitle">Search in your browser</span> <button class="x" id="crackClose">✕</button></h3>
     <div class="body">
       <div class="hint" id="crackSummary" style="margin-bottom:10px"></div>
-      <div class="warnmsg" data-i18n="crackSluggish" style="margin-bottom:10px">⚠ Your device may feel very sluggish while the crack is running.</div>
+      <div class="warnmsg" data-i18n="crackSluggish" style="margin-bottom:10px">⚠ Your device may feel very sluggish while the search is running.</div>
       <div class="row" style="margin-top:12px;align-items:center;gap:12px">
         <div class="seg" id="backendSeg" title="engine">
           <button data-b="cpu">CPU</button>
@@ -2544,11 +2545,11 @@ function renderDictList(){
           <input id="gpuCooldownCap" class="num" type="text" value="30" style="display:inline;width:40px"></span>
         <span id="cooldownStabWrap" title="run clean this long before the cooldown resets back to the minimum"><label class="f" style="display:inline" data-i18n="gpuCooldownStab">reset after (min)</label>
           <input id="gpuCooldownStab" class="num" type="text" value="30" style="display:inline;width:40px"></span>
-        <span id="maxResetWrap" title="stop the crack after this many GPU recoveries"><label class="f" style="display:inline" data-i18n="gpuMaxResets">max recoveries</label>
+        <span id="maxResetWrap" title="stop the search after this many GPU recoveries"><label class="f" style="display:inline" data-i18n="gpuMaxResets">max recoveries</label>
           <input id="gpuMaxResets" class="num" type="text" value="20" style="display:inline;width:40px"></span>
         <span id="seedChunkWrap" title="GPU lanes per submit. Auto = whole batch on desktop (fast), small on a phone (safe). Set a number to force it; lower it if a mobile GPU's anti-lockup watchdog still crashes the tab."><label class="f" style="display:inline" data-i18n="gpuSeedChunk">GPU lanes/submit</label>
           <input id="seedChunk" class="num" type="text" value="" placeholder="auto" style="display:inline;width:64px"></span>
-        <button class="act" id="crackBtn" data-i18n="crackBtn" style="margin-top:0">🔓 Crack here</button>
+        <button class="act" id="crackBtn" data-i18n="crackBtn" style="margin-top:0">🔓 Search here</button>
         <button class="act" id="crackStopBtn" data-i18n="crackStopBtn" style="margin-top:0;display:none">■ Stop</button>
         <button class="act" id="crackCopyLog" data-i18n="crackCopyLog" style="margin-top:0;display:none">📋 Copy log</button>
         <span class="hint" id="crackMsg"></span>
@@ -2575,7 +2576,7 @@ function renderDictList(){
       <label class="f" data-i18n="labelField" style="margin-top:12px">Label (optional)</label>
       <input id="labelInput" type="text" style="width:100%" placeholder="e.g. machine name, browser name/version, etc.">
       <label class="f" data-i18n="labelNoteField" style="margin-top:8px">Note (optional)</label>
-      <textarea id="labelNote" rows="2" style="width:100%" placeholder="e.g. GPU make/model, warm start, ran a 3-min crack right before"></textarea>
+      <textarea id="labelNote" rows="2" style="width:100%" placeholder="e.g. GPU make/model, warm start, ran a 3-min search right before"></textarea>
       <div class="hint" data-i18n="labelPrivacy" style="margin-top:12px">The JSON contains only device/GPU capabilities, measured rates, and your browser id — never any seed material.</div>
     </div>
     <div class="foot">
