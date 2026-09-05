@@ -301,6 +301,42 @@ Consequences that must hold from v1, even where the feature isn't implemented ye
 This contract is why v2+ stays cheap: each new CLI feature just lights up a field the job
 file already carries.
 
+### 13a. Explicit CLI flags (first‑class, not just the job file)
+
+The job file is the *prepared‑in‑the‑browser* path. For **manual testing, A/B runs, and
+benchmarking**, every job field also has a plain flag, and **flags override the job file**
+(so you can load a job and tweak one axis):
+
+```
+bip39rxcrack [--job job.json | --link URL] [overrides…] [engine opts…]
+
+  --mnemonic  PATTERN     rxe mnemonic pattern      (job: wp)
+  --passphrase PATTERN    rxe passphrase pattern    (job: pp)   ('' = none)
+  --target ADDR|XPUB      target                    (job: ad)
+  --type address|xpub     target kind               (job: tg; else auto-detect)
+  --purpose 44,49,84,86   BIP purposes to try       (job: pu)
+  --account N  --change N  --gap N                   (job: ac/ch/gp)
+  --checksum / --no-checksum                         (job: rc)
+  --custom-path m/…'/…    custom derivation         (job: co/cp)
+
+engine opts (CLI-only, not in the job file):
+  -G [N]                  use N GPUs (default all); fork/exec per GPU
+  --device i              pin one GPU
+  --range A:B  --count K  shard the candidate index space (multi-box)
+  --start INDEX           resume / skip-ahead
+  --limit N               stop after N candidates (A/B, smoke tests)
+  --loginterval MS        CSV progress log (match the browser columns)
+  --backend cuda|…        (parity with bip38's --backend if we add OpenCL)
+  --emit-job FILE         dump the fully-resolved job (flags+file merged) → reproducible
+  --dry-run               print resolved job + candidate count + ETA, don't crack
+  --verify                run the crypto gates and exit (§8)
+```
+
+Precedence: **defaults ← job/link ← explicit flags.** `--emit-job` writes the merged
+result so any A/B run is capturable and shareable back into (re)seed39. `--dry-run` and
+`--verify` make the tool self‑checking without a full run. Keep flag names aligned with
+the job keys so the mapping stays obvious.
+
 ---
 
 *Correctness authority: the byte‑exact browser reference. Integration: single‑integrator,
