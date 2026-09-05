@@ -254,17 +254,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b103"></script>
-<script src="../wasm/rxecore_api.js?v=b103"></script>
+<script src="../wasm/rxecore.js?v=b104"></script>
+<script src="../wasm/rxecore_api.js?v=b104"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b103"></script>
-<script src="../estimator/model.js?v=b103"></script>
-<script src="../estimator/wordset.js?v=b103"></script>
-<script src="../estimator/bip39crypto.js?v=b103"></script>
-<script src="../estimator/electrum.js?v=b103"></script>
-<script src="../estimator/gpucrack.js?v=b103"></script>
-<script src="../estimator/i18n.js?v=b103"></script>
+<script src="../estimator/bip39.js?v=b104"></script>
+<script src="../estimator/model.js?v=b104"></script>
+<script src="../estimator/wordset.js?v=b104"></script>
+<script src="../estimator/bip39crypto.js?v=b104"></script>
+<script src="../estimator/electrum.js?v=b104"></script>
+<script src="../estimator/gpucrack.js?v=b104"></script>
+<script src="../estimator/i18n.js?v=b104"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -273,8 +273,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b103';
-const APP_VERSION = 'b103';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b104';
+const APP_VERSION = 'b104';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -740,7 +740,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b103' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b104' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -814,12 +814,12 @@ const PRESETS = [
       ad:'36TaauZymS8sLXYh9HqYeqMvShJcMajK7j', tg:'address', pu:['bip49'], ac:'1', ch:'1', gp:'1', rc:1, bk:'gpu', tm:'', tpp:'' } },
   { title:{en:'12-word: one missing word',pt:'12 palavras: uma faltando'},
     sub:{en:'dictionary at last position, xpub (BIP44)',pt:'dicionário na última posição, xpub (BIP44)'},
-    words:'legal winner thank year wave sausage worth useful legal winner thank [:bip39-en:]',
-    pass:'', target:'xpub', purposes:['bip44'] },
+    share:{ v:1, wp:'legal winner thank year wave sausage worth useful legal winner thank [:bip39-en:]', pp:'',
+      ad:'xpub6DX8dG8o1ApsuBzhpNBgx6bv4hABR5kF52ZZ8griQQRZJeMoQqW3gG25zSSMQSSd3eQu8aeeAjr1PWviLdP6UJ1vYQGfPCUhTD17PAjMk9J', tg:'xpub', pu:['bip44'], ac:'1', ch:'1', gp:'1', rc:1, bk:'gpu' } },
   { title:{en:'12-word: two missing words',pt:'12 palavras: duas faltando'},
     sub:{en:'sampled checksum survival, xpub (BIP84)',pt:'sobrevivência de checksum amostrada, xpub (BIP84)'},
-    words:'legal winner thank year wave sausage worth useful legal winner [:bip39-en:] [:bip39-en:]',
-    pass:'', target:'xpub', purposes:['bip84'] },
+    share:{ v:1, wp:'legal winner thank year wave sausage worth useful legal winner [:bip39-en:] [:bip39-en:]', pp:'',
+      ad:'zpub6qfxp4P9wHkk5zUJ9jq9GTxv8uNiv3uq7D6DHAE57J47KgWfugoipFn9w7PZoEAJx7Xw1yaZC5QT6mgGWWvPktgQwr9Gy6LTpU8vwf9AWjJ', tg:'xpub', pu:['bip84'], ac:'1', ch:'1', gp:'1', rc:1, bk:'gpu' } },
   { title:{en:'Words: known set, unknown order',pt:'Palavras: conjunto conhecido, ordem desconhecida'},
     sub:{en:'12 known words, all permutations (12!) + checksum, address',pt:'12 palavras conhecidas, todas as permutações (12!) + checksum, endereço'},
     tip:{en:'In 2017 a user said the words she copied down did not work. As we know the words, here we try all its permutations and in a few minutes arrive at the correct order. Closer examination revealed that she had just copied them rowwise instead of columnwise.',
@@ -828,12 +828,12 @@ const PRESETS = [
       ad:'144uEF4Yc4TuWFSBttRYDXDFD44BCDi7Hc', tg:'address', pu:['bip44'], ac:'1', ch:'1', gp:'1', rc:1, bk:'gpu', tpp:'' } },
   { title:{en:'Electrum: missing word',pt:'Electrum: palavra faltando'},
     sub:{en:'Electrum segwit seed, one unknown word (bc1q…)',pt:'seed segwit Electrum, uma palavra desconhecida (bc1q…)'},
-    words:'bitter grass shiver impose acquire brush forget axis eager alone wine [:electrum-en:]',
-    pass:'', target:'address', purposes:['electrum'] },
+    share:{ v:1, wp:'bitter grass shiver impose acquire brush forget axis eager alone wine [:electrum-en:]', pp:'',
+      ad:'bc1q3g5tmkmlvxryhh843v4dz026avatc0zzr6h3af', tg:'address', pu:['electrum'], ac:'1', ch:'1', gp:'1', rc:1, bk:'gpu' } },
   { title:{en:'Combined (longshot): words × passphrase',pt:'Combinado (tiro longo): palavras × frase-senha'},
     sub:{en:'product keyspace, both axes vary, xpub',pt:'espaço produto, os dois eixos variam, xpub'},
-    words:'legal winner thank year wave sausage worth useful legal winner thank [:bip39-en:]',
-    pass:'[a-z]{1,3}', target:'xpub', purposes:['bip84'] },
+    share:{ v:1, wp:'legal winner thank year wave sausage worth useful legal winner thank [:bip39-en:]', pp:'[a-z]{1,3}',
+      ad:'zpub6qtPJmDf7SNnmCdng9jKaxwdW8qDX5B2biLrtPjkGiqXKEfoQe2qDDDtc1w2b9sRzA5rfhS7FsXjGiKNXMNHzNYdWEcnCd3JBQTofdgsnPR', tg:'xpub', pu:['bip84'], ac:'1', ch:'1', gp:'1', rc:1, bk:'gpu' } },
   { title:{en:'24-word: three missing words',pt:'24 palavras: três palavras faltando'},
     sub:{en:'last 3 words lost — checksum + [:Nth:], address (BIP44)',pt:'últimas 3 palavras perdidas — checksum + [:Nth:], endereço (BIP44)'},
     tip:{en:'A fire burned the tip of a card where this mnemonic was written. As only the last three words were lost, recovery is entirely viable: the correct mnemonic is at about 7% of the total estimated time (a few hours on CPU only, about 21 min with an Intel Arc iGPU, much less with better GPUs).',
