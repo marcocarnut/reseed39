@@ -2,6 +2,10 @@
 
 > *(re)cover expressing what you (re)member with (re)gular expressions*
 
+### ▶ Live demo — **[reseed39.postcogito.org](https://reseed39.postcogito.org)**
+
+Everything runs in *your* browser; nothing is ever sent. For a **real** recovery, run it offline on a machine you trust (see [DEPLOY.md](DEPLOY.md)).
+
 **(re)³seed39** is a **client-side wallet-seed recovery tool** that runs entirely in your browser. You
 describe the *shape* of what you half-remember — a mnemonic pattern and/or a passphrase pattern,
 written as a compact **regular expression / dictionary** — point it at a **target** you still have
