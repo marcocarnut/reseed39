@@ -61,11 +61,17 @@
   @media (max-width:480px){
     header{padding:10px 14px;gap:8px}
     header h1{font-size:20px}
-    header .motto{display:none}
+    header .motto{flex-basis:100%;order:10;margin:2px 0 0;font-size:12px}   /* wrap to its own line on phones */
     .tabs{padding:0 10px}
     .netbar{font-size:11.5px;padding:7px 12px}
   }
   label.f{display:block;margin:12px 0 4px;color:var(--dim);font-size:12px}
+  .lblrow{display:flex;align-items:center;gap:6px;margin:12px 0 4px}
+  .lblrow .f{margin:0}
+  .infoI{background:none;border:0;color:var(--dim);cursor:pointer;font-size:15px;line-height:1;padding:0}
+  .infoI:hover{color:var(--accent)}
+  .modal .body ul{margin:0;padding-left:18px} .modal .body li{margin:5px 0;line-height:1.5}
+  .modal .body tt{font-family:var(--mono);color:var(--accent);font-size:12px}
   input[type=text],textarea,select{width:100%;background:#0c1120;border:1px solid var(--edge);color:var(--ink);
           border-radius:7px;padding:8px 10px;font-family:var(--mono);font-size:13px}
   textarea{resize:vertical;white-space:pre-wrap;word-break:break-word;line-height:1.45}
@@ -177,7 +183,7 @@
     </div>
 
     <div id="wordsBox">
-      <label class="f" data-i18n-html="mnemonic">Mnemonic</label>
+      <div class="lblrow"><button class="infoI" id="mnInfo" aria-label="info">ⓘ</button><label class="f" data-i18n-html="mnemonic">Mnemonic</label></div>
       <textarea id="wordsPat" rows="3">legal winner thank year wave sausage worth useful legal winner thank _</textarea>
       <div class="tip" id="mnTip" style="display:none"></div>
       <div class="hint" id="wordsHint"></div>
@@ -189,7 +195,7 @@
     </div>
 
     <div id="passBox">
-      <label class="f" data-i18n="passLabel">Passphrase pattern</label>
+      <div class="lblrow"><button class="infoI" id="passInfo" aria-label="info">ⓘ</button><label class="f" data-i18n="passLabel">Passphrase pattern</label></div>
       <textarea id="passPat" rows="2"></textarea>
       <div class="tip" id="passTip" style="display:none"></div>
       <div class="hint" id="passHint" data-i18n="passHint"></div>
@@ -260,17 +266,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b115"></script>
-<script src="../wasm/rxecore_api.js?v=b115"></script>
+<script src="../wasm/rxecore.js?v=b116"></script>
+<script src="../wasm/rxecore_api.js?v=b116"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b115"></script>
-<script src="../estimator/model.js?v=b115"></script>
-<script src="../estimator/wordset.js?v=b115"></script>
-<script src="../estimator/bip39crypto.js?v=b115"></script>
-<script src="../estimator/electrum.js?v=b115"></script>
-<script src="../estimator/gpucrack.js?v=b115"></script>
-<script src="../estimator/i18n.js?v=b115"></script>
+<script src="../estimator/bip39.js?v=b116"></script>
+<script src="../estimator/model.js?v=b116"></script>
+<script src="../estimator/wordset.js?v=b116"></script>
+<script src="../estimator/bip39crypto.js?v=b116"></script>
+<script src="../estimator/electrum.js?v=b116"></script>
+<script src="../estimator/gpucrack.js?v=b116"></script>
+<script src="../estimator/i18n.js?v=b116"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -279,8 +285,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b115';
-const APP_VERSION = 'b115';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b116';
+const APP_VERSION = 'b116';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -747,7 +753,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b115' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b116' } });
     RXE.registerDict('bip39', englishWords);
     registered.set('bip39', englishWords.length);
     // Aliases so older patterns/links keep resolving: [:bip39-en:] / [:bip39en:] / [:en:] / [:english:].
@@ -873,6 +879,12 @@ function initExamplesToggle(){
   pane.classList.toggle('collapsed', pref!=null ? pref==='1' : (window.innerWidth<=860));
 }
 function applyPreset(p){
+  // On a narrow/stacked layout, bring the form pane to the top so the user sees
+  // the inputs actually change (the presets list sits above it on mobile).
+  if(window.matchMedia && window.matchMedia('(max-width:860px)').matches){
+    const f=document.querySelector('.pane.form');
+    if(f) setTimeout(()=>f.scrollIntoView({behavior:'smooth',block:'start'}),60);
+  }
   // Unified UI: a preset just seeds both axes; the tool infers the crack strategy
   // from cardinality (a fixed mnemonic + a passphrase pattern => passphrase axis,
   // a mnemonic pattern + blank passphrase => words axis, both varying => joint).
@@ -1058,6 +1070,9 @@ function wireUI(){
   };
   $('#change').addEventListener('change',recompute);
   $('#reqChecksum').addEventListener('change',recompute);
+  $('#mnInfo').onclick=()=>openInfo('mn');
+  $('#passInfo').onclick=()=>openInfo('pass');
+  $('#infoClose').onclick=$('#infoCloseB').onclick=()=>$('#infoOverlay').classList.remove('on');
   // Custom derivation path: toggle reveals the field; a preset fills it; the
   // purpose checkboxes are moot when a custom path is active (the path defines
   // derivation, the target defines the script type).
@@ -1096,7 +1111,7 @@ function wireUI(){
   $('#shareCopy').onclick=async()=>{ try{ await navigator.clipboard.writeText($('#shareUrl').value); const b=$('#shareCopy'); b.textContent='✓ '+t('shareCopied'); setTimeout(()=>b.textContent=t('shareCopy'),1600); }catch(e){ $('#shareUrl').select(); } };
   $('#shareNative').onclick=async()=>{ try{ await navigator.share({ title:'(re)³seed39', text:t('shareNativeText'), url:$('#shareUrl').value }); }catch(e){} };   // native OS share sheet (mobile)
   $('#crackClose').onclick=()=>{ if(cracking) cracking=false; $('#crackOverlay').classList.remove('on'); };
-  [$('#benchOverlay'),$('#sampleOverlay'),$('#crackOverlay'),$('#labelOverlay')].forEach(o=>o.addEventListener('click',e=>{ if(e.target===o){ if(o.id==='benchOverlay'&&_benchRunning) return; if(o.id==='crackOverlay'&&cracking) cracking=false; o.classList.remove('on'); } }));
+  [$('#benchOverlay'),$('#sampleOverlay'),$('#crackOverlay'),$('#labelOverlay'),$('#infoOverlay')].forEach(o=>o.addEventListener('click',e=>{ if(e.target===o){ if(o.id==='benchOverlay'&&_benchRunning) return; if(o.id==='crackOverlay'&&cracking) cracking=false; o.classList.remove('on'); } }));
 }
 function schedule(){ clearTimeout(debounce); debounce=setTimeout(recompute,300); }
 
@@ -1568,7 +1583,7 @@ async function onCrack(){
   //  both vary       -> JOINT (not yet implemented -> estimate-only; e comes later)
   // A blank passphrase = the single empty string (card 1), so "one missing word,
   // no passphrase" lands on the words axis.
-  const wordsPat=expandMn($('#wordsPat').value.trim()), passPat=$('#passPat').value.trim();
+  const wordsPat=expandMn($('#wordsPat').value.trim()), passPat=expandMn($('#passPat').value.trim());
   let wSet=null, pSet=null, wCard=1n, pCard=1n;
   try{ if(wordsPat){ wSet=RXE.parse(wordsPat); wCard=wSet.isInfinite()?null:wSet.cardinality(); } }
   catch(e){ msg.textContent='mnemonic: '+e.message; return; }
@@ -2344,6 +2359,12 @@ function mnBadMsg(b){ return b.reason==='len' ? t('mnBadLen').replace('%n', b.n)
 // Permute button: turn each run of ≥2 consecutive literal words (a plain [A-Za-z]
 // word -- not _, [:dict:], (a|b), {{…}}, etc.) into an ordered-permutation group
 // ((w1|…|wN) ){{N!?}}. Non-word tokens (and lone words) pass through unchanged.
+// Info dialogs for the mnemonic / passphrase fields (the ⓘ buttons).
+function openInfo(which){
+  $('#infoTitle').textContent = t(which==='mn' ? 'infoMnTitle' : 'infoPassTitle');
+  $('#infoBody').innerHTML    = t(which==='mn' ? 'infoMnBody'  : 'infoPassBody');
+  $('#infoOverlay').classList.add('on');
+}
 function permutifyText(text){
   const isWord = tk => /^[A-Za-z]+$/.test(tk);
   const tokens = (text||'').trim().split(/\s+/).filter(Boolean);
@@ -2366,7 +2387,7 @@ function recompute(){
   // (fixed mnemonic + passphrase pattern => passphrase; mnemonic pattern + blank
   // passphrase => words; both varying => joint). A blank passphrase = card-1 empty
   // string, so the common "one missing word, no passphrase" case lands on words.
-  const passPat = $('#passPat').value.trim();
+  const passPat = expandMn($('#passPat').value.trim());   // "_" shorthand works in the passphrase too
   // Custom derivation path: a single template replaces the purpose fan-out. Its
   // {account}/{change}/{index} placeholders decide which knobs multiply the
   // keyspace (a path with no {change} sweeps no change axis, etc.).
@@ -2627,6 +2648,14 @@ function renderDictList(){
   </div>
 </div>
 <!-- Dry-run sample modal -->
+<div class="overlay" id="infoOverlay">
+  <div class="modal">
+    <h3><span id="infoTitle"></span> <button class="x" id="infoClose">✕</button></h3>
+    <div class="body" id="infoBody"></div>
+    <div class="foot"><button class="ghost" id="infoCloseB" data-i18n="close">Close</button></div>
+  </div>
+</div>
+
 <div class="overlay" id="sampleOverlay">
   <div class="modal">
     <h3>🎲 <span data-i18n="dryRun">Dry-run sample</span> <span class="pill" data-i18n="viaUnrank">via librxe unrank</span> <button class="x" id="sampleClose">✕</button></h3>
