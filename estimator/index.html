@@ -254,17 +254,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b102"></script>
-<script src="../wasm/rxecore_api.js?v=b102"></script>
+<script src="../wasm/rxecore.js?v=b103"></script>
+<script src="../wasm/rxecore_api.js?v=b103"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b102"></script>
-<script src="../estimator/model.js?v=b102"></script>
-<script src="../estimator/wordset.js?v=b102"></script>
-<script src="../estimator/bip39crypto.js?v=b102"></script>
-<script src="../estimator/electrum.js?v=b102"></script>
-<script src="../estimator/gpucrack.js?v=b102"></script>
-<script src="../estimator/i18n.js?v=b102"></script>
+<script src="../estimator/bip39.js?v=b103"></script>
+<script src="../estimator/model.js?v=b103"></script>
+<script src="../estimator/wordset.js?v=b103"></script>
+<script src="../estimator/bip39crypto.js?v=b103"></script>
+<script src="../estimator/electrum.js?v=b103"></script>
+<script src="../estimator/gpucrack.js?v=b103"></script>
+<script src="../estimator/i18n.js?v=b103"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -273,8 +273,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b102';
-const APP_VERSION = 'b102';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b103';
+const APP_VERSION = 'b103';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -740,7 +740,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b102' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b103' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -834,6 +834,14 @@ const PRESETS = [
     sub:{en:'product keyspace, both axes vary, xpub',pt:'espaço produto, os dois eixos variam, xpub'},
     words:'legal winner thank year wave sausage worth useful legal winner thank [:bip39-en:]',
     pass:'[a-z]{1,3}', target:'xpub', purposes:['bip84'] },
+  { title:{en:'24-word: three missing words',pt:'24 palavras: três palavras faltando'},
+    sub:{en:'last 3 words lost — checksum + [:Nth:], address (BIP44)',pt:'últimas 3 palavras perdidas — checksum + [:Nth:], endereço (BIP44)'},
+    tip:{en:'A fire burned the tip of a card where this mnemonic was written. As only the last three words were lost, recovery is entirely viable: the correct mnemonic is at about 7% of the total estimated time (a few hours on CPU only, about 21 min with an Intel Arc iGPU, much less with better GPUs).',
+         pt:'Um incêndio queimou a ponta de um cartão onde este mnemônico estava escrito. Como apenas as três últimas palavras foram perdidas, a recuperação é totalmente viável: o mnemônico correto está a cerca de 7% do tempo total estimado (algumas horas apenas com CPU, cerca de 21 min com uma iGPU Intel Arc, muito menos com GPUs melhores).'},
+    tipAddr:{en:"We used gap=5 because the user wasn't sure this was the first address in the sequence; he said he had made just a few transactions.",
+             pt:'Usamos gap=5 porque o usuário não tinha certeza se este era o primeiro endereço da sequência; ele disse que havia feito apenas algumas transações.'},
+    share:{ v:1, wp:'trial black gloom dragon try dirt rapid crawl soon fatal tool chronic rapid ladder salmon palace expect enrich helmet truth receive [:bip39:] [:bip39:] [:bip39:]', pp:'',
+      ad:'1LgWXSSMTbuRrVgzSNuj6knkXHT9VWErjg', tg:'address', pu:['bip44'], ac:'1', ch:'1', gp:'5', rc:1, bk:'gpu' } },
 ];
 function buildPresets(){
   const host = $('#presets'); host.innerHTML='';
@@ -869,6 +877,7 @@ function applyPreset(p){
   if(p.share){ const st=Object.assign({}, p.share);
     if(p.tip) st.tm = p.tip[LANG]||p.tip.en;
     if(p.tipPass) st.tpp = p.tipPass[LANG]||p.tipPass.en;
+    if(p.tipAddr) st.ta = p.tipAddr[LANG]||p.tipAddr.en;
     applyShareState(st); return; }
   $('#wordsPat').value = p.words!=null ? p.words : '';
   $('#passPat').value  = p.pass!=null  ? p.pass  : '';
