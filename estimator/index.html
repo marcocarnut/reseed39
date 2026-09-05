@@ -254,17 +254,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b104"></script>
-<script src="../wasm/rxecore_api.js?v=b104"></script>
+<script src="../wasm/rxecore.js?v=b105"></script>
+<script src="../wasm/rxecore_api.js?v=b105"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b104"></script>
-<script src="../estimator/model.js?v=b104"></script>
-<script src="../estimator/wordset.js?v=b104"></script>
-<script src="../estimator/bip39crypto.js?v=b104"></script>
-<script src="../estimator/electrum.js?v=b104"></script>
-<script src="../estimator/gpucrack.js?v=b104"></script>
-<script src="../estimator/i18n.js?v=b104"></script>
+<script src="../estimator/bip39.js?v=b105"></script>
+<script src="../estimator/model.js?v=b105"></script>
+<script src="../estimator/wordset.js?v=b105"></script>
+<script src="../estimator/bip39crypto.js?v=b105"></script>
+<script src="../estimator/electrum.js?v=b105"></script>
+<script src="../estimator/gpucrack.js?v=b105"></script>
+<script src="../estimator/i18n.js?v=b105"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -273,8 +273,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b104';
-const APP_VERSION = 'b104';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b105';
+const APP_VERSION = 'b105';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -740,7 +740,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b104' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b105' } });
     RXE.registerDict('bip39-en', englishWords);
     registered.set('bip39-en', englishWords.length);
     // Friendly aliases so [:bip39en:] / [:bip39:] / [:en:] / [:english:] all resolve.
@@ -841,7 +841,7 @@ const PRESETS = [
     tipAddr:{en:"We used gap=5 because the user wasn't sure this was the first address in the sequence; he said he had made just a few transactions.",
              pt:'Usamos gap=5 porque o usuário não tinha certeza se este era o primeiro endereço da sequência; ele disse que havia feito apenas algumas transações.'},
     share:{ v:1, wp:'trial black gloom dragon try dirt rapid crawl soon fatal tool chronic rapid ladder salmon palace expect enrich helmet truth receive [:bip39:] [:bip39:] [:bip39:]', pp:'',
-      ad:'1LgWXSSMTbuRrVgzSNuj6knkXHT9VWErjg', tg:'address', pu:['bip44'], ac:'1', ch:'1', gp:'5', rc:1, bk:'gpu' } },
+      ad:'1ApCyvMjyQhXmsKhfiC5AbCb8z3hoLDirG', tg:'address', pu:['bip44'], ac:'1', ch:'1', gp:'5', rc:1, bk:'gpu' } },
 ];
 function buildPresets(){
   const host = $('#presets'); host.innerHTML='';
