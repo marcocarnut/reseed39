@@ -126,6 +126,32 @@ onmessage = async (e) => {
     return;
   }
 
+  // BLOOM SWEEP: unrank this worker's raw range + checksum-filter, return the
+  // surviving candidates (mnemonics in words mode / passphrases otherwise). Moves
+  // the sweep OFF the main thread so it stops stalling the GPU-seed pipeline; the
+  // main thread then seeds (GPU) and hands the seeds back for the bloomderive EC.
+  if (d.type === 'bloomsweep') {
+    try {
+      await ensureCore(d.wordlist);
+      if (!(_runSet && _runPat === d.pattern)) { if (_runSet) { try{ _runSet.free(); }catch(e){} } _runSet = core.parse(d.pattern); _runPat = d.pattern; }
+      const set = _runSet;
+      const reqCsum = d.requireChecksum !== false, isWords = d.mode === 'words';
+      const end = Math.min(d.start + d.n, d.total);
+      const items = [];
+      const UB = 4096; let base=-1, cb=null, useBatch=true;
+      const at = (i) => { if (useBatch) {
+          if (!(cb && i >= base && i < base + cb.length)) { const r = set.unrankBatch ? set.unrankBatch(i, Math.min(UB, end - i)) : null;
+            if (r === null) { useBatch=false; return set.unrank(BigInt(i)); } base=i; cb=r; }
+          return cb[i - base]; }
+        return set.unrank(BigInt(i)); };
+      for (let i = d.start; i < end; i++) { const c = at(i); if (c == null) continue;
+        if (isWords && reqCsum && !V.isValid(c)) continue;
+        items.push(c); }
+      postMessage({ type:'bloomswept', id:d.id, n:(end - d.start), items });
+    } catch (err) { postMessage({ type:'error', id:d.id, message: String(err && err.message || err) }); }
+    return;
+  }
+
   if (d.type !== 'run') return;
   try {
     await ensureCore(d.wordlist);
