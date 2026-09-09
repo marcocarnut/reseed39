@@ -100,6 +100,32 @@ onmessage = async (e) => {
     return;
   }
 
+  // BLOOM DERIVE: no target — derive EVERY purpose's program for each seed and
+  // return the flat hex (batched EC), so the main thread can stream them to the
+  // bloom server. Order is purpose -> change -> idx -> seed i; the main thread
+  // replays the SAME nested order to map each hex back to its candidate.
+  if (d.type === 'bloomderive') {
+    C = C || globalThis.BIP39Crypto;
+    const seeds = new Uint8Array(d.seedsBuf), n = d.n;
+    const PURPOSES = d.purposes, changes = (d.changes&&d.changes.length)?d.changes:[0], gap = Math.max(1, d.gap||1);
+    const hexes = [];
+    for (const purpose of PURPOSES) {
+      const accts = new Array(n); for (let i=0;i<n;i++) accts[i]=C.deriveHardenedPath(seeds.subarray(i*64,i*64+64),[purpose,0,0]);
+      const pubA = C.privToPubBatch(accts.map(a=>a.k));
+      for (const ch of changes) {
+        const chN = new Array(n); for (let i=0;i<n;i++) chN[i]=C.ckdNormalPub(accts[i],pubA[i],ch);
+        const pubC = C.privToPubBatch(chN.map(c=>c.k));
+        for (let idx=0; idx<gap; idx++) {
+          const ixN = new Array(n); for (let i=0;i<n;i++) ixN[i]=C.ckdNormalPub(chN[i],pubC[i],idx);
+          const pubN = C.privToPubBatch(ixN.map(nd=>nd.k));
+          for (let i=0;i<n;i++) hexes.push(C.toHex(C.pubToTarget(pubN[i],purpose).program));
+        }
+      }
+    }
+    postMessage({ type:'bloomderived', batchId:d.batchId, hexes });
+    return;
+  }
+
   if (d.type !== 'run') return;
   try {
     await ensureCore(d.wordlist);

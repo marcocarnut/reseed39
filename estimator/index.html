@@ -1646,8 +1646,8 @@ async function startBloomCrack(){
   let ws; try{ ws=new WebSocket(url); }catch(e){ set.free(); msg.textContent=t('bloomUnavail'); return; }
   cracking=true; _crackAbort=false; btn.textContent=t('crackStop'); prog.textContent=t('bloomConnecting');
   const hexMap=new Map();                       // hex -> context, for HIT lookup
-  let sent=0, ackd=0, finished=false, inflight=0; const MAXINFLIGHT=16, FRAME=2000, t0=performance.now();
-  const cleanup=()=>{ try{set.free();}catch(_){} try{ws.close();}catch(_){} cracking=false; btn.textContent=t('crackBtn'); };
+  let sent=0, ackd=0, finished=false, inflight=0, workers=[]; const MAXINFLIGHT=16, FRAME=2000, t0=performance.now();
+  const cleanup=()=>{ try{set.free();}catch(_){} try{ws.close();}catch(_){} workers.forEach(w=>{try{w.terminate();}catch(_){}}); cracking=false; btn.textContent=t('crackBtn'); };
   const showHit=(ctx)=>{ finished=true;
     const seed = ctx.mode==='words' ? C.mnemonicToSeed(ctx.cand,ctx.passFixed) : C.mnemonicToSeed(ctx.mnFixed,ctx.cand);
     const tg=C.addressTarget(seed,ctx.purpose,0,0,ctx.change,ctx.idx), addr=C.encodeAddress(tg);
@@ -1667,8 +1667,40 @@ async function startBloomCrack(){
     else if(ln.startsWith('ACK ')){ inflight=Math.max(0,inflight-1); ackd+=parseInt(ln.slice(4),10)||0; } } };
   const waitInflight=async()=>{ while(inflight>=MAXINFLIGHT && cracking && !finished) await new Promise(r=>setTimeout(r,4)); };
   const sendFrame=(h)=>{ if(!h.length) return; ws.send(h.join('\n')); sent+=h.length; inflight++; };
+  let frame=[], swept=0, dispatched=0, derived=0;
+  const showProg=()=>{ const el=(performance.now()-t0)/1000; prog.textContent=fmtBig(Math.min(swept,total))+' / '+fmtBig(total)+' · '+fmtBig(Math.round(hexMap.size/(el||1)))+' addr/s'; };
+  // Stream one batch's hexes to the WS, replaying the SAME purpose->change->idx->seed
+  // order the worker (or inline derive) emitted, so each hex maps to its candidate.
+  const streamHexes=async(mns,hexes)=>{ let k=0;
+    for(const purpose of PURPOSES) for(const ch of changes) for(let idx=0;idx<gap;idx++) for(let i=0;i<mns.length;i++){
+      const hex=hexes[k++]; hexMap.set(hex,{mode,cand:mns[i],passFixed,mnFixed,purpose,change:ch,idx}); frame.push(hex);
+      if(frame.length>=FRAME){ await waitInflight(); if(!cracking||finished) return; sendFrame(frame); frame=[]; } }
+  };
+  // Inline (no-worker) fallback: batched EC on the main thread, same output order.
+  const deriveHexesInline=(mns,seeds)=>{ const N=mns.length, out=[];
+    for(const purpose of PURPOSES){ const accts=new Array(N); for(let i=0;i<N;i++) accts[i]=C.deriveHardenedPath(seeds.subarray(i*64,i*64+64),[purpose,0,0]);
+      const pubA=C.privToPubBatch(accts.map(a=>a.k));
+      for(const ch of changes){ const chN=new Array(N); for(let i=0;i<N;i++) chN[i]=C.ckdNormalPub(accts[i],pubA[i],ch);
+        const pubC=C.privToPubBatch(chN.map(c=>c.k));
+        for(let idx=0;idx<gap;idx++){ const ixN=new Array(N); for(let i=0;i<N;i++) ixN[i]=C.ckdNormalPub(chN[i],pubC[i],idx);
+          const pubN=C.privToPubBatch(ixN.map(nd=>nd.k));
+          for(let i=0;i<N;i++) out.push(C.toHex(C.pubToTarget(pubN[i],purpose).program)); } } }
+    return out; };
   ws.onopen=async()=>{
-    prog.textContent=''; let frame=[], swept=0; const CH=4096;
+    prog.textContent=''; const CH=4096;
+    // Worker pool: the EC (4 purposes/candidate) is the wall, so derive across
+    // cores; the main thread keeps the single WS and streams what workers return.
+    const nW=Math.max(1,Math.min(parseInt($('#cores').value,10)||4,(navigator.hardwareConcurrency||8),16));
+    const idle=[], pending=new Map();
+    if(typeof Worker!=='undefined' && CRACKWORKER_URL && nW>1){
+      for(let i=0;i<nW;i++){ let w; try{ w=new Worker(CRACKWORKER_URL); }catch(e){ break; }
+        workers.push(w); idle.push(w);
+        w.onmessage=async(e)=>{ const m=e.data; if(!m||finished) return;
+          if(m.type==='bloomderived'){ const mns=pending.get(m.batchId); pending.delete(m.batchId); idle.push(w);
+            if(mns) await streamHexes(mns,m.hexes); derived++; showProg(); } };
+      }
+    }
+    const useWorkers = workers.length>0;
     for(let start=0; start<total && cracking && !finished; start+=CH){
       const n=Math.min(CH,total-start), batch=set.unrankBatch?set.unrankBatch(start,n):null;
       let cands=[]; for(let i=0;i<n;i++){ const s=batch?batch[i]:set.unrank(BigInt(start+i)); if(s!=null) cands.push(s); }
@@ -1678,34 +1710,22 @@ async function startBloomCrack(){
         seeds = gpu ? await window.GpuCrack.gpuSeedsWords(mns,passFixed)
               : (()=>{ const o=new Uint8Array(mns.length*64); for(let k=0;k<mns.length;k++) o.set(C.mnemonicToSeed(mns[k],passFixed),k*64); return o; })();
       } else { mns=cands; const o=new Uint8Array(mns.length*64); for(let k=0;k<mns.length;k++) o.set(C.mnemonicToSeed(mnFixed,mns[k]),k*64); seeds=o; }
-      // BATCHED host EC (mirrors crackAddress._addrBatchMatch): one Montgomery
-      // inverse per stage per batch via privToPubBatch, and ckdNormalPub reuses the
-      // precomputed parent pubkey -- vs a modular inverse per privToPub per program.
-      const N=mns.length;
-      for(const purpose of PURPOSES){
+      swept+=n;
+      if(useWorkers){
+        // backpressure: wait for a free worker AND WS-window headroom before dispatch
+        while((idle.length===0 || inflight>=MAXINFLIGHT) && cracking && !finished) await new Promise(r=>setTimeout(r,3));
         if(!cracking||finished) break;
-        const accts=new Array(N); for(let i=0;i<N;i++) accts[i]=C.deriveHardenedPath(seeds.subarray(i*64,i*64+64),[purpose,0,0]);
-        const pubA=C.privToPubBatch(accts.map(a=>a.k));
-        for(const ch of changes){
-          if(!cracking||finished) break;
-          const chN=new Array(N); for(let i=0;i<N;i++) chN[i]=C.ckdNormalPub(accts[i],pubA[i],ch);
-          const pubC=C.privToPubBatch(chN.map(c=>c.k));
-          for(let idx=0;idx<gap && cracking && !finished;idx++){
-            const ixN=new Array(N); for(let i=0;i<N;i++) ixN[i]=C.ckdNormalPub(chN[i],pubC[i],idx);
-            const pubN=C.privToPubBatch(ixN.map(nd=>nd.k));
-            for(let i=0;i<N;i++){
-              const hex=C.toHex(C.pubToTarget(pubN[i],purpose).program);
-              hexMap.set(hex,{mode,cand:mns[i],passFixed,mnFixed,purpose,change:ch,idx}); frame.push(hex);
-              if(frame.length>=FRAME){ await waitInflight(); if(!cracking||finished) break; sendFrame(frame); frame=[]; }
-            }
-          }
-        }
+        const w=idle.shift(), id=dispatched++; pending.set(id,mns);
+        const sb=new Uint8Array(seeds);   // fresh copy -> safe zero-copy transfer (never neuter a reused GPU buffer)
+        w.postMessage({type:'bloomderive', batchId:id, seedsBuf:sb.buffer, n:mns.length, purposes:PURPOSES, changes, gap}, [sb.buffer]);
+      } else {
+        await streamHexes(mns, deriveHexesInline(mns,seeds));
       }
-      swept+=n; const el=(performance.now()-t0)/1000;
-      prog.textContent=fmtBig(Math.min(swept,total))+' / '+fmtBig(total)+' · '+fmtBig(Math.round(hexMap.size/(el||1)))+' addr/s';
-      await Promise.resolve();
+      showProg(); await Promise.resolve();
     }
-    if(frame.length && cracking && !finished){ await waitInflight(); sendFrame(frame); }
+    // sweep done -> wait for all dispatched batches to derive+stream, flush, ACKs
+    while(!finished && cracking && useWorkers && derived<dispatched) await new Promise(r=>setTimeout(r,10));
+    if(frame.length && cracking && !finished){ await waitInflight(); if(cracking&&!finished){ sendFrame(frame); frame=[]; } }
     const tE=performance.now(); while(inflight>0 && !finished && performance.now()-tE<10000) await new Promise(r=>setTimeout(r,20));
     if(!finished){ finished=true; res.innerHTML='<span class="note">'+esc(t('bloomNoMatch'))+'</span>'; cleanup(); }
   };
