@@ -286,17 +286,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b130"></script>
-<script src="../wasm/rxecore_api.js?v=b130"></script>
+<script src="../wasm/rxecore.js?v=b138"></script>
+<script src="../wasm/rxecore_api.js?v=b138"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b130"></script>
-<script src="../estimator/model.js?v=b130"></script>
-<script src="../estimator/wordset.js?v=b130"></script>
-<script src="../estimator/bip39crypto.js?v=b130"></script>
-<script src="../estimator/electrum.js?v=b130"></script>
-<script src="../estimator/gpucrack.js?v=b130"></script>
-<script src="../estimator/i18n.js?v=b130"></script>
+<script src="../estimator/bip39.js?v=b138"></script>
+<script src="../estimator/model.js?v=b138"></script>
+<script src="../estimator/wordset.js?v=b138"></script>
+<script src="../estimator/bip39crypto.js?v=b138"></script>
+<script src="../estimator/electrum.js?v=b138"></script>
+<script src="../estimator/gpucrack.js?v=b138"></script>
+<script src="../estimator/i18n.js?v=b138"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -305,8 +305,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b130';
-const APP_VERSION = 'b130';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b138';
+const APP_VERSION = 'b138';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -782,7 +782,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b130' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b138' } });
     RXE.registerDict('bip39', englishWords);
     registered.set('bip39', englishWords.length);
     // Aliases so older patterns/links keep resolving: [:bip39-en:] / [:bip39en:] / [:en:] / [:english:].
@@ -1682,13 +1682,13 @@ async function startBloomCrack(){
   const setEndButtons=()=>{ btn.textContent=t('crackBtn'); btn.classList.remove('resuming'); const sb=$('#crackStopBtn'); if(sb){ sb.textContent=t('crackReset'); sb.style.display=''; } };
   const hexMap=new Map();                       // hex -> context, for HIT lookup
   let sent=0, finished=false, workers=[]; const unacked=[], MAXINFLIGHT=16, FRAME=2000, t0=performance.now();
-  const cleanup=()=>{ try{set.free();}catch(_){} try{ if(ws){ ws.onclose=null; ws.close(); } }catch(_){} workers.forEach(w=>{try{w.terminate();}catch(_){}}); cracking=false; };
-  const showHit=(ctx)=>{ finished=true;
-    const seed = ctx.mode==='words' ? C.mnemonicToSeed(ctx.cand,ctx.passFixed) : C.mnemonicToSeed(ctx.mnFixed,ctx.cand);
+  const cleanup=()=>{ try{if(_progTimer){clearInterval(_progTimer);_progTimer=null;}}catch(_){} try{set.free();}catch(_){} try{ if(ws){ ws.onclose=null; ws.close(); } }catch(_){} workers.forEach(w=>{try{w.terminate();}catch(_){}}); cracking=false; };
+  const showHit=(ctx)=>{ finished=true;   // mode/passFixed/mnFixed are run-constants (closure), not stored per program
+    const seed = mode==='words' ? C.mnemonicToSeed(ctx.cand,passFixed) : C.mnemonicToSeed(mnFixed,ctx.cand);
     const tg=C.addressTarget(seed,ctx.purpose,0,0,ctx.change,ctx.idx), addr=C.encodeAddress(tg);
     const path=`m/${ctx.purpose}'/0'/0'/${ctx.change}/${ctx.idx}`;
-    const mnShown = ctx.mode==='words' ? ctx.cand : ctx.mnFixed;
-    const passShown = ctx.mode==='passphrase' ? ctx.cand : ctx.passFixed;
+    const mnShown = mode==='words' ? ctx.cand : mnFixed;
+    const passShown = mode==='passphrase' ? ctx.cand : passFixed;
     res.innerHTML='<div class="okmsg" style="font-weight:600">'+esc(t('bloomFound'))+'</div>'
       +'<div class="note" style="margin-top:6px;font-family:monospace">'+esc(addr)+' · '+esc(path)+'</div>'
       +'<div style="margin-top:6px"><b>'+esc(t('crackFoundMn'))+'</b> <span class="foundname">'+esc(mnShown)+'</span></div>'
@@ -1712,32 +1712,56 @@ async function startBloomCrack(){
       if(!sweepStarted){ sweepStarted=true; runSweep(); } };
     ws.onmessage=(ev)=>{ for(const ln of String(ev.data).split('\n')){ if(!ln) continue;
       if(ln.startsWith('HIT ')){ const ctx=hexMap.get(ln.slice(4).trim()); if(ctx && !finished){ showHit(ctx); return; } }
-      else if(ln.startsWith('ACK ')){ if(unacked.length) unacked.shift(); } } };   // one ACK per frame, in order
+      else if(ln.startsWith('ACK ')){ const f=unacked.shift(); if(f){ ackedProgs+=f.length; for(const h of f) hexMap.delete(h); } } } };   // one ACK per frame (in order): count programs + prune the now-processed hexes (HIT always precedes its frame's ACK, so this is safe and keeps hexMap bounded to the in-flight window)
     ws.onerror=()=>{};                                     // onclose drives teardown/reconnect
     ws.onclose=()=>{ connected=false; if(finished||_crackAbort||!cracking) return; reconnect(); }; };
   const waitSendable=async()=>{ while((paused || !connected || unacked.length>=MAXINFLIGHT) && cracking && !finished) await new Promise(r=>setTimeout(r,5)); };
   const sendFrame=(h)=>{ if(!h.length) return; try{ ws.send(h.join('\n')); }catch(_){} unacked.push(h); sent+=h.length; };
-  let frame=[], swept=0, dispatched=0, derived=0, hashed=0, validSwept=0;
-  // Same shape + units as the targeted checksum crack's progress line, so the two
-  // are directly comparable: line 1 = valid candidates HASHED (seed+derive+sent) /
-  // live-estimated valid total · candidates/s · raw swept / total; line 2 = % + ETA.
-  // (Reports CANDIDATES, not programs — bloom derives one program per checked
-  // purpose each, but a candidate is the unit of work, matching every other mode.)
+  let swept=0, dispatched=0, derived=0, hashed=0, validSwept=0, ackedProgs=0;
+  // Progress is PACED TO THE WEBSOCKET STREAM, not to the bursty EC-batch completions:
+  // the server ACKs each frame as it processes it, so ackedProgs/(programs-per-candidate)
+  // is the true count of candidates confirmed checked end-to-end. A 100ms timer drives
+  // the display and GLIDES the shown count at a smoothed (EMA) rate toward that confirmed
+  // count -- so the number flows smoothly instead of jumping in seed-batch-sized lumps.
+  // Same two-line shape + units as the targeted crack (candidates, not programs).
+  let _dispDone=0, _totEst=0, _lastTickT=t0, _lastShow=0, _progTimer=null; const _rateSamples=[];
   const showProg=()=>{
-    const el=(performance.now()-t0)/1000||1e-6;
-    let done=hashed; const tot = swept>0 ? Math.max(done, Math.round(validSwept/swept*total)) : total;
-    if(done>tot) done=tot;
-    const rate=done/el, pct=tot?Math.min(100,done/tot*100):0, remain=rate>0?(tot-done)/rate:Infinity;
+    const now=performance.now(), dt=Math.max(0.001,(now-_lastTickT)/1000); _lastTickT=now;
+    if(!connected) return;   // don't clobber the "reconnecting…" message during a drop (keep _lastTickT current so the glide doesn't jump on resume)
+    const ppc=Math.max(1, PURPOSES.length*changes.length*gap);
+    const trueDone = Math.min(hashed, ackedProgs/ppc);   // candidates the SERVER has confirmed (the honest signal)
+    // Rate = confirmed-throughput over a ~2s trailing window (smooth; robust to bursty ACKs).
+    _rateSamples.push({t:now,d:trueDone}); while(_rateSamples.length>2 && now-_rateSamples[0].t>2000) _rateSamples.shift();
+    const s0=_rateSamples[0], winDt=(now-s0.t)/1000, rate = winDt>0.05 ? Math.max(0,(trueDone-s0.d)/winDt) : 0;
+    // Total estimate: smoothed, and never below what we've already shown (so the count/% never regress).
+    const totRaw = swept>0 ? Math.round(validSwept/swept*total) : total;
+    _totEst = _totEst>0 ? _totEst*0.9 + totRaw*0.1 : totRaw;
+    const tot = Math.max(1, Math.round(_totEst), Math.round(_dispDone));
+    // Strictly-MONOTONIC glide: advance at the smooth rate, jump forward to catch a confirmed
+    // burst, but never move backward and never run more than ~1s ahead of what's confirmed.
+    let d = _dispDone + rate*dt;
+    if(d < trueDone) d = trueDone;                          // catch up forward on an ACK burst
+    const lead = trueDone + Math.max(rate*1.0, 64);
+    if(d > lead) d = lead;                                  // don't run away from the confirmed stream
+    if(trueDone>=tot) d = tot;                              // snap to 100% once the whole run is confirmed
+    if(d < _dispDone) d = _dispDone;                        // hard monotonic guard
+    if(d > tot) d = tot;
+    _dispDone = d;
+    const done=Math.round(_dispDone), pct=Math.min(100,done/tot*100), remain=rate>0?(tot-done)/rate:Infinity;
     const s=`${fmtBig(done)} / ~${fmtBig(tot)} ${t('crackHashed')} · ${fmtBig(Math.round(rate))}/s · ${t('crackSwept')} ${fmtBig(Math.min(swept,total))} / ${fmtBig(total)}`;
     const line2=`${pct.toFixed(1)}% · ${t('crackEta')} ${isFinite(remain)?humanElapsed(remain):'—'}`;
     prog.innerHTML=`<div>${esc(s)}</div><div style="margin-top:2px">${esc(line2)}</div>`;
   };
   // Stream one batch's hexes to the WS, replaying the SAME purpose->change->idx->seed
   // order the worker (or inline derive) emitted, so each hex maps to its candidate.
-  const streamHexes=async(mns,hexes)=>{ hashed+=mns.length; let k=0;
+  // Each call streams its OWN frames (local buffer -> no shared-frame race between the
+  // many concurrent worker callbacks). hexMap holds only the light per-program context
+  // needed to name a HIT; it's pruned on ACK (see below) so it stays bounded.
+  const streamHexes=async(mns,hexes)=>{ hashed+=mns.length; let k=0, lf=[];
     for(const purpose of PURPOSES) for(const ch of changes) for(let idx=0;idx<gap;idx++) for(let i=0;i<mns.length;i++){
-      const hex=hexes[k++]; hexMap.set(hex,{mode,cand:mns[i],passFixed,mnFixed,purpose,change:ch,idx}); frame.push(hex);
-      if(frame.length>=FRAME){ await waitSendable(); if(!cracking||finished) return; sendFrame(frame); frame=[]; } }
+      const hex=hexes[k++]; hexMap.set(hex,{cand:mns[i],purpose,change:ch,idx}); lf.push(hex);
+      if(lf.length>=FRAME){ await waitSendable(); if(!cracking||finished) return; sendFrame(lf); lf=[]; } }
+    if(lf.length && cracking && !finished){ await waitSendable(); if(cracking&&!finished) sendFrame(lf); }
   };
   // Inline (no-worker) fallback: batched EC on the main thread, same output order.
   const deriveHexesInline=(mns,seeds)=>{ const N=mns.length, out=[];
@@ -1763,7 +1787,10 @@ async function startBloomCrack(){
       // ⭐ Seed in BIG batches: gpuSeedsWords has a ~280ms fixed per-dispatch cost, so a
       // 256-candidate call runs at ~900 seeds/s while a 4-8k call hits the GPU's real ~11k/s.
       const SEED_BATCH = gpu ? 8192 : 512;
-      const SHARD = Math.max(256, Math.min(1024, Math.ceil(SEED_BATCH/Math.max(1,nW))));   // per-worker EC job size
+      // Keep EC jobs SMALL (many per seed-batch) so worker completions -- and thus the
+      // frame/ACK stream -- spread out continuously instead of finishing in one lump.
+      // That's what makes the progress flow smoothly (a big SHARD = 8 lumpy completions).
+      const SHARD = 256;
       // Sweep OFF the main thread too (workers unrank+checksum their own range) so it
       // stops stalling the GPU-seed pipeline. Generic pool: a worker does SWEEP or EC.
       const SWEEP_CH = (mode==='words'&&reqCsum) ? 65536 : 8192;   // raw per sweep job (~SEED_BATCH valid)
@@ -1775,12 +1802,14 @@ async function startBloomCrack(){
           workers.push(w); idle.push(w);
           w.onmessage=async(e)=>{ const m=e.data; if(!m||finished) return;
             if(m.type==='bloomswept'){ idle.push(w); sweepInFlight--; swept+=m.n; validSwept+=m.items.length;
-              for(const it of m.items) acc.push(it); showProg(); }
+              for(const it of m.items) acc.push(it); }
             else if(m.type==='bloomderived'){ const mns=pending.get(m.batchId); pending.delete(m.batchId); idle.push(w); ecInFlight--;
-              if(mns) await streamHexes(mns,m.hexes); derived++; showProg(); }
-            else if(m.type==='error'){ idle.push(w); if(String(m.id||'').startsWith('s')) sweepInFlight--; } };
+              if(mns) await streamHexes(mns,m.hexes); derived++; }
+            else if(m.type==='error'){ idle.push(w); if(String(m.id||'').startsWith('s')) sweepInFlight--; }
+            const _n=performance.now(); if(_n-_lastShow>=90){ _lastShow=_n; showProg(); } };   // throttled render on completion (keeps the display alive if the timer is starved)
         }
       }
+      _lastTickT=performance.now(); if(!_progTimer) _progTimer=setInterval(showProg,100);   // stream-paced smooth display (timer + the throttled onmessage tick above)
       const useWorkers = workers.length>0;
       if(useWorkers){
         // Seed a ready batch on the GPU, then fan the seeds out to idle workers for EC.
@@ -1825,12 +1854,12 @@ async function startBloomCrack(){
             const b=valid.slice(off,off+SEED_BATCH); const seeds=await seedsFor(b); if(!cracking||finished) break;
             for(let o2=0;o2<b.length && cracking && !finished;o2+=SHARD){ const cs=b.slice(o2,o2+SHARD), seg=seeds.subarray(o2*64,(o2+cs.length)*64);
               await streamHexes(cs, deriveHexesInline(cs,seg)); } }
-          showProg(); await Promise.resolve();
+          await Promise.resolve();   // the 100ms timer renders
         }
       }
-      // Drain outstanding EC, flush the partial frame, wait for ACKs (bounded so a lost worker can't hang us).
+      // Drain outstanding EC (each streamHexes flushes its own frames), then wait for
+      // ACKs (bounded so a lost worker can't hang us).
       const tD=performance.now(); while(!finished && cracking && useWorkers && ecInFlight>0 && performance.now()-tD<60000) await new Promise(r=>setTimeout(r,10));
-      if(frame.length && cracking && !finished){ await waitSendable(); if(cracking&&!finished){ sendFrame(frame); frame=[]; } }
       const tE=performance.now(); while(unacked.length>0 && !finished && cracking && performance.now()-tE<30000) await new Promise(r=>setTimeout(r,20));
       if(!finished){ finished=true; cleanup();
         res.innerHTML='<span class="note">'+esc(t(_crackAbort?'crackStopped':'bloomNoMatch'))+'</span>';
