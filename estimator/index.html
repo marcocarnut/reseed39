@@ -286,17 +286,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b123"></script>
-<script src="../wasm/rxecore_api.js?v=b123"></script>
+<script src="../wasm/rxecore.js?v=b124"></script>
+<script src="../wasm/rxecore_api.js?v=b124"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b123"></script>
-<script src="../estimator/model.js?v=b123"></script>
-<script src="../estimator/wordset.js?v=b123"></script>
-<script src="../estimator/bip39crypto.js?v=b123"></script>
-<script src="../estimator/electrum.js?v=b123"></script>
-<script src="../estimator/gpucrack.js?v=b123"></script>
-<script src="../estimator/i18n.js?v=b123"></script>
+<script src="../estimator/bip39.js?v=b124"></script>
+<script src="../estimator/model.js?v=b124"></script>
+<script src="../estimator/wordset.js?v=b124"></script>
+<script src="../estimator/bip39crypto.js?v=b124"></script>
+<script src="../estimator/electrum.js?v=b124"></script>
+<script src="../estimator/gpucrack.js?v=b124"></script>
+<script src="../estimator/i18n.js?v=b124"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -305,8 +305,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b123';
-const APP_VERSION = 'b123';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b124';
+const APP_VERSION = 'b124';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -761,6 +761,9 @@ function applyLang(){
   document.documentElement.lang = LANG;
   $$('[data-i18n]').forEach(el=>{ el.textContent = t(el.getAttribute('data-i18n')); });
   $$('[data-i18n-html]').forEach(el=>{ el.innerHTML = t(el.getAttribute('data-i18n-html')); });
+  // Bloom-only: the address label invites a blank target only where a bloom
+  // server is reachable, so it survives a language switch (data-i18n reset it above).
+  if(BLOOM){ const lbl=$('label[data-i18n="addrLabel"]'); if(lbl) lbl.textContent=t('addrLabelBloom'); }
   $$('[data-i18n-ph]').forEach(el=>{ el.placeholder = t(el.getAttribute('data-i18n-ph')); });
   $$('[data-i18n-title]').forEach(el=>{ el.title = t(el.getAttribute('data-i18n-title')); });
   buildPresets();
@@ -779,7 +782,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b123' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b124' } });
     RXE.registerDict('bip39', englishWords);
     registered.set('bip39', englishWords.length);
     // Aliases so older patterns/links keep resolving: [:bip39-en:] / [:bip39en:] / [:en:] / [:english:].
@@ -809,15 +812,14 @@ function setLang(l){
     try{ const ql=new URLSearchParams(location.search).get('lang');
       const l=ql && (/^pt/i.test(ql)?'pt':/^en/i.test(ql)?'en':null);
       if(l){ LANG=l; t=EstI18N.makeT(l); setSeg('#langSeg','data-l',l); } }catch(e){}
-    buildDerivs(); wireUI(); initExamplesToggle(); restoreSeedChunk(); applyBackendAvail(); applyLang(); applyTargetVis(); renderBenchCard();
-    onAddr();   // blank target at boot -> tick all four BIP purposes (bloom default; recomputes)
+    buildDerivs(); wireUI(); initExamplesToggle(); restoreSeedChunk(); applyBackendAvail(); applyLang(); applyTargetVis(); renderBenchCard(); recompute();
     // A #hash share-link reproduces every control (see the Share button); its saved
     // `lg` (if present) then wins over ?lang, since it reproduces an exact setup.
     try{ if(location.hash.length>1){ applyShareState(JSON.parse(_b64urlDec(location.hash.slice(1)))); } }catch(e){}
     renderResumeBar();   // offer to resume an interrupted crack (from localStorage)
     // Bloom feature-detect (experimental): only where a bloom server serves it.
     // Non-blocking; sets BLOOM so the blank-target path lights up (else it degrades).
-    fetch('/bloom-info',{cache:'no-store'}).then(r=>r.ok?r.json():null).then(j=>{ if(j&&j.service==='reseed39-bloom') BLOOM=j; }).catch(()=>{});
+    fetch('/bloom-info',{cache:'no-store'}).then(r=>r.ok?r.json():null).then(j=>{ if(j&&j.service==='reseed39-bloom'){ BLOOM=j; applyBloomUI(); } }).catch(()=>{});
     // Mobile GPU crash-recovery: a pending attempt on boot means the last GPU
     // dispatch tripped the watchdog and reloaded us -> auto-retry at half the size.
     if(IS_MOBILE && HAS_GPU && window.GpuCrack && gpuCalPending(_gpuGid())){
@@ -1080,14 +1082,25 @@ function detectTarget(addr){
   if(/^3/.test(a))     return {type:'address', p:'bip49', hard:true};
   return null;
 }
+// Called once /bloom-info confirms a bloom server: light up the blank-target UX
+// (address label invites blank; a blank target defaults to all four BIP purposes).
+// Idempotent, and a no-op wherever no bloom server responds.
+function applyBloomUI(){
+  const lbl=$('label[data-i18n="addrLabel"]'); if(lbl) lbl.textContent=t('addrLabelBloom');
+  // Seed the all-four default only on a FRESH load (blank target, no share link).
+  // A #hash share carries its own saved purposes -> don't clobber them; and a user
+  // who clears the field later re-ticks via onAddr's own input handler regardless.
+  if(!$('#addr').value.trim() && location.hash.length<=1) onAddr();
+}
 function onAddr(){
   const det = detectTarget($('#addr').value);
   const info = $('#addrInfo');
   if(!det){
-    // Blank target -> bloom (all-addresses) search: default to all four BIP
+    // Blank target with a reachable bloom server -> default to all four BIP
     // purposes ticked so the prognosis path-plan and the bloom derivation agree.
-    // They're the DEFAULT, not hardcoded — the user may untick any before searching.
-    if(!$('#addr').value.trim()){ const BIP=['bip44','bip49','bip84','bip86'];
+    // A DEFAULT, not hardcoded (untick any before searching). Gated on BLOOM so a
+    // bloom-free deployment is unchanged: blank target keeps its normal defaults.
+    if(!$('#addr').value.trim() && BLOOM){ const BIP=['bip44','bip49','bip84','bip86'];
       $$('#purposes input').forEach(c=>{ if(BIP.includes(c.dataset.p)) c.checked=true; }); }
     info.textContent = $('#addr').value.trim() ? t('unrecognized') : ''; recompute(); return; }
   setSeg('#targetSeg','data-t',det.type);
