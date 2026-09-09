@@ -1676,11 +1676,24 @@ async function startBloomCrack(){
     else if(ln.startsWith('ACK ')){ inflight=Math.max(0,inflight-1); ackd+=parseInt(ln.slice(4),10)||0; } } };
   const waitInflight=async()=>{ while(inflight>=MAXINFLIGHT && cracking && !finished) await new Promise(r=>setTimeout(r,4)); };
   const sendFrame=(h)=>{ if(!h.length) return; ws.send(h.join('\n')); sent+=h.length; inflight++; };
-  let frame=[], swept=0, dispatched=0, derived=0;
-  const showProg=()=>{ const el=(performance.now()-t0)/1000; prog.textContent=fmtBig(Math.min(swept,total))+' / '+fmtBig(total)+' · '+fmtBig(Math.round(hexMap.size/(el||1)))+' addr/s'; };
+  let frame=[], swept=0, dispatched=0, derived=0, hashed=0, validSwept=0;
+  // Same shape + units as the targeted checksum crack's progress line, so the two
+  // are directly comparable: line 1 = valid candidates HASHED (seed+derive+sent) /
+  // live-estimated valid total · candidates/s · raw swept / total; line 2 = % + ETA.
+  // (Reports CANDIDATES, not programs — bloom derives 4 purposes each, but a
+  // candidate is the unit of work, matching every other mode.)
+  const showProg=()=>{
+    const el=(performance.now()-t0)/1000||1e-6;
+    let done=hashed; const tot = swept>0 ? Math.max(done, Math.round(validSwept/swept*total)) : total;
+    if(done>tot) done=tot;
+    const rate=done/el, pct=tot?Math.min(100,done/tot*100):0, remain=rate>0?(tot-done)/rate:Infinity;
+    const s=`${fmtBig(done)} / ~${fmtBig(tot)} ${t('crackHashed')} · ${fmtBig(Math.round(rate))}/s · ${t('crackSwept')} ${fmtBig(Math.min(swept,total))} / ${fmtBig(total)}`;
+    const line2=`${pct.toFixed(1)}% · ${t('crackEta')} ${isFinite(remain)?humanElapsed(remain):'—'}`;
+    prog.innerHTML=`<div>${esc(s)}</div><div style="margin-top:2px">${esc(line2)}</div>`;
+  };
   // Stream one batch's hexes to the WS, replaying the SAME purpose->change->idx->seed
   // order the worker (or inline derive) emitted, so each hex maps to its candidate.
-  const streamHexes=async(mns,hexes)=>{ let k=0;
+  const streamHexes=async(mns,hexes)=>{ hashed+=mns.length; let k=0;
     for(const purpose of PURPOSES) for(const ch of changes) for(let idx=0;idx<gap;idx++) for(let i=0;i<mns.length;i++){
       const hex=hexes[k++]; hexMap.set(hex,{mode,cand:mns[i],passFixed,mnFixed,purpose,change:ch,idx}); frame.push(hex);
       if(frame.length>=FRAME){ await waitInflight(); if(!cracking||finished) return; sendFrame(frame); frame=[]; } }
@@ -1721,7 +1734,7 @@ async function startBloomCrack(){
         seeds = gpu ? await window.GpuCrack.gpuSeedsWords(mns,passFixed)
               : (()=>{ const o=new Uint8Array(mns.length*64); for(let k=0;k<mns.length;k++) o.set(C.mnemonicToSeed(mns[k],passFixed),k*64); return o; })();
       } else { mns=cands; const o=new Uint8Array(mns.length*64); for(let k=0;k<mns.length;k++) o.set(C.mnemonicToSeed(mnFixed,mns[k]),k*64); seeds=o; }
-      swept+=n;
+      swept+=n; validSwept+=mns.length;   // raw swept vs checksum-valid, for the live estValid extrapolation
       if(useWorkers){
         // backpressure: wait for a free worker AND WS-window headroom before dispatch
         while((paused || idle.length===0 || inflight>=MAXINFLIGHT) && cracking && !finished) await new Promise(r=>setTimeout(r,3));
