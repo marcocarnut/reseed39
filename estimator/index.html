@@ -1646,7 +1646,7 @@ async function startBloomCrack(){
   let ws; try{ ws=new WebSocket(url); }catch(e){ set.free(); msg.textContent=t('bloomUnavail'); return; }
   cracking=true; _crackAbort=false; btn.textContent=t('crackStop'); prog.textContent=t('bloomConnecting');
   const hexMap=new Map();                       // hex -> context, for HIT lookup
-  let sent=0, ackd=0, finished=false, inflight=0; const MAXINFLIGHT=4, FRAME=2000, t0=performance.now();
+  let sent=0, ackd=0, finished=false, inflight=0; const MAXINFLIGHT=16, FRAME=2000, t0=performance.now();
   const cleanup=()=>{ try{set.free();}catch(_){} try{ws.close();}catch(_){} cracking=false; btn.textContent=t('crackBtn'); };
   const showHit=(ctx)=>{ finished=true;
     const seed = ctx.mode==='words' ? C.mnemonicToSeed(ctx.cand,ctx.passFixed) : C.mnemonicToSeed(ctx.mnFixed,ctx.cand);
