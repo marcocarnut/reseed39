@@ -464,6 +464,7 @@ let HAS_GPU = false;         // set at boot
 // deploy or offline (then the blank-target path degrades to "enter an address").
 let BLOOM = null;            // {service, version, addresses} or null
 let _bloomMode = false;      // set true when the user confirms a blank-target bloom search
+let _bloomCtl = null;        // {togglePause} exposed by a running bloom crack, for the Pause/Resume button
 let CUR_GPU_ID = '';         // detected current adapter id (for a mismatch hint)
 // Coarse mobile detection. Mobile GPUs trip the driver watchdog (TDR) under
 // sustained WebGPU compute -- some phones freeze or reboot -- so on these
@@ -1644,10 +1645,18 @@ async function startBloomCrack(){
   const _devHost = (location.hostname==='127.0.0.1'||location.hostname==='localhost') ? window.__BLOOM_WS : null;
   const url = _devHost || ((location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/');
   let ws; try{ ws=new WebSocket(url); }catch(e){ set.free(); msg.textContent=t('bloomUnavail'); return; }
-  cracking=true; _crackAbort=false; btn.textContent=t('crackStop'); prog.textContent=t('bloomConnecting');
+  cracking=true; _crackAbort=false; _crackPaused=false;
+  btn.textContent=t('crackPause'); btn.classList.remove('resuming');   // crackBtn = Pause while running
+  { const sb=$('#crackStopBtn'); if(sb){ sb.textContent=t('crackStopBtn'); sb.style.display=''; } }   // crackStopBtn = Stop
+  prog.textContent=t('bloomConnecting');
+  let paused=false;
+  // Pause keeps the WS + workers alive and just halts the sweep (race-free resume,
+  // no re-sweep). crackBtn (via onCrack) calls this to toggle; Stop lives on crackStopBtn.
+  _bloomCtl={ togglePause:()=>{ paused=!paused; btn.textContent=paused?t('crackResume'):t('crackPause'); btn.classList.toggle('resuming',paused); } };
+  const setEndButtons=()=>{ btn.textContent=t('crackBtn'); btn.classList.remove('resuming'); const sb=$('#crackStopBtn'); if(sb){ sb.textContent=t('crackReset'); sb.style.display=''; } };
   const hexMap=new Map();                       // hex -> context, for HIT lookup
   let sent=0, ackd=0, finished=false, inflight=0, workers=[]; const MAXINFLIGHT=16, FRAME=2000, t0=performance.now();
-  const cleanup=()=>{ try{set.free();}catch(_){} try{ws.close();}catch(_){} workers.forEach(w=>{try{w.terminate();}catch(_){}}); cracking=false; btn.textContent=t('crackBtn'); };
+  const cleanup=()=>{ try{set.free();}catch(_){} try{ws.close();}catch(_){} workers.forEach(w=>{try{w.terminate();}catch(_){}}); cracking=false; };
   const showHit=(ctx)=>{ finished=true;
     const seed = ctx.mode==='words' ? C.mnemonicToSeed(ctx.cand,ctx.passFixed) : C.mnemonicToSeed(ctx.mnFixed,ctx.cand);
     const tg=C.addressTarget(seed,ctx.purpose,0,0,ctx.change,ctx.idx), addr=C.encodeAddress(tg);
@@ -1659,9 +1668,9 @@ async function startBloomCrack(){
       +'<div style="margin-top:6px"><b>'+esc(t('crackFoundMn'))+'</b> <span class="foundname">'+esc(mnShown)+'</span></div>'
       +(passShown?'<div class="note">'+esc(t('crackPlusPass'))+' '+esc(passShown)+'</div>':'')
       +'<div class="note" style="margin-top:4px">⚠ verify against your own wallet before trusting.</div>';
-    cleanup();
+    cleanup(); setEndButtons();
   };
-  ws.onerror=()=>{ if(!finished){ finished=true; msg.textContent=t('bloomUnavail'); prog.textContent=''; cleanup(); } };
+  ws.onerror=()=>{ if(!finished){ finished=true; msg.textContent=t('bloomUnavail'); prog.textContent=''; cleanup(); setEndButtons(); } };
   ws.onmessage=(ev)=>{ for(const ln of String(ev.data).split('\n')){ if(!ln) continue;
     if(ln.startsWith('HIT ')){ const ctx=hexMap.get(ln.slice(4).trim()); if(ctx && !finished){ showHit(ctx); return; } }
     else if(ln.startsWith('ACK ')){ inflight=Math.max(0,inflight-1); ackd+=parseInt(ln.slice(4),10)||0; } } };
@@ -1702,6 +1711,8 @@ async function startBloomCrack(){
     }
     const useWorkers = workers.length>0;
     for(let start=0; start<total && cracking && !finished; start+=CH){
+      while(paused && cracking && !finished) await new Promise(r=>setTimeout(r,60));   // Pause: halt the sweep (WS + workers stay alive)
+      if(!cracking||finished) break;
       const n=Math.min(CH,total-start), batch=set.unrankBatch?set.unrankBatch(start,n):null;
       let cands=[]; for(let i=0;i<n;i++){ const s=batch?batch[i]:set.unrank(BigInt(start+i)); if(s!=null) cands.push(s); }
       let mns, seeds;
@@ -1713,7 +1724,7 @@ async function startBloomCrack(){
       swept+=n;
       if(useWorkers){
         // backpressure: wait for a free worker AND WS-window headroom before dispatch
-        while((idle.length===0 || inflight>=MAXINFLIGHT) && cracking && !finished) await new Promise(r=>setTimeout(r,3));
+        while((paused || idle.length===0 || inflight>=MAXINFLIGHT) && cracking && !finished) await new Promise(r=>setTimeout(r,3));
         if(!cracking||finished) break;
         const w=idle.shift(), id=dispatched++; pending.set(id,mns);
         const sb=new Uint8Array(seeds);   // fresh copy -> safe zero-copy transfer (never neuter a reused GPU buffer)
@@ -1723,17 +1734,25 @@ async function startBloomCrack(){
       }
       showProg(); await Promise.resolve();
     }
-    // sweep done -> wait for all dispatched batches to derive+stream, flush, ACKs
+    // sweep done (or Stopped: crackStopBtn set _crackAbort + cracking=false).
+    // On a real completion, drain the outstanding derive/ACKs; on Stop, skip it.
     while(!finished && cracking && useWorkers && derived<dispatched) await new Promise(r=>setTimeout(r,10));
     if(frame.length && cracking && !finished){ await waitInflight(); if(cracking&&!finished){ sendFrame(frame); frame=[]; } }
-    const tE=performance.now(); while(inflight>0 && !finished && performance.now()-tE<10000) await new Promise(r=>setTimeout(r,20));
-    if(!finished){ finished=true; res.innerHTML='<span class="note">'+esc(t('bloomNoMatch'))+'</span>'; cleanup(); }
+    const tE=performance.now(); while(inflight>0 && !finished && cracking && performance.now()-tE<10000) await new Promise(r=>setTimeout(r,20));
+    if(!finished){ finished=true; cleanup();
+      res.innerHTML='<span class="note">'+esc(t(_crackAbort?'crackStopped':'bloomNoMatch'))+'</span>';
+      setEndButtons(); _crackAbort=false; }
   };
 }
 async function onCrack(){
   const btn=$('#crackBtn'), msg=$('#crackMsg'), prog=$('#crackProg'), res=$('#crackRes');
+  // Bloom (blank target, address mode): crackBtn is Pause<->Resume while running,
+  // and starts/re-runs when idle. (Stop/Reset live on #crackStopBtn, same as normal.)
+  if(_bloomMode && !$('#addr').value.trim()){
+    if(cracking){ if(_bloomCtl&&_bloomCtl.togglePause) _bloomCtl.togglePause(); return; }
+    return startBloomCrack();
+  }
   if(cracking){ cracking=false; return; }          // Stop toggles the flag; the loop checks it
-  if(_bloomMode){ return startBloomCrack(); }       // blank-target bloom search (seed stays local)
   const C=window.BIP39Crypto;
   const target = segVal('#targetSeg','data-t');
   const addr=$('#addr').value.trim();
