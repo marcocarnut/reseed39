@@ -286,17 +286,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b120"></script>
-<script src="../wasm/rxecore_api.js?v=b120"></script>
+<script src="../wasm/rxecore.js?v=b121"></script>
+<script src="../wasm/rxecore_api.js?v=b121"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b120"></script>
-<script src="../estimator/model.js?v=b120"></script>
-<script src="../estimator/wordset.js?v=b120"></script>
-<script src="../estimator/bip39crypto.js?v=b120"></script>
-<script src="../estimator/electrum.js?v=b120"></script>
-<script src="../estimator/gpucrack.js?v=b120"></script>
-<script src="../estimator/i18n.js?v=b120"></script>
+<script src="../estimator/bip39.js?v=b121"></script>
+<script src="../estimator/model.js?v=b121"></script>
+<script src="../estimator/wordset.js?v=b121"></script>
+<script src="../estimator/bip39crypto.js?v=b121"></script>
+<script src="../estimator/electrum.js?v=b121"></script>
+<script src="../estimator/gpucrack.js?v=b121"></script>
+<script src="../estimator/i18n.js?v=b121"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -305,8 +305,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b120';
-const APP_VERSION = 'b120';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b121';
+const APP_VERSION = 'b121';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -459,6 +459,11 @@ function humanElapsed(sec){
 const BENCH_KEY = 'bip39rxcrack.bench.v1';
 let BENCH = null;            // {gpuId, cpuKdf, cpuSweep, gpuKdf|null, ts} or null
 let HAS_GPU = false;         // set at boot
+// BLOOM (experimental, oniric-only): the blank-target "search all funded addresses"
+// mode. Present only where a bloom server serves /bloom-info; null on the static
+// deploy or offline (then the blank-target path degrades to "enter an address").
+let BLOOM = null;            // {service, version, addresses} or null
+let _bloomMode = false;      // set true when the user confirms a blank-target bloom search
 let CUR_GPU_ID = '';         // detected current adapter id (for a mismatch hint)
 // Coarse mobile detection. Mobile GPUs trip the driver watchdog (TDR) under
 // sustained WebGPU compute -- some phones freeze or reboot -- so on these
@@ -773,7 +778,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b120' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b121' } });
     RXE.registerDict('bip39', englishWords);
     registered.set('bip39', englishWords.length);
     // Aliases so older patterns/links keep resolving: [:bip39-en:] / [:bip39en:] / [:en:] / [:english:].
@@ -808,6 +813,9 @@ function setLang(l){
     // `lg` (if present) then wins over ?lang, since it reproduces an exact setup.
     try{ if(location.hash.length>1){ applyShareState(JSON.parse(_b64urlDec(location.hash.slice(1)))); } }catch(e){}
     renderResumeBar();   // offer to resume an interrupted crack (from localStorage)
+    // Bloom feature-detect (experimental): only where a bloom server serves it.
+    // Non-blocking; sets BLOOM so the blank-target path lights up (else it degrades).
+    fetch('/bloom-info',{cache:'no-store'}).then(r=>r.ok?r.json():null).then(j=>{ if(j&&j.service==='reseed39-bloom') BLOOM=j; }).catch(()=>{});
     // Mobile GPU crash-recovery: a pending attempt on boot means the last GPU
     // dispatch tripped the watchdog and reloaded us -> auto-retry at half the size.
     if(IS_MOBILE && HAS_GPU && window.GpuCrack && gpuCalPending(_gpuGid())){
@@ -1114,6 +1122,9 @@ function wireUI(){
   $('#mnInfo').onclick=()=>openInfo('mn');
   $('#passInfo').onclick=()=>openInfo('pass');
   $('#infoClose').onclick=$('#infoCloseB').onclick=()=>$('#infoOverlay').classList.remove('on');
+  // Bloom confirm: "Go on" -> bloom mode + open the crack modal; Cancel/✕ -> dismiss.
+  $('#bloomGoOnB').onclick=()=>{ $('#bloomOverlay').classList.remove('on'); _bloomMode=true; openCrackModal(); };
+  $('#bloomCancelB').onclick=$('#bloomClose').onclick=()=>$('#bloomOverlay').classList.remove('on');
   $('#prognosisToast').onclick=()=>{ const r=$('#results'); if(r){ r.scrollIntoView({behavior:'smooth',block:'start'}); } };
   window.addEventListener('scroll',()=>requestAnimationFrame(updatePrognosisToast),{passive:true});
   window.addEventListener('resize',updatePrognosisToast);
@@ -1155,7 +1166,7 @@ function wireUI(){
   $('#shareCopy').onclick=async()=>{ try{ await navigator.clipboard.writeText($('#shareUrl').value); const b=$('#shareCopy'); b.textContent='✓ '+t('shareCopied'); setTimeout(()=>b.textContent=t('shareCopy'),1600); }catch(e){ $('#shareUrl').select(); } };
   $('#shareNative').onclick=async()=>{ try{ await navigator.share({ title:'(re)³seed39', text:t('shareNativeText'), url:$('#shareUrl').value }); }catch(e){} };   // native OS share sheet (mobile)
   $('#crackClose').onclick=()=>{ if(cracking) cracking=false; $('#crackOverlay').classList.remove('on'); };
-  [$('#benchOverlay'),$('#sampleOverlay'),$('#crackOverlay'),$('#labelOverlay'),$('#infoOverlay')].forEach(o=>o.addEventListener('click',e=>{ if(e.target===o){ if(o.id==='benchOverlay'&&_benchRunning) return; if(o.id==='crackOverlay'&&cracking) cracking=false; o.classList.remove('on'); } }));
+  [$('#benchOverlay'),$('#sampleOverlay'),$('#crackOverlay'),$('#labelOverlay'),$('#infoOverlay'),$('#bloomOverlay')].forEach(o=>o.addEventListener('click',e=>{ if(e.target===o){ if(o.id==='benchOverlay'&&_benchRunning) return; if(o.id==='crackOverlay'&&cracking) cracking=false; o.classList.remove('on'); } }));
 }
 function schedule(){ clearTimeout(debounce); debounce=setTimeout(recompute,300); }
 
@@ -1599,9 +1610,93 @@ function autoResetCrack(){
   if(_restoring || cracking || _crackPaused) return;
   if($('#crackRes').innerHTML!=='') resetCrackUI();
 }
+// ---- Bloom (blank-target) crack: stream derived address programs to the bloom ----
+// server and match ANY funded address. The seed NEVER leaves the browser — only
+// derived programs (hash160 / taproot keys) go over the WS, and only a HIT comes
+// back. EXPERIMENTAL / online (feat-bloom branch, oniric-only). Words mode uses the
+// GPU seed kernel; passphrase mode derives seeds on the host (CPU); joint deferred.
+// NOTE: end-to-end WS path is pending live-server gating against the 3 test vectors.
+async function startBloomCrack(){
+  const btn=$('#crackBtn'), msg=$('#crackMsg'), prog=$('#crackProg'), res=$('#crackRes'), C=window.BIP39Crypto;
+  msg.textContent=''; res.innerHTML='';
+  if(!BLOOM){ msg.textContent=t('bloomUnavail'); return; }
+  const wordsPat=expandMn($('#wordsPat').value.trim()), passPat=expandMn($('#passPat').value.trim());
+  let wSet=null,pSet=null,wCard=1n,pCard=1n;
+  try{ if(wordsPat){ wSet=RXE.parse(wordsPat); wCard=wSet.isInfinite()?null:wSet.cardinality(); } }
+  catch(e){ msg.textContent='mnemonic: '+e.message; return; }
+  try{ if(passPat){ pSet=RXE.parse(passPat); pCard=pSet.isInfinite()?null:pSet.cardinality(); } }
+  catch(e){ if(wSet)wSet.free(); msg.textContent='passphrase: '+e.message; return; }
+  const wVaries=wCard===null||wCard>1n, pVaries=pCard===null||pCard>1n;
+  let mode,set,mnFixed=null,passFixed='';
+  if(wVaries&&pVaries){ if(wSet)wSet.free(); if(pSet)pSet.free(); msg.textContent=t('bloomJointNyi'); return; }
+  else if(wVaries){ mode='words'; set=wSet; passFixed=pSet?(pSet.unrank(0n)||''):''; if(pSet)pSet.free(); }
+  else { mode='passphrase'; if(!wSet){ if(pSet)pSet.free(); msg.textContent=t('crackNeedMn'); return; }
+    mnFixed=(wSet.unrank(0n)||'').trim().replace(/\s+/g,' '); wSet.free();
+    if(pSet) set=pSet; else { try{ set=RXE.parse(''); }catch(e){ msg.textContent=t('crackAllFixed'); return; } } }
+  if(set.isInfinite()){ set.free(); res.innerHTML='<span class="warnmsg">'+esc(t('crackRedNote'))+'</span>'; return; }
+  const total=Number(set.cardinality()), reqCsum=$('#reqChecksum').checked;
+  const gap=Math.max(1,parseInt($('#gap').value,10)||1), changeN=Math.max(1,parseInt($('#change').value,10)||1);
+  const changes = changeN>=2?[0,1]:[0], PURPOSES=[44,49,84,86];
+  const gpu = segVal('#backendSeg','data-b')==='gpu' && window.GpuCrack && navigator.gpu && mode==='words';
+  // Same-origin by default (prod: bundle + WS served from one origin). window.__BLOOM_WS
+  // is a DEV-ONLY override to point at a cross-origin dev server; honored only on
+  // localhost so a production page can never be redirected to send programs elsewhere.
+  const _devHost = (location.hostname==='127.0.0.1'||location.hostname==='localhost') ? window.__BLOOM_WS : null;
+  const url = _devHost || ((location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/');
+  let ws; try{ ws=new WebSocket(url); }catch(e){ set.free(); msg.textContent=t('bloomUnavail'); return; }
+  cracking=true; _crackAbort=false; btn.textContent=t('crackStop'); prog.textContent=t('bloomConnecting');
+  const hexMap=new Map();                       // hex -> context, for HIT lookup
+  let sent=0, ackd=0, finished=false, inflight=0; const MAXINFLIGHT=4, FRAME=2000, t0=performance.now();
+  const cleanup=()=>{ try{set.free();}catch(_){} try{ws.close();}catch(_){} cracking=false; btn.textContent=t('crackBtn'); };
+  const showHit=(ctx)=>{ finished=true;
+    const seed = ctx.mode==='words' ? C.mnemonicToSeed(ctx.cand,ctx.passFixed) : C.mnemonicToSeed(ctx.mnFixed,ctx.cand);
+    const tg=C.addressTarget(seed,ctx.purpose,0,0,ctx.change,ctx.idx), addr=C.encodeAddress(tg);
+    const path=`m/${ctx.purpose}'/0'/0'/${ctx.change}/${ctx.idx}`;
+    const mnShown = ctx.mode==='words' ? ctx.cand : ctx.mnFixed;
+    const passShown = ctx.mode==='passphrase' ? ctx.cand : ctx.passFixed;
+    res.innerHTML='<div class="okmsg" style="font-weight:600">'+esc(t('bloomFound'))+'</div>'
+      +'<div class="note" style="margin-top:6px;font-family:monospace">'+esc(addr)+' · '+esc(path)+'</div>'
+      +'<div style="margin-top:6px"><b>'+esc(t('crackFoundMn'))+'</b> <span class="foundname">'+esc(mnShown)+'</span></div>'
+      +(passShown?'<div class="note">'+esc(t('crackPlusPass'))+' '+esc(passShown)+'</div>':'')
+      +'<div class="note" style="margin-top:4px">⚠ verify against your own wallet before trusting.</div>';
+    cleanup();
+  };
+  ws.onerror=()=>{ if(!finished){ finished=true; msg.textContent=t('bloomUnavail'); prog.textContent=''; cleanup(); } };
+  ws.onmessage=(ev)=>{ for(const ln of String(ev.data).split('\n')){ if(!ln) continue;
+    if(ln.startsWith('HIT ')){ const ctx=hexMap.get(ln.slice(4).trim()); if(ctx && !finished){ showHit(ctx); return; } }
+    else if(ln.startsWith('ACK ')){ inflight=Math.max(0,inflight-1); ackd+=parseInt(ln.slice(4),10)||0; } } };
+  const waitInflight=async()=>{ while(inflight>=MAXINFLIGHT && cracking && !finished) await new Promise(r=>setTimeout(r,4)); };
+  const sendFrame=(h)=>{ if(!h.length) return; ws.send(h.join('\n')); sent+=h.length; inflight++; };
+  ws.onopen=async()=>{
+    prog.textContent=''; let frame=[], swept=0; const CH=4096;
+    for(let start=0; start<total && cracking && !finished; start+=CH){
+      const n=Math.min(CH,total-start), batch=set.unrankBatch?set.unrankBatch(start,n):null;
+      let cands=[]; for(let i=0;i<n;i++){ const s=batch?batch[i]:set.unrank(BigInt(start+i)); if(s!=null) cands.push(s); }
+      let mns, seeds;
+      if(mode==='words'){ mns = reqCsum ? cands.filter(m=>VALIDATOR.isValid(m)) : cands;
+        if(!mns.length){ swept+=n; continue; }
+        seeds = gpu ? await window.GpuCrack.gpuSeedsWords(mns,passFixed)
+              : (()=>{ const o=new Uint8Array(mns.length*64); for(let k=0;k<mns.length;k++) o.set(C.mnemonicToSeed(mns[k],passFixed),k*64); return o; })();
+      } else { mns=cands; const o=new Uint8Array(mns.length*64); for(let k=0;k<mns.length;k++) o.set(C.mnemonicToSeed(mnFixed,mns[k]),k*64); seeds=o; }
+      for(let k=0;k<mns.length && cracking && !finished;k++){ const seed=seeds.subarray(k*64,k*64+64);
+        for(const purpose of PURPOSES) for(const ch of changes) for(let idx=0;idx<gap;idx++){
+          const hex=C.toHex(C.addressTarget(seed,purpose,0,0,ch,idx).program);
+          hexMap.set(hex,{mode,cand:mns[k],passFixed,mnFixed,purpose,change:ch,idx}); frame.push(hex);
+          if(frame.length>=FRAME){ await waitInflight(); if(!cracking||finished) break; sendFrame(frame); frame=[]; } }
+      }
+      swept+=n; const el=(performance.now()-t0)/1000;
+      prog.textContent=fmtBig(Math.min(swept,total))+' / '+fmtBig(total)+' · '+fmtBig(Math.round(sent/(el||1)))+' addr/s';
+      await Promise.resolve();
+    }
+    if(frame.length && cracking && !finished){ await waitInflight(); sendFrame(frame); }
+    const tE=performance.now(); while(inflight>0 && !finished && performance.now()-tE<10000) await new Promise(r=>setTimeout(r,20));
+    if(!finished){ finished=true; res.innerHTML='<span class="note">'+esc(t('bloomNoMatch'))+'</span>'; cleanup(); }
+  };
+}
 async function onCrack(){
   const btn=$('#crackBtn'), msg=$('#crackMsg'), prog=$('#crackProg'), res=$('#crackRes');
   if(cracking){ cracking=false; return; }          // Stop toggles the flag; the loop checks it
+  if(_bloomMode){ return startBloomCrack(); }       // blank-target bloom search (seed stays local)
   const C=window.BIP39Crypto;
   const target = segVal('#targetSeg','data-t');
   const addr=$('#addr').value.trim();
@@ -2597,9 +2692,18 @@ function render(r, input){
   $('#results').innerHTML=html;
   const cb=$('#ctaBench'); if(cb) cb.onclick=openBenchModal;
   const ss=$('#showSample'); if(ss) ss.onclick=openSampleModal;
-  const oc=$('#openCrack'); if(oc) oc.onclick=openCrackModal;
+  const oc=$('#openCrack'); if(oc) oc.onclick=onOpenCrack;
 }
 function openCrackModal(){ $('#crackSummary').innerHTML = lastR ? strategyText(lastR) : ''; $('#crackOverlay').classList.add('on'); }
+// Entry from the prognosis "Search…" button. A BLANK target in ADDRESS mode with a
+// reachable bloom server -> the confirm dialog (then bloom mode); xpub-blank falls
+// through to the crack modal, which refuses ("enter your account xpub") as before.
+function onOpenCrack(){
+  _bloomMode=false;
+  const target=segVal('#targetSeg','data-t'), addr=$('#addr').value.trim();
+  if(target==='address' && !addr && BLOOM){ $('#bloomOverlay').classList.add('on'); return; }
+  openCrackModal();
+}
 function openSampleModal(){
   if(!lastR) return;
   $('#sampleBody').innerHTML = sampleHTML(lastR);
@@ -2714,6 +2818,15 @@ function renderDictList(){
     <h3><span id="infoTitle"></span> <button class="x" id="infoClose">✕</button></h3>
     <div class="body" id="infoBody"></div>
     <div class="foot"><button class="ghost" id="infoCloseB" data-i18n="close">Close</button></div>
+  </div>
+</div>
+
+<!-- Bloom (blank-target "search all addresses") confirmation -->
+<div class="overlay" id="bloomOverlay">
+  <div class="modal">
+    <h3>🌐 <span data-i18n="bloomTitle">Search all addresses ever used?</span> <button class="x" id="bloomClose">✕</button></h3>
+    <div class="body"><p data-i18n="bloomAsk" style="line-height:1.55;margin:0"></p></div>
+    <div class="foot"><button class="ghost" id="bloomCancelB" data-i18n="bloomCancel">Cancel</button><button class="act" id="bloomGoOnB" data-i18n="bloomGoOn" style="margin-top:0">Go on</button></div>
   </div>
 </div>
 
