@@ -286,17 +286,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b121"></script>
-<script src="../wasm/rxecore_api.js?v=b121"></script>
+<script src="../wasm/rxecore.js?v=b122"></script>
+<script src="../wasm/rxecore_api.js?v=b122"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b121"></script>
-<script src="../estimator/model.js?v=b121"></script>
-<script src="../estimator/wordset.js?v=b121"></script>
-<script src="../estimator/bip39crypto.js?v=b121"></script>
-<script src="../estimator/electrum.js?v=b121"></script>
-<script src="../estimator/gpucrack.js?v=b121"></script>
-<script src="../estimator/i18n.js?v=b121"></script>
+<script src="../estimator/bip39.js?v=b122"></script>
+<script src="../estimator/model.js?v=b122"></script>
+<script src="../estimator/wordset.js?v=b122"></script>
+<script src="../estimator/bip39crypto.js?v=b122"></script>
+<script src="../estimator/electrum.js?v=b122"></script>
+<script src="../estimator/gpucrack.js?v=b122"></script>
+<script src="../estimator/i18n.js?v=b122"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -305,8 +305,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b121';
-const APP_VERSION = 'b121';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b122';
+const APP_VERSION = 'b122';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -779,7 +779,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b121' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b122' } });
     RXE.registerDict('bip39', englishWords);
     registered.set('bip39', englishWords.length);
     // Aliases so older patterns/links keep resolving: [:bip39-en:] / [:bip39en:] / [:en:] / [:english:].
@@ -1644,7 +1644,7 @@ async function startBloomCrack(){
   // localhost so a production page can never be redirected to send programs elsewhere.
   const _devHost = (location.hostname==='127.0.0.1'||location.hostname==='localhost') ? window.__BLOOM_WS : null;
   const url = _devHost || ((location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/');
-  let ws; try{ ws=new WebSocket(url); }catch(e){ set.free(); msg.textContent=t('bloomUnavail'); return; }
+  let ws=null, connected=false, sweepStarted=false, reconnects=0; const MAXRECONNECT=8;
   cracking=true; _crackAbort=false; _crackPaused=false;
   btn.textContent=t('crackPause'); btn.classList.remove('resuming');   // crackBtn = Pause while running
   { const sb=$('#crackStopBtn'); if(sb){ sb.textContent=t('crackStopBtn'); sb.style.display=''; } }   // crackStopBtn = Stop
@@ -1655,8 +1655,8 @@ async function startBloomCrack(){
   _bloomCtl={ togglePause:()=>{ paused=!paused; btn.textContent=paused?t('crackResume'):t('crackPause'); btn.classList.toggle('resuming',paused); } };
   const setEndButtons=()=>{ btn.textContent=t('crackBtn'); btn.classList.remove('resuming'); const sb=$('#crackStopBtn'); if(sb){ sb.textContent=t('crackReset'); sb.style.display=''; } };
   const hexMap=new Map();                       // hex -> context, for HIT lookup
-  let sent=0, ackd=0, finished=false, inflight=0, workers=[]; const MAXINFLIGHT=16, FRAME=2000, t0=performance.now();
-  const cleanup=()=>{ try{set.free();}catch(_){} try{ws.close();}catch(_){} workers.forEach(w=>{try{w.terminate();}catch(_){}}); cracking=false; };
+  let sent=0, finished=false, workers=[]; const unacked=[], MAXINFLIGHT=16, FRAME=2000, t0=performance.now();
+  const cleanup=()=>{ try{set.free();}catch(_){} try{ if(ws){ ws.onclose=null; ws.close(); } }catch(_){} workers.forEach(w=>{try{w.terminate();}catch(_){}}); cracking=false; };
   const showHit=(ctx)=>{ finished=true;
     const seed = ctx.mode==='words' ? C.mnemonicToSeed(ctx.cand,ctx.passFixed) : C.mnemonicToSeed(ctx.mnFixed,ctx.cand);
     const tg=C.addressTarget(seed,ctx.purpose,0,0,ctx.change,ctx.idx), addr=C.encodeAddress(tg);
@@ -1670,12 +1670,27 @@ async function startBloomCrack(){
       +'<div class="note" style="margin-top:4px">⚠ verify against your own wallet before trusting.</div>';
     cleanup(); setEndButtons();
   };
-  ws.onerror=()=>{ if(!finished){ finished=true; msg.textContent=t('bloomUnavail'); prog.textContent=''; cleanup(); setEndButtons(); } };
-  ws.onmessage=(ev)=>{ for(const ln of String(ev.data).split('\n')){ if(!ln) continue;
-    if(ln.startsWith('HIT ')){ const ctx=hexMap.get(ln.slice(4).trim()); if(ctx && !finished){ showHit(ctx); return; } }
-    else if(ln.startsWith('ACK ')){ inflight=Math.max(0,inflight-1); ackd+=parseInt(ln.slice(4),10)||0; } } };
-  const waitInflight=async()=>{ while(inflight>=MAXINFLIGHT && cracking && !finished) await new Promise(r=>setTimeout(r,4)); };
-  const sendFrame=(h)=>{ if(!h.length) return; ws.send(h.join('\n')); sent+=h.length; inflight++; };
+  const abort=(reason)=>{ if(finished) return; finished=true; if(reason) msg.textContent=reason; prog.textContent=''; cleanup(); setEndButtons(); };
+  // Reconnect-on-drop: a socket close that ISN'T a manual Stop/finish schedules a
+  // backoff retry; on reopen we re-send the still-un-ACKed frames (the server is a
+  // stateless read-only probe) so no candidate is skipped across the blip.
+  const reconnect=()=>{ if(finished||_crackAbort||!cracking) return;
+    if(reconnects>=MAXRECONNECT){ abort(t('bloomUnavail')); return; }
+    reconnects++;
+    prog.innerHTML='<div>'+esc(t('bloomReconnecting').replace('%n',reconnects))+'</div>';
+    setTimeout(()=>{ if(finished||_crackAbort||!cracking) return; try{ ws=new WebSocket(url); wireWs(); }catch(e){ reconnect(); } }, Math.min(800*reconnects,5000)); };
+  const wireWs=()=>{
+    ws.onopen=()=>{ connected=true; reconnects=0;
+      if(prog.textContent===t('bloomConnecting')) prog.textContent='';
+      for(const h of unacked){ try{ ws.send(h.join('\n')); }catch(_){} }   // re-send in-flight frames after a drop
+      if(!sweepStarted){ sweepStarted=true; runSweep(); } };
+    ws.onmessage=(ev)=>{ for(const ln of String(ev.data).split('\n')){ if(!ln) continue;
+      if(ln.startsWith('HIT ')){ const ctx=hexMap.get(ln.slice(4).trim()); if(ctx && !finished){ showHit(ctx); return; } }
+      else if(ln.startsWith('ACK ')){ if(unacked.length) unacked.shift(); } } };   // one ACK per frame, in order
+    ws.onerror=()=>{};                                     // onclose drives teardown/reconnect
+    ws.onclose=()=>{ connected=false; if(finished||_crackAbort||!cracking) return; reconnect(); }; };
+  const waitSendable=async()=>{ while((paused || !connected || unacked.length>=MAXINFLIGHT) && cracking && !finished) await new Promise(r=>setTimeout(r,5)); };
+  const sendFrame=(h)=>{ if(!h.length) return; try{ ws.send(h.join('\n')); }catch(_){} unacked.push(h); sent+=h.length; };
   let frame=[], swept=0, dispatched=0, derived=0, hashed=0, validSwept=0;
   // Same shape + units as the targeted checksum crack's progress line, so the two
   // are directly comparable: line 1 = valid candidates HASHED (seed+derive+sent) /
@@ -1696,7 +1711,7 @@ async function startBloomCrack(){
   const streamHexes=async(mns,hexes)=>{ hashed+=mns.length; let k=0;
     for(const purpose of PURPOSES) for(const ch of changes) for(let idx=0;idx<gap;idx++) for(let i=0;i<mns.length;i++){
       const hex=hexes[k++]; hexMap.set(hex,{mode,cand:mns[i],passFixed,mnFixed,purpose,change:ch,idx}); frame.push(hex);
-      if(frame.length>=FRAME){ await waitInflight(); if(!cracking||finished) return; sendFrame(frame); frame=[]; } }
+      if(frame.length>=FRAME){ await waitSendable(); if(!cracking||finished) return; sendFrame(frame); frame=[]; } }
   };
   // Inline (no-worker) fallback: batched EC on the main thread, same output order.
   const deriveHexesInline=(mns,seeds)=>{ const N=mns.length, out=[];
@@ -1708,8 +1723,8 @@ async function startBloomCrack(){
           const pubN=C.privToPubBatch(ixN.map(nd=>nd.k));
           for(let i=0;i<N;i++) out.push(C.toHex(C.pubToTarget(pubN[i],purpose).program)); } } }
     return out; };
-  ws.onopen=async()=>{
-    prog.textContent=''; const CH=4096;
+  async function runSweep(){
+    const CH=4096;
     // Worker pool: the EC (4 purposes/candidate) is the wall, so derive across
     // cores; the main thread keeps the single WS and streams what workers return.
     const nW=Math.max(1,Math.min(parseInt($('#cores').value,10)||4,(navigator.hardwareConcurrency||8),16));
@@ -1724,7 +1739,7 @@ async function startBloomCrack(){
     }
     const useWorkers = workers.length>0;
     for(let start=0; start<total && cracking && !finished; start+=CH){
-      while(paused && cracking && !finished) await new Promise(r=>setTimeout(r,60));   // Pause: halt the sweep (WS + workers stay alive)
+      while((paused || !connected) && cracking && !finished) await new Promise(r=>setTimeout(r,60));   // halt while Paused or reconnecting (WS + workers stay alive)
       if(!cracking||finished) break;
       const n=Math.min(CH,total-start), batch=set.unrankBatch?set.unrankBatch(start,n):null;
       let cands=[]; for(let i=0;i<n;i++){ const s=batch?batch[i]:set.unrank(BigInt(start+i)); if(s!=null) cands.push(s); }
@@ -1737,7 +1752,7 @@ async function startBloomCrack(){
       swept+=n; validSwept+=mns.length;   // raw swept vs checksum-valid, for the live estValid extrapolation
       if(useWorkers){
         // backpressure: wait for a free worker AND WS-window headroom before dispatch
-        while((paused || idle.length===0 || inflight>=MAXINFLIGHT) && cracking && !finished) await new Promise(r=>setTimeout(r,3));
+        while((paused || !connected || idle.length===0 || unacked.length>=MAXINFLIGHT) && cracking && !finished) await new Promise(r=>setTimeout(r,3));
         if(!cracking||finished) break;
         const w=idle.shift(), id=dispatched++; pending.set(id,mns);
         const sb=new Uint8Array(seeds);   // fresh copy -> safe zero-copy transfer (never neuter a reused GPU buffer)
@@ -1750,12 +1765,16 @@ async function startBloomCrack(){
     // sweep done (or Stopped: crackStopBtn set _crackAbort + cracking=false).
     // On a real completion, drain the outstanding derive/ACKs; on Stop, skip it.
     while(!finished && cracking && useWorkers && derived<dispatched) await new Promise(r=>setTimeout(r,10));
-    if(frame.length && cracking && !finished){ await waitInflight(); if(cracking&&!finished){ sendFrame(frame); frame=[]; } }
-    const tE=performance.now(); while(inflight>0 && !finished && cracking && performance.now()-tE<10000) await new Promise(r=>setTimeout(r,20));
+    if(frame.length && cracking && !finished){ await waitSendable(); if(cracking&&!finished){ sendFrame(frame); frame=[]; } }
+    const tE=performance.now(); while(unacked.length>0 && !finished && cracking && performance.now()-tE<30000) await new Promise(r=>setTimeout(r,20));
     if(!finished){ finished=true; cleanup();
       res.innerHTML='<span class="note">'+esc(t(_crackAbort?'crackStopped':'bloomNoMatch'))+'</span>';
       setEndButtons(); _crackAbort=false; }
-  };
+  }
+  // Open the first connection; wireWs() drives onopen -> runSweep, and onclose ->
+  // reconnect. A synchronous constructor throw here is the only immediate failure.
+  try{ ws=new WebSocket(url); }catch(e){ set.free(); msg.textContent=t('bloomUnavail'); cracking=false; _bloomCtl=null; return; }
+  wireWs();
 }
 async function onCrack(){
   const btn=$('#crackBtn'), msg=$('#crackMsg'), prog=$('#crackProg'), res=$('#crackRes');
