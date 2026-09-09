@@ -459,7 +459,7 @@ function humanElapsed(sec){
 const BENCH_KEY = 'bip39rxcrack.bench.v1';
 let BENCH = null;            // {gpuId, cpuKdf, cpuSweep, gpuKdf|null, ts} or null
 let HAS_GPU = false;         // set at boot
-// BLOOM (experimental, oniric-only): the blank-target "search all funded addresses"
+// BLOOM (experimental, oniric-only): the blank-target "search all used addresses"
 // mode. Present only where a bloom server serves /bloom-info; null on the static
 // deploy or offline (then the blank-target path degrades to "enter an address").
 let BLOOM = null;            // {service, version, addresses} or null
@@ -1611,7 +1611,7 @@ function autoResetCrack(){
   if($('#crackRes').innerHTML!=='') resetCrackUI();
 }
 // ---- Bloom (blank-target) crack: stream derived address programs to the bloom ----
-// server and match ANY funded address. The seed NEVER leaves the browser — only
+// server and match ANY used (ever-transacted) address. The seed NEVER leaves the browser — only
 // derived programs (hash160 / taproot keys) go over the WS, and only a HIT comes
 // back. EXPERIMENTAL / online (feat-bloom branch, oniric-only). Words mode uses the
 // GPU seed kernel; passphrase mode derives seeds on the host (CPU); joint deferred.
@@ -1685,7 +1685,7 @@ async function startBloomCrack(){
           if(frame.length>=FRAME){ await waitInflight(); if(!cracking||finished) break; sendFrame(frame); frame=[]; } }
       }
       swept+=n; const el=(performance.now()-t0)/1000;
-      prog.textContent=fmtBig(Math.min(swept,total))+' / '+fmtBig(total)+' · '+fmtBig(Math.round(sent/(el||1)))+' addr/s';
+      prog.textContent=fmtBig(Math.min(swept,total))+' / '+fmtBig(total)+' · '+fmtBig(Math.round(hexMap.size/(el||1)))+' addr/s';
       await Promise.resolve();
     }
     if(frame.length && cracking && !finished){ await waitInflight(); sendFrame(frame); }
