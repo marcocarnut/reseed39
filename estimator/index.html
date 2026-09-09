@@ -1678,11 +1678,28 @@ async function startBloomCrack(){
         seeds = gpu ? await window.GpuCrack.gpuSeedsWords(mns,passFixed)
               : (()=>{ const o=new Uint8Array(mns.length*64); for(let k=0;k<mns.length;k++) o.set(C.mnemonicToSeed(mns[k],passFixed),k*64); return o; })();
       } else { mns=cands; const o=new Uint8Array(mns.length*64); for(let k=0;k<mns.length;k++) o.set(C.mnemonicToSeed(mnFixed,mns[k]),k*64); seeds=o; }
-      for(let k=0;k<mns.length && cracking && !finished;k++){ const seed=seeds.subarray(k*64,k*64+64);
-        for(const purpose of PURPOSES) for(const ch of changes) for(let idx=0;idx<gap;idx++){
-          const hex=C.toHex(C.addressTarget(seed,purpose,0,0,ch,idx).program);
-          hexMap.set(hex,{mode,cand:mns[k],passFixed,mnFixed,purpose,change:ch,idx}); frame.push(hex);
-          if(frame.length>=FRAME){ await waitInflight(); if(!cracking||finished) break; sendFrame(frame); frame=[]; } }
+      // BATCHED host EC (mirrors crackAddress._addrBatchMatch): one Montgomery
+      // inverse per stage per batch via privToPubBatch, and ckdNormalPub reuses the
+      // precomputed parent pubkey -- vs a modular inverse per privToPub per program.
+      const N=mns.length;
+      for(const purpose of PURPOSES){
+        if(!cracking||finished) break;
+        const accts=new Array(N); for(let i=0;i<N;i++) accts[i]=C.deriveHardenedPath(seeds.subarray(i*64,i*64+64),[purpose,0,0]);
+        const pubA=C.privToPubBatch(accts.map(a=>a.k));
+        for(const ch of changes){
+          if(!cracking||finished) break;
+          const chN=new Array(N); for(let i=0;i<N;i++) chN[i]=C.ckdNormalPub(accts[i],pubA[i],ch);
+          const pubC=C.privToPubBatch(chN.map(c=>c.k));
+          for(let idx=0;idx<gap && cracking && !finished;idx++){
+            const ixN=new Array(N); for(let i=0;i<N;i++) ixN[i]=C.ckdNormalPub(chN[i],pubC[i],idx);
+            const pubN=C.privToPubBatch(ixN.map(nd=>nd.k));
+            for(let i=0;i<N;i++){
+              const hex=C.toHex(C.pubToTarget(pubN[i],purpose).program);
+              hexMap.set(hex,{mode,cand:mns[i],passFixed,mnFixed,purpose,change:ch,idx}); frame.push(hex);
+              if(frame.length>=FRAME){ await waitInflight(); if(!cracking||finished) break; sendFrame(frame); frame=[]; }
+            }
+          }
+        }
       }
       swept+=n; const el=(performance.now()-t0)/1000;
       prog.textContent=fmtBig(Math.min(swept,total))+' / '+fmtBig(total)+' · '+fmtBig(Math.round(hexMap.size/(el||1)))+' addr/s';
