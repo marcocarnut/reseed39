@@ -286,17 +286,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b148"></script>
-<script src="../wasm/rxecore_api.js?v=b148"></script>
+<script src="../wasm/rxecore.js?v=b149"></script>
+<script src="../wasm/rxecore_api.js?v=b149"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b148"></script>
-<script src="../estimator/model.js?v=b148"></script>
-<script src="../estimator/wordset.js?v=b148"></script>
-<script src="../estimator/bip39crypto.js?v=b148"></script>
-<script src="../estimator/electrum.js?v=b148"></script>
-<script src="../estimator/gpucrack.js?v=b148"></script>
-<script src="../estimator/i18n.js?v=b148"></script>
+<script src="../estimator/bip39.js?v=b149"></script>
+<script src="../estimator/model.js?v=b149"></script>
+<script src="../estimator/wordset.js?v=b149"></script>
+<script src="../estimator/bip39crypto.js?v=b149"></script>
+<script src="../estimator/electrum.js?v=b149"></script>
+<script src="../estimator/gpucrack.js?v=b149"></script>
+<script src="../estimator/i18n.js?v=b149"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -305,8 +305,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b148';
-const APP_VERSION = 'b148';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b149';
+const APP_VERSION = 'b149';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -782,7 +782,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b148' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b149' } });
     RXE.registerDict('bip39', englishWords);
     registered.set('bip39', englishWords.length);
     // Aliases so older patterns/links keep resolving: [:bip39-en:] / [:bip39en:] / [:en:] / [:english:].
@@ -1824,7 +1824,7 @@ async function startBloomCrack(){
       return o;
     };
     async function runSweep(){
-      const nW=Math.max(1,Math.min(parseInt($('#cores').value,10)||4,(navigator.hardwareConcurrency||8),16));
+      const nW=Math.max(1,Math.min(parseInt($('#cores').value,10)||4,(navigator.hardwareConcurrency||8),32));   // raised 16->32 so many-core machines can throw more workers at a sweep-bound pattern
       const idle=[], pending=new Map();   // pending: EC batchId -> candidate array (for sendShard + HIT resolution)
       // ⭐ Seed in BIG batches: gpuSeedsWords has a ~280ms fixed per-dispatch cost, so a
       // 256-candidate call runs at ~900 seeds/s while a 4-8k call hits the GPU's real ~11k/s.
@@ -1840,7 +1840,13 @@ async function startBloomCrack(){
       // stops stalling the GPU-seed pipeline. Generic pool: a worker does SWEEP or EC.
       const SWEEP_CH = (mode==='words'&&reqCsum) ? 16384 : 8192;   // raw per sweep job -- short (~100ms) so a sweep only briefly borrows a worker from EC
       const ACC_CAP = SEED_BATCH*3;                                // backpressure: hold off sweeping once this many valid are buffered
-      const SWEEP_MAX = 2;                                         // one worker's sweep (~10k valid/s) already outpaces EC; cap low so EC keeps the pool
+      // Let the SWEEP scale across the pool. For a sparse-checksum pattern (e.g. a
+      // 24-word / 3-unknown = 1-in-256) the sweep is the bottleneck -- it must grind
+      // 256 raw candidates per valid one -- so capping it at 2 workers throttled the
+      // whole search. Allow up to nW-1 sweepers (leave >=1 for EC); the ACC_CAP
+      // backpressure + the consumer's demand for workers balance sweep-vs-EC per
+      // pattern (dense patterns fill acc fast -> sweepers back off -> workers do EC).
+      const SWEEP_MAX = Math.max(1, nW-1);
       const PPC = Math.max(1, PURPOSES.length*changes.length*gap);  // programs per candidate
       const BACKLOG = 16384;   // cap how far EC may run ahead of server-confirmed candidates: bounds the parked-send backlog (memory) + throttles EC to the sustainable send/ACK rate
       const SEED_MIN = 1024;   // seed a PARTIAL batch this small rather than let EC starve when the sweep is the bottleneck (sparse checksum) -- GPU at 1k still outpaces such a sweep
