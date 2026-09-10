@@ -20,7 +20,18 @@ let _seedChunkN = 0;   // 0 = auto
 const _isMobile = (function(){ try{
   if (navigator.userAgentData && typeof navigator.userAgentData.mobile==='boolean') return navigator.userAgentData.mobile;
   return /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent||''); }catch(e){ return false; } })();
-function _effChunk(){ return _seedChunkN>0 ? _seedChunkN : (_isMobile ? _mobChunk : (1<<20)); }
+// Desktop lanes/submit. Was (1<<20) = the WHOLE batch in one command, on the theory
+// "desktop == discrete GPU == no watchdog." False for an INTEGRATED desktop GPU: an
+// Intel Arc iGPU (which also drives the display) ran a 4096-lane PBKDF2 batch as one
+// ~1.2s dispatch, pegged the GPU >90%, and tripped the OS TDR watchdog -- the screen
+// blinked, the WebGPU device was lost, and the crack fell back to CPU. Bound it so each
+// submit is a short (~300ms) command that stays well under the watchdog AND yields the
+// display scheduling gaps between submits. _seedDepth=2 keeps the GPU busy across the
+// extra submits (compute overlaps readback), so the throughput cost is small. A discrete
+// GPU with no display duty can raise it via setDeskChunk / _seedChunkN for max speed.
+let _deskChunk = 1024;
+function _setDeskChunk(n){ n=n|0; if(n>0) _deskChunk = Math.max(64, Math.min(1<<20, n)); }
+function _effChunk(){ return _seedChunkN>0 ? _seedChunkN : (_isMobile ? _mobChunk : _deskChunk); }
 function _setSeedChunk(n){ n=n|0; _seedChunkN = n>0 ? Math.max(64, Math.min(1<<20, n)) : 0; }
 let _seedDepth = 2;   // submits kept in flight; harmless (1 submit on desktop), a mild hedge on mobile
 function _setSeedDepth(n){ _seedDepth = Math.max(1, Math.min(8, n|0)); }
@@ -785,6 +796,7 @@ window.GpuCrack = { initGpu, gpuSeeds, benchmark, crackXpub, crackAddress, MAXSA
   setBatchEC:(b)=>{ BATCH_EC=!!b; }, getBatchEC:()=>BATCH_EC,
   setSeedChunk:_setSeedChunk, getSeedChunk:()=>_seedChunkN,   // 0 = auto (mobile-aware)
   setMobChunk:_setMobChunk, getMobChunk:()=>_mobChunk,        // probe-chosen mobile lanes/dispatch
+  setDeskChunk:_setDeskChunk, getDeskChunk:()=>_deskChunk,    // desktop lanes/submit (bounded for TDR safety on integrated/display GPUs)
   setGpuLostCb:_setGpuLostCb,                                 // app hook: real device loss (watchdog reset)
   setMaxLen:_setMaxLen,                                       // EXPERIMENTAL ?maxlen: skip candidates longer than N chars
   getEffSeedChunk:_effChunk, isMobile:()=>_isMobile, setSeedDepth:_setSeedDepth,
