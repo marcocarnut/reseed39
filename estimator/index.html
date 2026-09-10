@@ -286,17 +286,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b151"></script>
-<script src="../wasm/rxecore_api.js?v=b151"></script>
+<script src="../wasm/rxecore.js?v=b152"></script>
+<script src="../wasm/rxecore_api.js?v=b152"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b151"></script>
-<script src="../estimator/model.js?v=b151"></script>
-<script src="../estimator/wordset.js?v=b151"></script>
-<script src="../estimator/bip39crypto.js?v=b151"></script>
-<script src="../estimator/electrum.js?v=b151"></script>
-<script src="../estimator/gpucrack.js?v=b151"></script>
-<script src="../estimator/i18n.js?v=b151"></script>
+<script src="../estimator/bip39.js?v=b152"></script>
+<script src="../estimator/model.js?v=b152"></script>
+<script src="../estimator/wordset.js?v=b152"></script>
+<script src="../estimator/bip39crypto.js?v=b152"></script>
+<script src="../estimator/electrum.js?v=b152"></script>
+<script src="../estimator/gpucrack.js?v=b152"></script>
+<script src="../estimator/i18n.js?v=b152"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -305,8 +305,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b151';
-const APP_VERSION = 'b151';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b152';
+const APP_VERSION = 'b152';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -782,7 +782,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b151' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b152' } });
     RXE.registerDict('bip39', englishWords);
     registered.set('bip39', englishWords.length);
     // Aliases so older patterns/links keep resolving: [:bip39-en:] / [:bip39en:] / [:en:] / [:english:].
@@ -1696,6 +1696,14 @@ async function startBloomCrack(){
   // network ("flow to the slowest component"). cwnd also bounds the un-ACKed frame
   // buffer; it stays small on a slow link (fewer ACKs -> slower open). Reset per connect.
   let cwnd=16; const CWND_MAX=128, BUFCAP=1<<18;   // start at the old fixed window (never worse), open to 128; 256 KiB socket-buffer cap
+  // --- [mainprof] main-thread bottleneck profiler (DIAGNOSTIC; on by default, strip once we've read it) ---
+  // b152 (worker rebalance) made NO difference, and neither did 6->12 cores: the bottleneck
+  // is SERIAL -> the main thread itself. This measures where the main thread's wall-time goes
+  // and, crucially, the event-loop LAG (how late a 20ms timer fires = how saturated main is).
+  // Logs one line/sec to the console; wall-times of concurrent async stages can sum past the
+  // interval (they overlap) -- read them as relative dominance, and read loopLag as the verdict.
+  const _MAINPROF = !/[?&]mainprof=0/.test(location.search);
+  const _pf={gpuSeed:0,gpuN:0,wsSend:0,onMsg:0,ecPost:0,swAcc:0,lagSum:0,lagN:0,lagMax:0};
   const cleanup=()=>{ try{if(_progTimer){clearInterval(_progTimer);_progTimer=null;}}catch(_){} try{set.free();}catch(_){} try{ if(ws){ ws.onclose=null; ws.close(); } }catch(_){} workers.forEach(w=>{try{w.terminate();}catch(_){}}); cracking=false; };
   // Report a HIT -- but ONLY after re-deriving the program on the CPU and confirming
   // it matches the hex the server flagged. A recovery tool must never announce a
@@ -1737,11 +1745,11 @@ async function startBloomCrack(){
       if(prog.textContent===t('bloomConnecting')) prog.textContent='';
       for(const f of unacked){ try{ ws.send(f.text); }catch(_){} }   // re-send in-flight frames after a drop
       if(!sweepStarted){ sweepStarted=true; runSweep(); } };
-    ws.onmessage=(ev)=>{ for(const ln of String(ev.data).split('\n')){ if(!ln) continue;
+    ws.onmessage=(ev)=>{ const _m0=_MAINPROF?performance.now():0; for(const ln of String(ev.data).split('\n')){ if(!ln) continue;
       if(ln.startsWith('HIT ')){ const hh=ln.slice(4).trim(); if(!finished){   // find which in-flight candidate produced this program (HIT precedes its frame's ACK, so it's still in unacked)
         for(const f of unacked){ const ctx=resolveHit(f.cs, hh); if(ctx){ if(showHit(ctx, hh)) return; break; } } } }   // verified hit stops; an unverifiable one is rejected and we keep going
       else if(ln.startsWith('ACK ')){ const f=unacked.shift(); if(f){ ackedProgs+=f.progs;
-        if(cwnd<CWND_MAX) cwnd += (cwnd<64?4:1); } } } };   // ACK: count programs (O(1), no per-program work) + OPEN the window (slow-start: +4 while ramping, +1 near the cap)
+        if(cwnd<CWND_MAX) cwnd += (cwnd<64?4:1); } } } if(_MAINPROF) _pf.onMsg+=performance.now()-_m0; };   // ACK: count programs (O(1), no per-program work) + OPEN the window (slow-start: +4 while ramping, +1 near the cap)
     ws.onerror=()=>{};                                     // onclose drives teardown/reconnect
     ws.onclose=()=>{ connected=false; if(finished||_crackAbort||!cracking) return; reconnect(); }; };
   const sendable=()=> !paused && connected && unacked.length<cwnd && (!ws || ws.bufferedAmount<=BUFCAP);   // window has room AND the socket isn't backed up
@@ -1790,7 +1798,7 @@ async function startBloomCrack(){
   // a HIT on this frame can be re-derived and named; dropped on ACK.
   const sendShard=async(cs, text, progs)=>{
     await waitSendable(); if(!cracking||finished) return;
-    try{ ws.send(text); }catch(_){}
+    const _s0=_MAINPROF?performance.now():0; try{ ws.send(text); }catch(_){} if(_MAINPROF) _pf.wsSend+=performance.now()-_s0;
     unacked.push({ text, cs, progs }); sent+=progs; hashed+=cs.length;
   };
   // Inline (no-worker) fallback: batched EC on the main thread, same output order.
@@ -1817,7 +1825,7 @@ async function startBloomCrack(){
   };
     // Build the seeds for one candidate batch (mnemonics in words mode / passphrases otherwise).
     const seedsFor = async (cands)=>{
-      if(gpu) return await window.GpuCrack.gpuSeedsWords(cands, passFixed);   // words+GPU, one big efficient call
+      if(gpu){ const _g0=_MAINPROF?performance.now():0; const r=await window.GpuCrack.gpuSeedsWords(cands, passFixed); if(_MAINPROF){ _pf.gpuSeed+=performance.now()-_g0; _pf.gpuN++; } return r; }   // words+GPU, one big efficient call (wall time: encode+GPU+readback)
       const o=new Uint8Array(cands.length*64);
       for(let k=0;k<cands.length;k++){ o.set(mode==='words'? C.mnemonicToSeed(cands[k],passFixed) : C.mnemonicToSeed(mnFixed,cands[k]), k*64);
         if((k&255)===255) await Promise.resolve(); }   // yield periodically so a long CPU-seed batch doesn't starve callbacks
@@ -1856,7 +1864,7 @@ async function startBloomCrack(){
           workers.push(w); idle.push(w);
           w.onmessage=async(e)=>{ const m=e.data; if(!m||finished) return;
             if(m.type==='bloomswept'){ idle.push(w); sweepInFlight--; swept+=m.n; validSwept+=m.items.length;
-              for(const it of m.items) acc.push(it); }
+              const _a0=_MAINPROF?performance.now():0; for(const it of m.items) acc.push(it); if(_MAINPROF) _pf.swAcc+=performance.now()-_a0; }
             else if(m.type==='bloomderived'){ const mns=pending.get(m.batchId); pending.delete(m.batchId); idle.push(w); ecInFlight--;
               if(mns) await sendShard(mns, m.text, m.progs); derived++; }
             else if(m.type==='error'){ idle.push(w); if(String(m.id||'').startsWith('s')) sweepInFlight--; }
@@ -1878,6 +1886,20 @@ async function startBloomCrack(){
         // oscillation, worse with more cores). sweepTarget adapts SLOWLY (±1 every 400ms,
         // with a dead zone) toward the backlog: low acc -> more sweepers; high acc -> more EC.
         let sweepTarget=Math.max(1, Math.min(SWEEP_MAX, nW>>1)), _lastAdapt=performance.now();
+        // [mainprof] event-loop lag sampler (a 20ms self-rescheduling timer; how late it
+        // fires = main-thread saturation) + a 1s logger. seededQ/acc/idle depths tell us
+        // starvation (empty) vs backpressure (full) at the moment we sample.
+        if(_MAINPROF){
+          let _lagExp=0, _pfLast=performance.now();
+          const _tick=()=>{ const now=performance.now(); if(_lagExp){ const lag=now-_lagExp; _pf.lagSum+=lag; _pf.lagN++; if(lag>_pf.lagMax)_pf.lagMax=lag; } _lagExp=now+20; if(cracking&&!finished) setTimeout(_tick,20); };
+          setTimeout(_tick,20);
+          const _log=()=>{ if(!cracking||finished) return; const now=performance.now(), dt=now-_pfLast; _pfLast=now;
+            const avgLag=_pf.lagN?(_pf.lagSum/_pf.lagN):0;
+            console.log(`[mainprof] loopLag avg=${avgLag.toFixed(1)}ms max=${_pf.lagMax.toFixed(0)}ms || gpuSeed=${_pf.gpuSeed.toFixed(0)}ms(${_pf.gpuN}x) wsSend=${_pf.wsSend.toFixed(0)}ms onMsg=${_pf.onMsg.toFixed(0)}ms ecPost=${_pf.ecPost.toFixed(0)}ms swAcc=${_pf.swAcc.toFixed(0)}ms /${dt.toFixed(0)}ms || seededQ=${seededQ.length} acc=${acc.length} idle=${idle.length}/${workers.length} sweepTgt=${sweepTarget} inflight(sw=${sweepInFlight},ec=${ecInFlight})`);
+            _pf.gpuSeed=_pf.wsSend=_pf.onMsg=_pf.ecPost=_pf.swAcc=_pf.lagSum=0; _pf.gpuN=_pf.lagN=0; _pf.lagMax=0;
+            if(cracking&&!finished) setTimeout(_log,1000); };
+          setTimeout(_log,1000);
+        }
         const allDone=()=> sweepDone && sweepInFlight===0 && acc.length===0 && seededQ.length===0 && !seeding && ecInFlight===0;
         // SWEEPER: keep acc filled (unrank+checksum on workers); short chunks + a low cap so
         // it only briefly borrows workers from EC, and backs off once the backlog is deep.
@@ -1922,8 +1944,10 @@ async function startBloomCrack(){
             if(!cracking||finished) break;
             const cs=b.slice(off,off+SHARD), seg=seeds.subarray(off*64,(off+cs.length)*64);
             const w=idle.shift(), id=dispatched++; pending.set(id,cs); ecInFlight++;
+            const _e0=_MAINPROF?performance.now():0;
             const sb=new Uint8Array(seg);   // copy the shard's seeds -> safe zero-copy transfer
             w.postMessage({type:'bloomderive', batchId:id, seedsBuf:sb.buffer, n:cs.length, purposes:PURPOSES, changes, gap}, [sb.buffer]);
+            if(_MAINPROF) _pf.ecPost+=performance.now()-_e0;
           }
         } };
         await Promise.all([sweeper(), seeder(), consumer()]);
