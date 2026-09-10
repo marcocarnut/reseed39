@@ -286,17 +286,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b141"></script>
-<script src="../wasm/rxecore_api.js?v=b141"></script>
+<script src="../wasm/rxecore.js?v=b143"></script>
+<script src="../wasm/rxecore_api.js?v=b143"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b141"></script>
-<script src="../estimator/model.js?v=b141"></script>
-<script src="../estimator/wordset.js?v=b141"></script>
-<script src="../estimator/bip39crypto.js?v=b141"></script>
-<script src="../estimator/electrum.js?v=b141"></script>
-<script src="../estimator/gpucrack.js?v=b141"></script>
-<script src="../estimator/i18n.js?v=b141"></script>
+<script src="../estimator/bip39.js?v=b143"></script>
+<script src="../estimator/model.js?v=b143"></script>
+<script src="../estimator/wordset.js?v=b143"></script>
+<script src="../estimator/bip39crypto.js?v=b143"></script>
+<script src="../estimator/electrum.js?v=b143"></script>
+<script src="../estimator/gpucrack.js?v=b143"></script>
+<script src="../estimator/i18n.js?v=b143"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -305,8 +305,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b141';
-const APP_VERSION = 'b141';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b143';
+const APP_VERSION = 'b143';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -782,7 +782,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b141' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b143' } });
     RXE.registerDict('bip39', englishWords);
     registered.set('bip39', englishWords.length);
     // Aliases so older patterns/links keep resolving: [:bip39-en:] / [:bip39en:] / [:en:] / [:english:].
@@ -1683,9 +1683,21 @@ async function startBloomCrack(){
   const hexMap=new Map();                       // hex -> context, for HIT lookup
   let sent=0, finished=false, workers=[]; const unacked=[], MAXINFLIGHT=16, FRAME=2000, t0=performance.now();
   const cleanup=()=>{ try{if(_progTimer){clearInterval(_progTimer);_progTimer=null;}}catch(_){} try{set.free();}catch(_){} try{ if(ws){ ws.onclose=null; ws.close(); } }catch(_){} workers.forEach(w=>{try{w.terminate();}catch(_){}}); cracking=false; };
-  const showHit=(ctx)=>{ finished=true;   // mode/passFixed/mnFixed are run-constants (closure), not stored per program
+  // Report a HIT -- but ONLY after re-deriving the program on the CPU and confirming
+  // it matches the hex the server flagged. A recovery tool must never announce a
+  // wallet it can't reproduce: a wrong GPU seed (seen on some mobile GPUs for
+  // >128-byte / 24-word mnemonics) would otherwise send a bad program that hits the
+  // filter, and we'd display the mnemonic's *real* (unrelated) address. Returns
+  // true only for a verified hit; false rejects it and the search continues.
+  const showHit=(ctx, hitHex)=>{   // mode/passFixed/mnFixed are run-constants (closure), not stored per program
     const seed = mode==='words' ? C.mnemonicToSeed(ctx.cand,passFixed) : C.mnemonicToSeed(mnFixed,ctx.cand);
     const tg=C.addressTarget(seed,ctx.purpose,0,0,ctx.change,ctx.idx), addr=C.encodeAddress(tg);
+    const progHex=C.toHex(tg.program);
+    if(hitHex && progHex.toLowerCase()!==String(hitHex).toLowerCase()){   // UNVERIFIABLE -> reject (do not finish, do not display)
+      _falsePos++; try{ console.warn('[bloom] rejected unverifiable HIT: server '+hitHex+' != CPU re-derive '+progHex+' for "'+ctx.cand+'"'); }catch(_){}
+      return false;
+    }
+    finished=true;
     const path=`m/${ctx.purpose}'/0'/0'/${ctx.change}/${ctx.idx}`;
     const mnShown = mode==='words' ? ctx.cand : mnFixed;
     const passShown = mode==='passphrase' ? ctx.cand : passFixed;
@@ -1695,7 +1707,7 @@ async function startBloomCrack(){
       +(passShown?'<div class="note">'+esc(t('crackPlusPass'))+' '+esc(passShown)+'</div>':'')
       +'<div class="note" style="margin-top:4px">⚠ verify against your own wallet before trusting.</div>';
     _logStopRun({ outcome:'found', address:addr, path, mnemonic:mnShown, passphrase:passShown||'' });
-    cleanup(); setEndButtons();
+    cleanup(); setEndButtons(); return true;
   };
   const abort=(reason)=>{ if(finished) return; finished=true; if(reason) msg.textContent=reason; prog.textContent=''; _logStopRun({outcome:'unavailable'}); cleanup(); setEndButtons(); };
   // Reconnect-on-drop: a socket close that ISN'T a manual Stop/finish schedules a
@@ -1712,13 +1724,13 @@ async function startBloomCrack(){
       for(const h of unacked){ try{ ws.send(h.join('\n')); }catch(_){} }   // re-send in-flight frames after a drop
       if(!sweepStarted){ sweepStarted=true; runSweep(); } };
     ws.onmessage=(ev)=>{ for(const ln of String(ev.data).split('\n')){ if(!ln) continue;
-      if(ln.startsWith('HIT ')){ const ctx=hexMap.get(ln.slice(4).trim()); if(ctx && !finished){ showHit(ctx); return; } }
+      if(ln.startsWith('HIT ')){ const hh=ln.slice(4).trim(); const ctx=hexMap.get(hh); if(ctx && !finished){ if(showHit(ctx, hh)) return; } }   // verified hit stops; an unverifiable one is rejected and we keep going
       else if(ln.startsWith('ACK ')){ const f=unacked.shift(); if(f){ ackedProgs+=f.length; for(const h of f) hexMap.delete(h); } } } };   // one ACK per frame (in order): count programs + prune the now-processed hexes (HIT always precedes its frame's ACK, so this is safe and keeps hexMap bounded to the in-flight window)
     ws.onerror=()=>{};                                     // onclose drives teardown/reconnect
     ws.onclose=()=>{ connected=false; if(finished||_crackAbort||!cracking) return; reconnect(); }; };
   const waitSendable=async()=>{ while((paused || !connected || unacked.length>=MAXINFLIGHT) && cracking && !finished) await new Promise(r=>setTimeout(r,5)); };
   const sendFrame=(h)=>{ if(!h.length) return; try{ ws.send(h.join('\n')); }catch(_){} unacked.push(h); sent+=h.length; };
-  let swept=0, dispatched=0, derived=0, hashed=0, validSwept=0, ackedProgs=0;
+  let swept=0, dispatched=0, derived=0, hashed=0, validSwept=0, ackedProgs=0, _falsePos=0;
   // Progress is PACED TO THE WEBSOCKET STREAM, not to the bursty EC-batch completions:
   // the server ACKs each frame as it processes it, so ackedProgs/(programs-per-candidate)
   // is the true count of candidates confirmed checked end-to-end. A 100ms timer drives
@@ -1889,8 +1901,9 @@ async function startBloomCrack(){
       // ACKs (bounded so a lost worker can't hang us).
       const tD=performance.now(); while(!finished && cracking && useWorkers && ecInFlight>0 && performance.now()-tD<60000) await new Promise(r=>setTimeout(r,10));
       const tE=performance.now(); while(unacked.length>0 && !finished && cracking && performance.now()-tE<30000) await new Promise(r=>setTimeout(r,20));
-      if(!finished){ finished=true; _logStopRun({outcome:_crackAbort?'stopped':'exhausted'}); cleanup();
-        res.innerHTML='<span class="note">'+esc(t(_crackAbort?'crackStopped':'bloomNoMatch'))+'</span>';
+      if(!finished){ finished=true; _logStopRun({outcome:_crackAbort?'stopped':'exhausted', rejected_unverifiable:_falsePos||''}); cleanup();
+        res.innerHTML='<span class="note">'+esc(t(_crackAbort?'crackStopped':'bloomNoMatch'))+'</span>'
+          +(_falsePos>0 ? '<div class="warnmsg" style="margin-top:6px">'+esc(t('bloomRejected').replace('%n',_falsePos))+'</div>' : '');
         setEndButtons(); _crackAbort=false; }
     }
   // Open the first connection; wireWs() drives onopen -> runSweep, and onclose ->
