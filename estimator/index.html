@@ -286,17 +286,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b143"></script>
-<script src="../wasm/rxecore_api.js?v=b143"></script>
+<script src="../wasm/rxecore.js?v=b144"></script>
+<script src="../wasm/rxecore_api.js?v=b144"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b143"></script>
-<script src="../estimator/model.js?v=b143"></script>
-<script src="../estimator/wordset.js?v=b143"></script>
-<script src="../estimator/bip39crypto.js?v=b143"></script>
-<script src="../estimator/electrum.js?v=b143"></script>
-<script src="../estimator/gpucrack.js?v=b143"></script>
-<script src="../estimator/i18n.js?v=b143"></script>
+<script src="../estimator/bip39.js?v=b144"></script>
+<script src="../estimator/model.js?v=b144"></script>
+<script src="../estimator/wordset.js?v=b144"></script>
+<script src="../estimator/bip39crypto.js?v=b144"></script>
+<script src="../estimator/electrum.js?v=b144"></script>
+<script src="../estimator/gpucrack.js?v=b144"></script>
+<script src="../estimator/i18n.js?v=b144"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -305,8 +305,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b143';
-const APP_VERSION = 'b143';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b144';
+const APP_VERSION = 'b144';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -782,7 +782,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b143' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b144' } });
     RXE.registerDict('bip39', englishWords);
     registered.set('bip39', englishWords.length);
     // Aliases so older patterns/links keep resolving: [:bip39-en:] / [:bip39en:] / [:en:] / [:english:].
@@ -1664,7 +1664,14 @@ async function startBloomCrack(){
   const _pmap={bip44:44,bip49:49,bip84:84,bip86:86};
   const PURPOSES=$$('#purposes input').filter(c=>c.checked).map(c=>_pmap[c.dataset.p]).filter(x=>x!==undefined);
   if(!PURPOSES.length){ set.free(); msg.textContent=t('bloomNoPurpose'); return; }
-  const gpu = segVal('#backendSeg','data-b')==='gpu' && window.GpuCrack && navigator.gpu && mode==='words';
+  let gpu = segVal('#backendSeg','data-b')==='gpu' && window.GpuCrack && navigator.gpu && mode==='words';
+  // ⭐ Trust the GPU for seeding ONLY if it passes a byte-exact self-test vs the CPU
+  // (some GPUs/drivers miscompute the WGSL seed, esp. the >128-byte path -> corrupt
+  // results). On failure, fall back to CPU seeds (correct everywhere) and tell the user.
+  if(gpu && window.GpuCrack.verifySeeds){
+    let ok=true; try{ ok=await window.GpuCrack.verifySeeds(); }catch(e){ ok=false; }
+    if(!ok){ gpu=false; try{ msg.textContent=t('bloomGpuBad'); }catch(_){} }
+  }
   // Same-origin by default (prod: bundle + WS served from one origin). window.__BLOOM_WS
   // is a DEV-ONLY override to point at a cross-origin dev server; honored only on
   // localhost so a production page can never be redirected to send programs elsewhere.
