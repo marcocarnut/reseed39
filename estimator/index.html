@@ -286,17 +286,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b154"></script>
-<script src="../wasm/rxecore_api.js?v=b154"></script>
+<script src="../wasm/rxecore.js?v=b155"></script>
+<script src="../wasm/rxecore_api.js?v=b155"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b154"></script>
-<script src="../estimator/model.js?v=b154"></script>
-<script src="../estimator/wordset.js?v=b154"></script>
-<script src="../estimator/bip39crypto.js?v=b154"></script>
-<script src="../estimator/electrum.js?v=b154"></script>
-<script src="../estimator/gpucrack.js?v=b154"></script>
-<script src="../estimator/i18n.js?v=b154"></script>
+<script src="../estimator/bip39.js?v=b155"></script>
+<script src="../estimator/model.js?v=b155"></script>
+<script src="../estimator/wordset.js?v=b155"></script>
+<script src="../estimator/bip39crypto.js?v=b155"></script>
+<script src="../estimator/electrum.js?v=b155"></script>
+<script src="../estimator/gpucrack.js?v=b155"></script>
+<script src="../estimator/i18n.js?v=b155"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -305,8 +305,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b154';
-const APP_VERSION = 'b154';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b155';
+const APP_VERSION = 'b155';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -782,7 +782,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b154' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b155' } });
     RXE.registerDict('bip39', englishWords);
     registered.set('bip39', englishWords.length);
     // Aliases so older patterns/links keep resolving: [:bip39-en:] / [:bip39en:] / [:en:] / [:english:].
@@ -1854,7 +1854,13 @@ async function startBloomCrack(){
       // whole search. Allow up to nW-1 sweepers (leave >=1 for EC); the ACC_CAP
       // backpressure + the consumer's demand for workers balance sweep-vs-EC per
       // pattern (dense patterns fill acc fast -> sweepers back off -> workers do EC).
-      const SWEEP_MAX = Math.max(1, nW-1);
+      // Cap sweep at nW-2 so EC ALWAYS has >=2 workers. The [mainprof] runs proved 1 EC
+      // worker (~3400/s) is the ceiling that pinned us -- BELOW both the sweep capacity
+      // (~770/s/worker) and the GPU PBKDF2 seed ceiling (~4-6k/s, the real irreducible wall).
+      // The bottleneck shifts (EC when the GPU is fast, sweep/GPU when it throttles), so no
+      // single queue signal auto-balances it; a structural EC floor of 2 does. The seededQ
+      // controller below still trims sweep further for dense (EC-heavy) patterns.
+      const SWEEP_MAX = Math.max(1, nW-2);
       const PPC = Math.max(1, PURPOSES.length*changes.length*gap);  // programs per candidate
       const BACKLOG = 16384;   // cap how far EC may run ahead of server-confirmed candidates: bounds the parked-send backlog (memory) + throttles EC to the sustainable send/ACK rate
       const SEED_MIN = 1024;   // seed a PARTIAL batch this small rather than let EC starve when the sweep is the bottleneck (sparse checksum) -- GPU at 1k still outpaces such a sweep
@@ -1885,7 +1891,7 @@ async function startBloomCrack(){
         // worker (rate spikes to 5k while it drains, then sweep floods back -> violent
         // oscillation, worse with more cores). sweepTarget adapts SLOWLY (±1 every 400ms,
         // with a dead zone) toward the backlog: low acc -> more sweepers; high acc -> more EC.
-        let sweepTarget=Math.max(1, Math.min(SWEEP_MAX, nW>>1)), _lastAdapt=performance.now();
+        let sweepTarget=SWEEP_MAX, _lastAdapt=performance.now();   // start at the sweep-bound optimum (EC floor already reserved); controller trims down only if seededQ backs up
         // [mainprof] event-loop lag sampler (a 20ms self-rescheduling timer; how late it
         // fires = main-thread saturation) + a 1s logger. seededQ/acc/idle depths tell us
         // starvation (empty) vs backpressure (full) at the moment we sample.
@@ -1895,7 +1901,7 @@ async function startBloomCrack(){
           setTimeout(_tick,20);
           const _log=()=>{ if(!cracking||finished) return; const now=performance.now(), dt=now-_pfLast; _pfLast=now;
             const avgLag=_pf.lagN?(_pf.lagSum/_pf.lagN):0;
-            console.log(`[mainprof] loopLag avg=${avgLag.toFixed(1)}ms max=${_pf.lagMax.toFixed(0)}ms || gpuSeed=${_pf.gpuSeed.toFixed(0)}ms(${_pf.gpuN}x) wsSend=${_pf.wsSend.toFixed(0)}ms onMsg=${_pf.onMsg.toFixed(0)}ms ecPost=${_pf.ecPost.toFixed(0)}ms swAcc=${_pf.swAcc.toFixed(0)}ms /${dt.toFixed(0)}ms || seededQ=${seededQ.length} acc=${acc.length} idle=${idle.length}/${workers.length} sweepTgt=${sweepTarget} inflight(sw=${sweepInFlight},ec=${ecInFlight})`);
+            console.log(`[mainprof ${APP_VERSION}] loopLag avg=${avgLag.toFixed(1)}ms max=${_pf.lagMax.toFixed(0)}ms || gpuSeed=${_pf.gpuSeed.toFixed(0)}ms(${_pf.gpuN}x) wsSend=${_pf.wsSend.toFixed(0)}ms onMsg=${_pf.onMsg.toFixed(0)}ms ecPost=${_pf.ecPost.toFixed(0)}ms swAcc=${_pf.swAcc.toFixed(0)}ms /${dt.toFixed(0)}ms || seededQ=${seededQ.length} acc=${acc.length} idle=${idle.length}/${workers.length} sweepTgt=${sweepTarget} inflight(sw=${sweepInFlight},ec=${ecInFlight})`);
             _pf.gpuSeed=_pf.wsSend=_pf.onMsg=_pf.ecPost=_pf.swAcc=_pf.lagSum=0; _pf.gpuN=_pf.lagN=0; _pf.lagMax=0;
             if(cracking&&!finished) setTimeout(_log,1000); };
           setTimeout(_log,1000);
