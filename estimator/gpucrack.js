@@ -782,7 +782,38 @@ const _SEEDTEST = [
   'letter advice cage absurd amount doctor acoustic avoid letter advice cage above',                                         // 12w
   'trial ability gloom dragon try dirt rapid crawl soon fatal tool chronic rapid ladder salmon palace expect enrich helmet truth receive mercy horror arrow',   // 24w, 152B (>128 -> key pre-hash)
   'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art' ];   // 24w, 187B (>128 -> key pre-hash)
+// Make the DESKTOP seed chunk adaptive instead of a fixed 1024. Time two reference
+// sizes to separate the fixed per-submit cost from the per-lane cost, then pick the
+// largest chunk whose single dispatch stays under a display-safe budget -- well under
+// the OS TDR watchdog AND leaving the compositor headroom (_seedDepth=2 keeps ~2 such
+// submits queued). This spans the whole desktop range from one probe: a fast discrete
+// GPU (RTX) -> a big chunk (few submits, high throughput); a slow integrated GPU that
+// also drives the display (Arc) -> a small chunk (no watchdog trip). Mobile keeps its
+// own crash-recovery probe; a manual override (_seedChunkN / setDeskChunk) wins over both.
+let _deskProbed = false;
+const _DESK_BUDGET_MS = 350;
+function _deskProbeBatch(cn){ return new Array(cn).fill(_SEEDTEST[2]); }   // 24w/152B: the heavy 2-block key-prehash path (conservative)
+async function _calibrateDeskChunk(){
+  if(_deskProbed || _isMobile || _seedChunkN>0) return;   // one shot; mobile probe / manual override take precedence
+  _deskProbed = true;                                     // set first: even a throw leaves the safe default in place
+  try{
+    const time1=async(cn)=>{ const save=_deskChunk; _deskChunk=cn;   // force ONE submit of exactly cn lanes
+      const b=_deskProbeBatch(cn), t0=performance.now(); await gpuSeedsWords(b,''); const dt=performance.now()-t0; _deskChunk=save; return dt; };
+    await time1(64);                                                 // warm (clock ramp) -- discard
+    const A=256, B=1024;
+    const tA=Math.min(await time1(A), await time1(A));              // best-of-2 to drop scheduler jitter
+    const tB=Math.min(await time1(B), await time1(B));
+    const perLane=Math.max(1e-4, (tB-tA)/(B-A));                    // ms/lane (slope)
+    const fixed=Math.max(0, tA - A*perLane);                        // ms fixed per submit (intercept)
+    let chunk=Math.floor((_DESK_BUDGET_MS - fixed)/perLane);
+    chunk=Math.max(256, Math.min(1<<20, chunk));
+    chunk-=chunk%64;                                                // whole workgroups (WG=64)
+    _deskChunk=Math.max(64,chunk);
+    try{ console.log('[gpucrack] desktop seed chunk auto-set to '+_deskChunk+' lanes (fixed~'+fixed.toFixed(0)+'ms + '+perLane.toFixed(3)+'ms/lane, budget '+_DESK_BUDGET_MS+'ms/submit)'); }catch(_){}
+  }catch(e){ try{ console.warn('[gpucrack] desk-chunk probe failed, keeping '+_deskChunk+':', (e&&e.message)||e); }catch(_){} }
+}
 async function verifySeeds(){
+  try{ await _calibrateDeskChunk(); }catch(_){}   // size the desktop dispatch before the first real crack (desktop only; self-guarded)
   if(_seedTrust!==null) return _seedTrust;
   try{ const r=await gateWords(_SEEDTEST,''); _seedTrust = r.every(x=>x.ok);
     if(!_seedTrust){ try{ console.warn('[gpucrack] GPU seed self-test FAILED (this device miscomputes WGSL seeds):', r.filter(x=>!x.ok).map(x=>x.len+'B')); }catch(_){} } }
