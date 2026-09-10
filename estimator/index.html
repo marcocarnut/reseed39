@@ -286,17 +286,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b150"></script>
-<script src="../wasm/rxecore_api.js?v=b150"></script>
+<script src="../wasm/rxecore.js?v=b151"></script>
+<script src="../wasm/rxecore_api.js?v=b151"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b150"></script>
-<script src="../estimator/model.js?v=b150"></script>
-<script src="../estimator/wordset.js?v=b150"></script>
-<script src="../estimator/bip39crypto.js?v=b150"></script>
-<script src="../estimator/electrum.js?v=b150"></script>
-<script src="../estimator/gpucrack.js?v=b150"></script>
-<script src="../estimator/i18n.js?v=b150"></script>
+<script src="../estimator/bip39.js?v=b151"></script>
+<script src="../estimator/model.js?v=b151"></script>
+<script src="../estimator/wordset.js?v=b151"></script>
+<script src="../estimator/bip39crypto.js?v=b151"></script>
+<script src="../estimator/electrum.js?v=b151"></script>
+<script src="../estimator/gpucrack.js?v=b151"></script>
+<script src="../estimator/i18n.js?v=b151"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -305,8 +305,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b150';
-const APP_VERSION = 'b150';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b151';
+const APP_VERSION = 'b151';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -782,7 +782,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b150' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b151' } });
     RXE.registerDict('bip39', englishWords);
     registered.set('bip39', englishWords.length);
     // Aliases so older patterns/links keep resolving: [:bip39-en:] / [:bip39en:] / [:en:] / [:english:].
@@ -1883,9 +1883,14 @@ async function startBloomCrack(){
         // it only briefly borrows workers from EC, and backs off once the backlog is deep.
         const sweeper=async()=>{ while(cracking && !finished && !sweepDone){
           const _now=performance.now();
-          if(_now-_lastAdapt>400){ _lastAdapt=_now;   // slow, dead-zoned rebalance (no thrash)
-            if(acc.length < SEED_BATCH && sweepTarget < SWEEP_MAX) sweepTarget++;
-            else if(acc.length > ACC_CAP-SEED_BATCH && sweepTarget > 1) sweepTarget--; }
+          if(_now-_lastAdapt>400){ _lastAdapt=_now;   // slow rebalance toward the bottleneck (no thrash)
+            // Signal = SPARE WORKER CAPACITY, not acc level: if acc is piling toward the
+            // cap, EC is behind -> give it a worker; otherwise, if workers are sitting idle
+            // (EC keeping up easily), the sweep is the wall -> give it a worker. This climbs
+            // to the split where both pools are busy (acc stops draining), instead of parking
+            // EC workers idle while the sweep starves.
+            if(acc.length > ACC_CAP-SEED_BATCH){ if(sweepTarget>1) sweepTarget--; }
+            else if(idle.length>0 && sweepTarget<SWEEP_MAX) sweepTarget++; }
           if(paused || !connected || acc.length>=ACC_CAP || idle.length===0 || sweepInFlight>=sweepTarget){ await new Promise(r=>setTimeout(r,4)); continue; }
           const s=sweepCursor, nn=Math.min(SWEEP_CH, total-s); sweepCursor+=nn; if(sweepCursor>=total) sweepDone=true;
           const w=idle.shift(); sweepInFlight++;
