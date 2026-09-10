@@ -30,7 +30,15 @@ const _isMobile = (function(){ try{
 // extra submits (compute overlaps readback), so the throughput cost is small. A discrete
 // GPU with no display duty can raise it via setDeskChunk / _seedChunkN for max speed.
 let _deskChunk = 1024;
-const _DESK_BUDGET_MS = 350;   // target GPU time PER SUBMIT: well under the ~2s TDR watchdog (with ~2x thermal headroom) and short enough to keep the compositor responsive
+// Target GPU time PER SUBMIT. The chunk is steered so each dispatch lands near this.
+// It is NOT a smoothness knob -- it must sit as HIGH as the TDR watchdog safely allows:
+// too LOW forces tiny chunks whose per-submit readback/turnaround overhead isn't hidden,
+// which cratered throughput ~2.5x (a 350ms budget gave 820/s vs ~2000/s whole-batch).
+// The Arc tripped TDR only at whole-batch ~1200-1470ms/submit, so ~700ms keeps chunks
+// large (throughput) while the runtime adapt still shrinks them as the GPU heats, staying
+// clear of the watchdog. Live-tunable via setSeedBudget()/window.__SEED_BUDGET_MS.
+let _deskBudgetMs = (function(){ try{ const v=+(window.__SEED_BUDGET_MS); return (v>=100&&v<=1900)?v:700; }catch(e){ return 700; } })();
+function _setSeedBudget(ms){ ms=+ms; if(ms>=100 && ms<=1900){ _deskBudgetMs=ms; _deskProbed=false; try{ console.log('[gpucrack] seed budget -> '+ms+'ms/submit (will re-probe)'); }catch(_){} } }
 let _deskSubMs = 0;            // EMA of the MEASURED per-submit GPU time -- the runtime signal that steers _deskChunk
 let _deskAdaptLog = 0;
 let _deskProbing = false;     // true only during the one-shot cold probe (suppresses runtime adaptation)
@@ -47,11 +55,11 @@ function _deskAdapt(chunkUsed, dts){
   const s=(dts.length>1?dts.slice(1):dts).slice().sort((a,b)=>a-b);   // drop the ramp sample; median is robust to per-submit jitter
   const med=s[s.length>>1]; if(!(med>0)) return;
   _deskSubMs = _deskSubMs>0 ? _deskSubMs*0.6+med*0.4 : med;           // EMA
-  const ratio=_DESK_BUDGET_MS/_deskSubMs;                             // >1 => faster than budget (room to grow); <1 => slower (must shrink)
+  const ratio=_deskBudgetMs/_deskSubMs;                             // >1 => faster than budget (room to grow); <1 => slower (must shrink)
   if(ratio<0.85 || ratio>1.4){                                       // dead zone avoids thrash; shrink eagerly (TDR), grow lazily
     let nc=Math.round(chunkUsed*ratio); nc=Math.max(256, Math.min(1<<20, nc)); nc-=nc%64; nc=Math.max(64,nc);
     if(nc!==_deskChunk){ _deskChunk=nc;
-      try{ const now=performance.now(); if(now-_deskAdaptLog>3000){ _deskAdaptLog=now; console.log('[gpucrack] desk chunk -> '+nc+' lanes (per-submit ~'+_deskSubMs.toFixed(0)+'ms, budget '+_DESK_BUDGET_MS+'ms)'); } }catch(_){}
+      try{ const now=performance.now(); if(now-_deskAdaptLog>3000){ _deskAdaptLog=now; console.log('[gpucrack] desk chunk -> '+nc+' lanes (per-submit ~'+_deskSubMs.toFixed(0)+'ms, budget '+_deskBudgetMs+'ms)'); } }catch(_){}
     }
   }
 }
@@ -831,11 +839,11 @@ async function _calibrateDeskChunk(){
     const tB=Math.min(await time1(B), await time1(B));
     const perLane=Math.max(1e-4, (tB-tA)/(B-A));                    // ms/lane (slope)
     const fixed=Math.max(0, tA - A*perLane);                        // ms fixed per submit (intercept)
-    let chunk=Math.floor((_DESK_BUDGET_MS - fixed)/perLane);
+    let chunk=Math.floor((_deskBudgetMs - fixed)/perLane);
     chunk=Math.max(256, Math.min(1<<20, chunk));
     chunk-=chunk%64;                                                // whole workgroups (WG=64)
     _deskChunk=Math.max(64,chunk);
-    try{ console.log('[gpucrack] desktop seed chunk auto-set to '+_deskChunk+' lanes (fixed~'+fixed.toFixed(0)+'ms + '+perLane.toFixed(3)+'ms/lane, budget '+_DESK_BUDGET_MS+'ms/submit)'); }catch(_){}
+    try{ console.log('[gpucrack] desktop seed chunk auto-set to '+_deskChunk+' lanes (fixed~'+fixed.toFixed(0)+'ms + '+perLane.toFixed(3)+'ms/lane, budget '+_deskBudgetMs+'ms/submit)'); }catch(_){}
   }catch(e){ try{ console.warn('[gpucrack] desk-chunk probe failed, keeping '+_deskChunk+':', (e&&e.message)||e); }catch(_){} }
   finally{ _deskProbing = false; }
 }
@@ -855,6 +863,7 @@ window.GpuCrack = { initGpu, gpuSeeds, benchmark, crackXpub, crackAddress, MAXSA
   setSeedChunk:_setSeedChunk, getSeedChunk:()=>_seedChunkN,   // 0 = auto (mobile-aware)
   setMobChunk:_setMobChunk, getMobChunk:()=>_mobChunk,        // probe-chosen mobile lanes/dispatch
   setDeskChunk:_setDeskChunk, getDeskChunk:()=>_deskChunk,    // desktop lanes/submit (bounded for TDR safety on integrated/display GPUs)
+  setSeedBudget:_setSeedBudget, getSeedBudget:()=>_deskBudgetMs, getDeskSubMs:()=>_deskSubMs,   // live-tunable target ms/submit + the measured per-submit EMA
   setGpuLostCb:_setGpuLostCb,                                 // app hook: real device loss (watchdog reset)
   setMaxLen:_setMaxLen,                                       // EXPERIMENTAL ?maxlen: skip candidates longer than N chars
   getEffSeedChunk:_effChunk, isMobile:()=>_isMobile, setSeedDepth:_setSeedDepth,
