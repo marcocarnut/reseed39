@@ -30,8 +30,31 @@ const _isMobile = (function(){ try{
 // extra submits (compute overlaps readback), so the throughput cost is small. A discrete
 // GPU with no display duty can raise it via setDeskChunk / _seedChunkN for max speed.
 let _deskChunk = 1024;
-function _setDeskChunk(n){ n=n|0; if(n>0) _deskChunk = Math.max(64, Math.min(1<<20, n)); }
+const _DESK_BUDGET_MS = 350;   // target GPU time PER SUBMIT: well under the ~2s TDR watchdog (with ~2x thermal headroom) and short enough to keep the compositor responsive
+let _deskSubMs = 0;            // EMA of the MEASURED per-submit GPU time -- the runtime signal that steers _deskChunk
+let _deskAdaptLog = 0;
+let _deskProbing = false;     // true only during the one-shot cold probe (suppresses runtime adaptation)
+function _setDeskChunk(n){ n=n|0; if(n>0){ _deskChunk = Math.max(64, Math.min(1<<20, n)); } }
 function _effChunk(){ return _seedChunkN>0 ? _seedChunkN : (_isMobile ? _mobChunk : _deskChunk); }
+// Runtime-adaptive desktop chunk. A cold one-shot probe can't see THERMAL THROTTLING
+// (an Arc iGPU slows ~2x as it heats), so we also steer _deskChunk from the real
+// per-submit GPU time measured DURING the crack, holding each dispatch near the budget:
+// per-submit slower than budget -> shrink (stay clear of the watchdog); comfortably
+// faster -> grow (chase throughput on a fast discrete GPU). Desktop only; a manual
+// override (_seedChunkN) or mobile's own probe takes precedence.
+function _deskAdapt(chunkUsed, dts){
+  if(_deskProbing || _isMobile || _seedChunkN>0 || !dts || !dts.length) return;   // don't let the one-shot probe's forced sizes pollute the runtime EMA
+  const s=(dts.length>1?dts.slice(1):dts).slice().sort((a,b)=>a-b);   // drop the ramp sample; median is robust to per-submit jitter
+  const med=s[s.length>>1]; if(!(med>0)) return;
+  _deskSubMs = _deskSubMs>0 ? _deskSubMs*0.6+med*0.4 : med;           // EMA
+  const ratio=_DESK_BUDGET_MS/_deskSubMs;                             // >1 => faster than budget (room to grow); <1 => slower (must shrink)
+  if(ratio<0.85 || ratio>1.4){                                       // dead zone avoids thrash; shrink eagerly (TDR), grow lazily
+    let nc=Math.round(chunkUsed*ratio); nc=Math.max(256, Math.min(1<<20, nc)); nc-=nc%64; nc=Math.max(64,nc);
+    if(nc!==_deskChunk){ _deskChunk=nc;
+      try{ const now=performance.now(); if(now-_deskAdaptLog>3000){ _deskAdaptLog=now; console.log('[gpucrack] desk chunk -> '+nc+' lanes (per-submit ~'+_deskSubMs.toFixed(0)+'ms, budget '+_DESK_BUDGET_MS+'ms)'); } }catch(_){}
+    }
+  }
+}
 function _setSeedChunk(n){ n=n|0; _seedChunkN = n>0 ? Math.max(64, Math.min(1<<20, n)) : 0; }
 let _seedDepth = 2;   // submits kept in flight; harmless (1 submit on desktop), a mild hedge on mobile
 function _setSeedDepth(n){ _seedDepth = Math.max(1, Math.min(8, n|0)); }
@@ -64,14 +87,17 @@ async function _pipelineSeeds(dev, pipe, m, mkChunk, writeChunk){
     return { base, cn, stg, mp, temps:temps.concat(oBuf) };
   };
   const inflight=[]; let next=0;
+  const _dt=[]; let _prevC=performance.now();   // completion intervals ~= per-submit GPU time (steady-state, DEPTH pipelined) -> feeds _deskAdapt
   while(next<m && inflight.length<DEPTH){ inflight.push(submit(next)); next+=CHUNK; }
   while(inflight.length){
     const cur=inflight.shift(); await cur.mp;
+    const _now=performance.now(); _dt.push(_now-_prevC); _prevC=_now;
     const words=new Uint32Array(cur.stg.getMappedRange().slice(0)); cur.stg.unmap();
     writeChunk(cur.base, cur.cn, words);
     cur.temps.forEach(b=>b.destroy&&b.destroy()); if(cur.stg.destroy) cur.stg.destroy();
     if(next<m){ inflight.push(submit(next)); next+=CHUNK; }
   }
+  _deskAdapt(CHUNK, _dt);   // thermal-aware runtime steering of the desktop chunk (no-op on mobile / manual override)
 }
 // WGSL loader: the single-file SPA bundle inlines shaders on globalThis.__WGSL;
 // the served build fetches the sibling .wgsl. (A file:// page can't fetch, so
@@ -791,11 +817,11 @@ const _SEEDTEST = [
 // also drives the display (Arc) -> a small chunk (no watchdog trip). Mobile keeps its
 // own crash-recovery probe; a manual override (_seedChunkN / setDeskChunk) wins over both.
 let _deskProbed = false;
-const _DESK_BUDGET_MS = 350;
 function _deskProbeBatch(cn){ return new Array(cn).fill(_SEEDTEST[2]); }   // 24w/152B: the heavy 2-block key-prehash path (conservative)
 async function _calibrateDeskChunk(){
   if(_deskProbed || _isMobile || _seedChunkN>0) return;   // one shot; mobile probe / manual override take precedence
   _deskProbed = true;                                     // set first: even a throw leaves the safe default in place
+  _deskProbing = true;                                    // suppress runtime _deskAdapt while we drive forced sizes
   try{
     const time1=async(cn)=>{ const save=_deskChunk; _deskChunk=cn;   // force ONE submit of exactly cn lanes
       const b=_deskProbeBatch(cn), t0=performance.now(); await gpuSeedsWords(b,''); const dt=performance.now()-t0; _deskChunk=save; return dt; };
@@ -811,6 +837,7 @@ async function _calibrateDeskChunk(){
     _deskChunk=Math.max(64,chunk);
     try{ console.log('[gpucrack] desktop seed chunk auto-set to '+_deskChunk+' lanes (fixed~'+fixed.toFixed(0)+'ms + '+perLane.toFixed(3)+'ms/lane, budget '+_DESK_BUDGET_MS+'ms/submit)'); }catch(_){}
   }catch(e){ try{ console.warn('[gpucrack] desk-chunk probe failed, keeping '+_deskChunk+':', (e&&e.message)||e); }catch(_){} }
+  finally{ _deskProbing = false; }
 }
 async function verifySeeds(){
   try{ await _calibrateDeskChunk(); }catch(_){}   // size the desktop dispatch before the first real crack (desktop only; self-guarded)
