@@ -286,17 +286,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b153"></script>
-<script src="../wasm/rxecore_api.js?v=b153"></script>
+<script src="../wasm/rxecore.js?v=b154"></script>
+<script src="../wasm/rxecore_api.js?v=b154"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b153"></script>
-<script src="../estimator/model.js?v=b153"></script>
-<script src="../estimator/wordset.js?v=b153"></script>
-<script src="../estimator/bip39crypto.js?v=b153"></script>
-<script src="../estimator/electrum.js?v=b153"></script>
-<script src="../estimator/gpucrack.js?v=b153"></script>
-<script src="../estimator/i18n.js?v=b153"></script>
+<script src="../estimator/bip39.js?v=b154"></script>
+<script src="../estimator/model.js?v=b154"></script>
+<script src="../estimator/wordset.js?v=b154"></script>
+<script src="../estimator/bip39crypto.js?v=b154"></script>
+<script src="../estimator/electrum.js?v=b154"></script>
+<script src="../estimator/gpucrack.js?v=b154"></script>
+<script src="../estimator/i18n.js?v=b154"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -305,8 +305,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b153';
-const APP_VERSION = 'b153';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b154';
+const APP_VERSION = 'b154';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -782,7 +782,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b153' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b154' } });
     RXE.registerDict('bip39', englishWords);
     registered.set('bip39', englishWords.length);
     // Aliases so older patterns/links keep resolving: [:bip39-en:] / [:bip39en:] / [:en:] / [:english:].
@@ -1905,18 +1905,17 @@ async function startBloomCrack(){
         // it only briefly borrows workers from EC, and backs off once the backlog is deep.
         const sweeper=async()=>{ while(cracking && !finished && !sweepDone){
           const _now=performance.now();
-          if(_now-_lastAdapt>250){ _lastAdapt=_now;   // rebalance on the valid-candidate buffer (acc)
-            // acc IS the sweep-vs-consume signal. The [mainprof] data (b153) was decisive:
-            // the sweep (cheap unrank+checksum) over-produces so hard that acc balloons to
-            // thousands while EC (costly secp256k1) drains it with ONE worker -- EC is the
-            // bottleneck, not the sweep. So: acc piling up -> hand a worker to EC; acc
-            // draining toward empty -> add a sweeper. Step by 2 when far off the setpoint so
-            // it converges in ~1s (kills the start-up burst) instead of crawling ±1.
-            // (b151's "add a sweeper whenever a worker is idle" was exactly backwards -- it
-            // ratcheted sweepTarget to the max, starving EC; that's why nothing helped.)
-            const hi=SEED_BATCH*1.5, lo=SEED_BATCH*0.5;
-            if(acc.length>hi){ sweepTarget=Math.max(1, sweepTarget-(acc.length>SEED_BATCH*3?2:1)); }
-            else if(acc.length<lo){ sweepTarget=Math.min(SWEEP_MAX, sweepTarget+(acc.length<SEED_BATCH*0.1?2:1)); } }
+          if(_now-_lastAdapt>250){ _lastAdapt=_now;   // rebalance on the SEED QUEUE (the stable consumer-backlog signal)
+            // b153 balanced on acc, but acc sawtooths violently (each big GPU seed drains
+            // 4-8k in one lump, then sweep refills) -> the controller sampled the noise and
+            // yo-yo'd straight back to sweepTgt=7, starving EC. seededQ is the STABLE signal:
+            //  - seededQ backed up at its cap  => the GPU seeder is out-producing EC
+            //    (EC is the bottleneck) => move a worker EC-ward (fewer sweepers).
+            //  - seededQ empty AND acc low     => the seeder is starved for candidates
+            //    (sweep can't keep up)   => add a sweeper.
+            //  - seededQ mid (=1) => balanced, hold. Natural dead zone (opposite ends).
+            if(seededQ.length>=SEED_AHEAD-1){ if(sweepTarget>1) sweepTarget--; }
+            else if(seededQ.length===0 && acc.length<SEED_BATCH){ if(sweepTarget<SWEEP_MAX) sweepTarget++; } }
           if(paused || !connected || acc.length>=ACC_CAP || idle.length===0 || sweepInFlight>=sweepTarget){ await new Promise(r=>setTimeout(r,4)); continue; }
           const s=sweepCursor, nn=Math.min(SWEEP_CH, total-s); sweepCursor+=nn; if(sweepCursor>=total) sweepDone=true;
           const w=idle.shift(); sweepInFlight++;
