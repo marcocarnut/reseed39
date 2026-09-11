@@ -144,10 +144,7 @@
   .expl-validnav .ghost{flex:1 1 0;margin-top:0;padding:7px 4px;text-align:center;font-size:14px;line-height:1}
   .expl-view{flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;position:relative;border:1px solid var(--edge);border-radius:8px;background:#0c1120}
   .expl-row{box-sizing:border-box;padding:8px 12px;border-bottom:1px solid var(--edge)}
-  .expl-row.expandable{cursor:pointer}
-  .expl-row.expandable:hover{background:#0e1424}
   .expl-head{display:flex;align-items:center;gap:8px;margin-bottom:4px}
-  .expl-chev{color:var(--dim);font-size:10px;width:9px;display:inline-block;flex:0 0 auto}
   .expl-ix{font-family:var(--mono);font-size:11px;color:var(--dim)}
   .expl-badge{font-size:11px;font-weight:600}
   .expl-badge.ok{color:#4ec98a} .expl-badge.bad{color:#7d8aa8}
@@ -157,11 +154,11 @@
   .expl-row.bad{opacity:.5}
   .expl-row.bad .expl-mn{text-decoration:line-through;text-decoration-color:#7d8aa8}
   .expl-row.bad .expl-w.var{background:#4a5680;color:#c7d1ec}
-  /* derivation tree (Phase 2) */
-  .expl-tree{margin-top:8px;padding-top:8px;border-top:1px dashed var(--edge)}
+  /* derivation tree (always expanded) */
+  .expl-tree{margin-top:6px}
   .expl-leaf{display:flex;gap:8px;align-items:baseline;padding:3px 6px;border-radius:5px;font-family:var(--mono);font-size:11.5px;flex-wrap:wrap}
   .expl-path{color:var(--dim);white-space:nowrap;flex:0 0 auto}
-  .expl-addr{color:#9fb0d6;word-break:break-all;flex:1 1 180px;min-width:0}
+  .expl-addr{color:#22d3ee;word-break:break-all;flex:1 1 180px;min-width:0}
   .expl-leaf.hit{background:rgba(78,201,138,.16)}
   .expl-leaf.hit .expl-addr{color:#4ec98a;font-weight:600}
   .expl-leaf.hit .expl-path{color:#4ec98a}
@@ -339,17 +336,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b170"></script>
-<script src="../wasm/rxecore_api.js?v=b170"></script>
+<script src="../wasm/rxecore.js?v=b171"></script>
+<script src="../wasm/rxecore_api.js?v=b171"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b170"></script>
-<script src="../estimator/model.js?v=b170"></script>
-<script src="../estimator/wordset.js?v=b170"></script>
-<script src="../estimator/bip39crypto.js?v=b170"></script>
-<script src="../estimator/electrum.js?v=b170"></script>
-<script src="../estimator/gpucrack.js?v=b170"></script>
-<script src="../estimator/i18n.js?v=b170"></script>
+<script src="../estimator/bip39.js?v=b171"></script>
+<script src="../estimator/model.js?v=b171"></script>
+<script src="../estimator/wordset.js?v=b171"></script>
+<script src="../estimator/bip39crypto.js?v=b171"></script>
+<script src="../estimator/electrum.js?v=b171"></script>
+<script src="../estimator/gpucrack.js?v=b171"></script>
+<script src="../estimator/i18n.js?v=b171"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -358,8 +355,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b170';
-const APP_VERSION = 'b170';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b171';
+const APP_VERSION = 'b171';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -835,7 +832,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b170' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b171' } });
     RXE.registerDict('bip39', englishWords);
     registered.set('bip39', englishWords.length);
     // Aliases so older patterns/links keep resolving: [:bip39-en:] / [:bip39en:] / [:en:] / [:english:].
@@ -3160,7 +3157,7 @@ function _explCfg(){
 // -> address; the leaf matching the target (address mode) is highlighted. In
 // passphrase mode the candidate IS the passphrase (fixed mnemonic + it); otherwise
 // the candidate is the mnemonic (+ the fixed passphrase).
-function _explTree(idxKey, cand){
+function _explTreeInner(idxKey, cand){   // the leaves HTML only (the .expl-tree container lives in the card)
   if(_expl.cache.has(idxKey)) return _expl.cache.get(idxKey);
   const C=window.BIP39Crypto, cfg=_expl.cfg; let html;
   try{
@@ -3173,16 +3170,16 @@ function _explTree(idxKey, cand){
       let addr=''; try{ addr=C.encodeAddress(C.addressTarget(seed,p,a,cfg.coin,ch,i)); }catch(_){ addr='—'; }
       leaves.push({ path:`m/${p}'/${cfg.coin}'/${a}'/${ch}/${i}`, addr, hit: cfg.targetAddr && addr===cfg.targetAddr });
     }}}}
-    html='<div class="expl-tree">'+leaves.map(l=>`<div class="expl-leaf${l.hit?' hit':''}"><span class="expl-path">${esc(l.path)}</span><span class="expl-addr">${esc(l.addr)}${l.hit?' ✓':''}</span></div>`).join('')
-       + (more?`<div class="expl-more">+${more} ${esc(t('explMore'))}</div>`:'') + '</div>';
-  }catch(e){ html=`<div class="expl-tree"><div class="expl-more">${esc((e&&e.message)||'derive error')}</div></div>`; }
+    html=leaves.map(l=>`<div class="expl-leaf${l.hit?' hit':''}"><span class="expl-path">${esc(l.path)}</span><span class="expl-addr">${esc(l.addr)}${l.hit?' ✓':''}</span></div>`).join('')
+       + (more?`<div class="expl-more">+${more} ${esc(t('explMore'))}</div>`:'');
+  }catch(e){ html=`<div class="expl-more">${esc((e&&e.message)||'derive error')}</div>`; }
   _expl.cache.set(idxKey, html);
   return html;
 }
-function _explIxHtml(idx){   // middle-ellipsis huge indices, full value in a tooltip
+function _explIxHtml(idx){   // middle-ellipsis only past 30 DIGITS, full value in a tooltip
   const s=fmtBig(idx);
-  if(s.length<=18) return `<span class="expl-ix">#${s}</span>`;
-  return `<span class="expl-ix" title="#${esc(s)}">#${esc(s.slice(0,7))}…${esc(s.slice(-7))}</span>`;
+  if(idx.toString().length<=30) return `<span class="expl-ix">#${s}</span>`;
+  return `<span class="expl-ix" title="#${esc(s)}">#${esc(s.slice(0,9))}…${esc(s.slice(-9))}</span>`;
 }
 function _explCard(idx, str){
   const cv=_expl.checkValid;                          // show ✓/✗ + strike (checksum ON, words mode)
@@ -3192,14 +3189,13 @@ function _explCard(idx, str){
     inner=words.map((w,p)=>{ const isVar=_expl.mask?_expl.mask[p]:true;
       return `<span class="expl-w${isVar?' var':''}"${isVar?` title="${esc(t('explVarWord'))}"`:''}>${esc(w)}</span>`; }).join(' ');
   } else inner=`<span class="expl-w var">${esc(str)}</span>`;
-  const canExpand = !bad;   // everything the search actually tries derives addresses (all candidates when checksum is OFF)
+  const derivable = !bad;   // valid candidates (or all, when checksum is OFF) derive addresses -> always-shown tree
   const badge = cv ? (bad?`<span class="expl-badge bad" title="${esc(t('explInvalidCk'))}">✗</span>`
                         :`<span class="expl-badge ok" title="${esc(t('explValid'))}">✓</span>`) : '';
-  const chev = canExpand ? `<span class="expl-chev">▸</span>` : '';
-  const rowTitle = bad ? t('explInvalidCk') : (canExpand ? t('explTapExpand') : '');   // strike-throughs explain themselves on hover/tap
-  return `<div class="expl-row${bad?' bad':''}${canExpand?' expandable':''}" data-idx="${idx.toString()}"${rowTitle?` title="${esc(rowTitle)}"`:''}>`
-       + `<div class="expl-head">${chev}${_explIxHtml(idx)}${badge}</div>`
-       + `<div class="expl-mn">${inner}</div></div>`;
+  return `<div class="expl-row${bad?' bad':''}" data-idx="${idx.toString()}"${bad?` title="${esc(t('explInvalidCk'))}"`:''}>`
+       + `<div class="expl-head">${badge}${_explIxHtml(idx)}</div>`   // badge BEFORE the number
+       + `<div class="expl-mn">${inner}</div>`
+       + (derivable?`<div class="expl-tree pending"></div>`:'') + `</div>`;   // trees are always expanded; filled lazily (near-viewport)
 }
 function _explCardsHtml(start, cnt){
   const rows=_expl.set.unrankBatch?_expl.set.unrankBatch(start,cnt):null;
@@ -3223,20 +3219,45 @@ function _explWindow(start, want){
   _expl.winCount=Math.min(want, _EXPL_MAX, Number(room>BigInt(_EXPL_MAX)?BigInt(_EXPL_MAX):room));
   $('#explView').innerHTML=_explCardsHtml(_expl.winStart, _expl.winCount);
 }
+// Trees are ALWAYS expanded, but derived LAZILY for near-viewport cards only, so a
+// window of struck-heavy checksum-ON candidates stays instant and a checksum-OFF
+// (all-derivable) window fills progressively as you scroll instead of blocking.
+let _explFilling=false;
+async function _explFillTrees(){
+  if(!_expl || _explFilling) return; _explFilling=true;
+  try{ const view=$('#explView'); let guard=0;
+    while(_expl && guard++<4000){
+      const st=view.scrollTop, top=st-200, bot=st+view.clientHeight+500;
+      let target=null;
+      for(const el of view.querySelectorAll('.expl-tree.pending')){
+        const row=el.parentElement; if(!row) continue;
+        if(row.offsetTop>bot) break;                          // in DOM order; nothing more is near the viewport yet
+        if(row.offsetTop+row.offsetHeight<top) continue;      // scrolled past -> leave pending for later
+        target=el; break;
+      }
+      if(!target) break;
+      const row=target.parentElement, idxKey=row.dataset.idx;
+      let cand=null; try{ cand=_expl.set.unrank(BigInt(idxKey)); }catch(_){}
+      target.classList.remove('pending');
+      target.innerHTML = cand!=null ? _explTreeInner(idxKey, cand) : '';
+      await new Promise(r=>setTimeout(r,0));   // yield: paint + input between (heavy) seed derivations
+    }
+  } finally { _explFilling=false; }
+}
 function _explGoto(X){
   if(X<0n) X=0n; const hi=_expl.N>0n?_expl.N-1n:0n; if(X>hi) X=hi;
   const view=$('#explView'), PRE=8n;
   _explWindow(X-PRE, 8+_EXPL_BASE);
   const card=view.querySelector(`.expl-row[data-idx="${X.toString()}"]`);
   view.scrollTop = card ? card.offsetTop : 0;
-  _explSyncSlider(X);
+  _explSyncSlider(X); _explFillTrees();
 }
 function _explAppend(){
   if(!_expl||_expl.winCount>=_EXPL_MAX) return; const view=$('#explView');
   const next=_expl.winStart+BigInt(_expl.winCount); if(next>=_expl.N) return;
   const room=_expl.N-next, add=Math.min(_EXPL_GROW, _EXPL_MAX-_expl.winCount, Number(room>BigInt(_EXPL_GROW)?BigInt(_EXPL_GROW):room));
   if(add<=0) return;
-  view.insertAdjacentHTML('beforeend', _explCardsHtml(next, add)); _expl.winCount+=add;
+  view.insertAdjacentHTML('beforeend', _explCardsHtml(next, add)); _expl.winCount+=add; _explFillTrees();
 }
 function _explPrepend(){
   if(!_expl||_expl.winStart<=0n||_expl.winCount>=_EXPL_MAX) return; const view=$('#explView');
@@ -3246,6 +3267,7 @@ function _explPrepend(){
   view.insertAdjacentHTML('afterbegin', _explCardsHtml(newStart, add));
   _expl.winStart=newStart; _expl.winCount+=add;
   view.scrollTop = st + (view.scrollHeight-before);   // keep the viewport visually put
+  _explFillTrees();
 }
 // first valid at index>=from (fwd) / last valid at index<=from (bwd); null if none in the scan cap.
 function _explSeekFwd(from){ let cur=from<0n?0n:from, scanned=0; const CAP=300000,CH=4096;
@@ -3288,11 +3310,10 @@ function _explPpReadout(){
   el.title = s;
   const sl=$('#explPpSlider'); if(sl && document.activeElement!==sl){ sl.value=String(_expl.ppN>1n?Number(_expl.ppIdx*_EXPL_SLIDER_MAX/(_expl.ppN-1n)):0); }
 }
-function _explRefreshTrees(){   // passphrase changed -> re-derive any open trees for the new passphrase
-  _expl.cache.clear(); const view=$('#explView'); if(!view) return;
-  for(const row of view.querySelectorAll('.expl-row.expandable')){ const tree=row.querySelector('.expl-tree'); if(!tree) continue;
-    const idxKey=row.dataset.idx; let cand=null; try{ cand=_expl.set.unrank(BigInt(idxKey)); }catch(_){}
-    if(cand!=null) tree.outerHTML=_explTree(idxKey, cand); }
+function _explRefreshTrees(){   // passphrase changed -> re-derive all trees for the new passphrase (lazily)
+  if(!_expl) return; _expl.cache.clear(); const view=$('#explView'); if(!view) return;
+  for(const tree of view.querySelectorAll('.expl-tree')){ tree.innerHTML=''; tree.classList.add('pending'); }
+  _explFillTrees();
 }
 function _explPpGoto(idx){
   if(!_expl||!_expl.ppSet) return; let hi=_expl.ppN>0n?_expl.ppN-1n:0n;
@@ -3354,13 +3375,13 @@ function _wireExplorer(){
     .forEach(([id,which])=>{ const b=$('#'+id); if(b) b.onclick=()=>_explPpNav(which); });
   view.addEventListener('scroll',()=>{ if(!_expl) return;
     if(view.scrollTop+view.clientHeight >= view.scrollHeight-240) _explAppend();
-    else if(view.scrollTop < 80) _explPrepend(); });
-  // tap a valid card -> toggle its derivation tree in place (DOM surgery preserves scroll)
-  view.addEventListener('click',(e)=>{ if(!_expl) return; const row=e.target.closest('.expl-row.expandable'); if(!row) return;
-    const chev=row.querySelector('.expl-chev'), tree=row.querySelector('.expl-tree');
-    if(tree){ tree.remove(); if(chev) chev.textContent='▸'; }
-    else { const idxKey=row.dataset.idx; let mn=null; try{ mn=_expl.set.unrank(BigInt(idxKey)); }catch(_){}
-      if(mn!=null){ row.insertAdjacentHTML('beforeend', _explTree(idxKey, mn)); if(chev) chev.textContent='▾'; } } });
+    else if(view.scrollTop < 80) _explPrepend();
+    _explFillTrees();   // reveal trees as cards scroll into view
+  });
+  // trees are always expanded now; the only tap target is a middle-ellipsised index,
+  // which reveals its full value in place (title tooltips don't fire on mobile taps).
+  view.addEventListener('click',(e)=>{ const ix=e.target.closest('.expl-ix[title]'); if(!ix) return;
+    ix.textContent = ix.getAttribute('title'); ix.removeAttribute('title'); });
 }
 
 // ---------- dictionaries ----------
