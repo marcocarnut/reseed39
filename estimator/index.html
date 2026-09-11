@@ -286,17 +286,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b161"></script>
-<script src="../wasm/rxecore_api.js?v=b161"></script>
+<script src="../wasm/rxecore.js?v=b162"></script>
+<script src="../wasm/rxecore_api.js?v=b162"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b161"></script>
-<script src="../estimator/model.js?v=b161"></script>
-<script src="../estimator/wordset.js?v=b161"></script>
-<script src="../estimator/bip39crypto.js?v=b161"></script>
-<script src="../estimator/electrum.js?v=b161"></script>
-<script src="../estimator/gpucrack.js?v=b161"></script>
-<script src="../estimator/i18n.js?v=b161"></script>
+<script src="../estimator/bip39.js?v=b162"></script>
+<script src="../estimator/model.js?v=b162"></script>
+<script src="../estimator/wordset.js?v=b162"></script>
+<script src="../estimator/bip39crypto.js?v=b162"></script>
+<script src="../estimator/electrum.js?v=b162"></script>
+<script src="../estimator/gpucrack.js?v=b162"></script>
+<script src="../estimator/i18n.js?v=b162"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -305,8 +305,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b161';
-const APP_VERSION = 'b161';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b162';
+const APP_VERSION = 'b162';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -782,7 +782,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b161' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b162' } });
     RXE.registerDict('bip39', englishWords);
     registered.set('bip39', englishWords.length);
     // Aliases so older patterns/links keep resolving: [:bip39-en:] / [:bip39en:] / [:en:] / [:english:].
@@ -1696,13 +1696,11 @@ async function startBloomCrack(){
   // network ("flow to the slowest component"). cwnd also bounds the un-ACKed frame
   // buffer; it stays small on a slow link (fewer ACKs -> slower open). Reset per connect.
   let cwnd=16; const CWND_MAX=128, BUFCAP=1<<18;   // start at the old fixed window (never worse), open to 128; 256 KiB socket-buffer cap
-  // --- [mainprof] main-thread bottleneck profiler (DIAGNOSTIC; on by default, strip once we've read it) ---
-  // b153 (worker rebalance) made NO difference, and neither did 6->12 cores: the bottleneck
-  // is SERIAL -> the main thread itself. This measures where the main thread's wall-time goes
-  // and, crucially, the event-loop LAG (how late a 20ms timer fires = how saturated main is).
-  // Logs one line/sec to the console; wall-times of concurrent async stages can sum past the
-  // interval (they overlap) -- read them as relative dominance, and read loopLag as the verdict.
-  const _MAINPROF = !/[?&]mainprof=0/.test(location.search);
+  // --- [mainprof] main-thread bottleneck profiler (DIAGNOSTIC; OPT-IN via ?profiler=1|on|true) ---
+  // Measures where the main thread's wall-time goes plus the event-loop LAG (how late a 20ms
+  // timer fires = main saturation) and the live adaptive seed chunk/per-submit. OFF by default
+  // for shipped/public builds; enable per-run with ?profiler=1 (or on/true). Logs one line/sec.
+  const _MAINPROF = /[?&]profiler=(1|on|true)\b/i.test(location.search);
   const _pf={gpuSeed:0,gpuN:0,wsSend:0,onMsg:0,ecPost:0,swAcc:0,lagSum:0,lagN:0,lagMax:0};
   const cleanup=()=>{ try{if(_progTimer){clearInterval(_progTimer);_progTimer=null;}}catch(_){} try{set.free();}catch(_){} try{ if(ws){ ws.onclose=null; ws.close(); } }catch(_){} workers.forEach(w=>{try{w.terminate();}catch(_){}}); cracking=false; };
   // Report a HIT -- but ONLY after re-deriving the program on the CPU and confirming
