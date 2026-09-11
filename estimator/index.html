@@ -286,17 +286,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b160"></script>
-<script src="../wasm/rxecore_api.js?v=b160"></script>
+<script src="../wasm/rxecore.js?v=b161"></script>
+<script src="../wasm/rxecore_api.js?v=b161"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b160"></script>
-<script src="../estimator/model.js?v=b160"></script>
-<script src="../estimator/wordset.js?v=b160"></script>
-<script src="../estimator/bip39crypto.js?v=b160"></script>
-<script src="../estimator/electrum.js?v=b160"></script>
-<script src="../estimator/gpucrack.js?v=b160"></script>
-<script src="../estimator/i18n.js?v=b160"></script>
+<script src="../estimator/bip39.js?v=b161"></script>
+<script src="../estimator/model.js?v=b161"></script>
+<script src="../estimator/wordset.js?v=b161"></script>
+<script src="../estimator/bip39crypto.js?v=b161"></script>
+<script src="../estimator/electrum.js?v=b161"></script>
+<script src="../estimator/gpucrack.js?v=b161"></script>
+<script src="../estimator/i18n.js?v=b161"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -305,8 +305,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b160';
-const APP_VERSION = 'b160';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b161';
+const APP_VERSION = 'b161';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -782,7 +782,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b160' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b161' } });
     RXE.registerDict('bip39', englishWords);
     registered.set('bip39', englishWords.length);
     // Aliases so older patterns/links keep resolving: [:bip39-en:] / [:bip39en:] / [:en:] / [:english:].
@@ -1846,7 +1846,11 @@ async function startBloomCrack(){
       // encode+readback (~scales with batch size), and that block starves the EC/ACK
       // flow -> a sawtooth. 4096 halves the block for only ~11% less GPU efficiency,
       // and SEED_AHEAD pipelining keeps the GPU busy across calls.
-      const SEED_BATCH = gpu ? 4096 : 512;
+      // window.__SEED_BATCH overrides the default (TDR-hunt / tuning knob): the chunk is
+      // capped at the batch, so raising this lets setDeskChunk / a big budget push a SINGLE
+      // dispatch past whole-batch(4096) to find the exact per-submit duration that trips TDR.
+      const SEED_BATCH = (function(){ try{ const v=+(window.__SEED_BATCH); if(v>=256 && v<=65536) return v|0; }catch(_){}
+        return gpu ? 4096 : 512; })();
       // Keep EC jobs SMALL (many per seed-batch) so worker completions -- and thus the
       // frame/ACK stream -- spread out continuously instead of finishing in one lump.
       const SHARD = 256;
