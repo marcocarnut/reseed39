@@ -164,7 +164,26 @@
   .expl-leaf.hit .expl-addr{color:#4ec98a;font-weight:600}
   .expl-leaf.hit .expl-path{color:#4ec98a}
   .expl-more{color:var(--dim);font-size:11px;padding:5px 6px 0}
-  @media(max-width:560px){ .expl-mn{font-size:12px} .expl-leaf{font-size:11px} .expl-pos{font-size:11px} }
+  .expl-validnav .ghost{padding:6px 12px}   /* comfortable tap targets */
+  @media(max-width:560px){
+    /* phone: use the full width, bigger touch targets, stack the controls */
+    .modal.wide{width:96%;height:92vh;max-width:none}
+    .modal.wide h3{padding:12px 12px;font-size:13px}
+    .modal.wide h3 .pill{display:none}          /* keep the title line clean */
+    .modal.wide .body{padding:12px 12px}
+    .modal.wide .foot{padding:10px 12px}
+    .expl-slider{height:26px}                    /* easier to grab */
+    .expl-controls{flex-direction:column;align-items:stretch;gap:8px}
+    .expl-validnav{width:100%}
+    .expl-validnav .ghost{flex:1 1 0;padding:10px 8px;font-size:13px;text-align:center}
+    .expl-pos{font-size:11px;text-align:center}
+    .expl-row{padding:9px 10px}
+    .expl-mn{font-size:12px;line-height:1.75}
+    .expl-w.var{padding:2px 5px}                 /* a touch taller so chips read as chips */
+    .expl-leaf{font-size:11px;gap:4px}
+    .expl-path{flex:1 1 100%}                    /* path on its own line, address below */
+    .expl-addr{flex:1 1 100%}
+  }
   .dictlist{margin-top:14px}
   .dictlist .d{display:flex;justify-content:space-between;background:var(--panel2);border:1px solid var(--edge);border-radius:7px;padding:7px 10px;margin-bottom:6px;font-family:var(--mono);font-size:12.5px}
   .muted{color:var(--dim)}
@@ -322,17 +341,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b167"></script>
-<script src="../wasm/rxecore_api.js?v=b167"></script>
+<script src="../wasm/rxecore.js?v=b168"></script>
+<script src="../wasm/rxecore_api.js?v=b168"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b167"></script>
-<script src="../estimator/model.js?v=b167"></script>
-<script src="../estimator/wordset.js?v=b167"></script>
-<script src="../estimator/bip39crypto.js?v=b167"></script>
-<script src="../estimator/electrum.js?v=b167"></script>
-<script src="../estimator/gpucrack.js?v=b167"></script>
-<script src="../estimator/i18n.js?v=b167"></script>
+<script src="../estimator/bip39.js?v=b168"></script>
+<script src="../estimator/model.js?v=b168"></script>
+<script src="../estimator/wordset.js?v=b168"></script>
+<script src="../estimator/bip39crypto.js?v=b168"></script>
+<script src="../estimator/electrum.js?v=b168"></script>
+<script src="../estimator/gpucrack.js?v=b168"></script>
+<script src="../estimator/i18n.js?v=b168"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -341,8 +360,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b167';
-const APP_VERSION = 'b167';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b168';
+const APP_VERSION = 'b168';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -818,7 +837,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b167' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b168' } });
     RXE.registerDict('bip39', englishWords);
     registered.set('bip39', englishWords.length);
     // Aliases so older patterns/links keep resolving: [:bip39-en:] / [:bip39en:] / [:en:] / [:english:].
@@ -3112,8 +3131,8 @@ function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','
 let _expl = null;   // { set,N,checkValid,mask,anchor,count,cfg,cache }
 const _EXPL_SLIDER_MAX = 1000000n, _EXPL_BASE = 40, _EXPL_GROW = 60, _EXPL_MAX = 600;
 // Which token positions VARY across the set (grammar-agnostic: diff a few samples).
-function _explVarMask(set, N, checkValid){
-  if(!checkValid) return null;
+function _explVarMask(set, N, wordsMode){
+  if(!wordsMode) return null;   // only mnemonic sets have per-word positions to highlight
   const idxs=[0n, 1n, N/2n, N-1n], rows=[];
   for(const i of idxs){ if(i<0n||i>=N) continue; const s=set.unrank(i); if(s==null) continue; rows.push(s.trim().split(/\s+/)); }
   if(rows.length<2) return null;
@@ -3134,16 +3153,19 @@ function _explCfg(){
   const gap=Math.max(1,parseInt($('#gap').value,10)||1);
   const nchange=Math.max(1,parseInt($('#change').value,10)||1); const changes=nchange>=2?[0,1]:[0];
   let passFixed=''; try{ const ps=lastR._sets.passSet; if(ps && !ps.isInfinite() && ps.cardinality()===1n) passFixed=ps.unrank(0n)||''; }catch(_){}
+  let mnFixed=''; try{ const ws=lastR._sets.wordsSet; if(ws && !ws.isInfinite() && ws.cardinality()===1n) mnFixed=ws.unrank(0n)||''; }catch(_){}
   let targetAddr=null; try{ const a=$('#addr').value.trim(); if(a){ C.decodeAddress(a); targetAddr=a; } }catch(_){}
-  return { purposes, nacct, coin:0, changes, gap, passFixed, targetAddr };
+  return { purposes, nacct, coin:0, changes, gap, passFixed, mnFixed, targetAddr };
 }
-// The derivation tree for one VALID mnemonic: seed -> per purpose/account/change/
-// index -> address; the leaf matching the target (address mode) is highlighted.
-function _explTree(idxKey, mn){
+// The derivation tree for one candidate: seed -> per purpose/account/change/index
+// -> address; the leaf matching the target (address mode) is highlighted. In
+// passphrase mode the candidate IS the passphrase (fixed mnemonic + it); otherwise
+// the candidate is the mnemonic (+ the fixed passphrase).
+function _explTree(idxKey, cand){
   if(_expl.cache.has(idxKey)) return _expl.cache.get(idxKey);
   const C=window.BIP39Crypto, cfg=_expl.cfg; let html;
   try{
-    const seed=C.mnemonicToSeed(mn, cfg.passFixed);
+    const seed = _expl.isWords ? C.mnemonicToSeed(cand, cfg.passFixed) : C.mnemonicToSeed(cfg.mnFixed, cand);
     const leaves=[]; let more=0; const CAP=12;
     for(const p of cfg.purposes){ for(let a=0;a<cfg.nacct;a++){ for(const ch of cfg.changes){ for(let i=0;i<cfg.gap;i++){
       if(leaves.length>=CAP){ more++; continue; }
@@ -3157,14 +3179,14 @@ function _explTree(idxKey, mn){
   return html;
 }
 function _explCard(idx, str){
-  const cv=_expl.checkValid;
-  const bad = cv && !VALIDATOR.isValid(str);
+  const cv=_expl.checkValid;                          // show ✓/✗ + strike (checksum ON, words mode)
+  const bad = cv && !VALIDATOR.isValid(str);          // struck only when the checksum actually rejects
   let inner;
-  if(cv){ const words=str.trim().split(/\s+/);
+  if(_expl.isWords){ const words=str.trim().split(/\s+/);   // word chips regardless of checksum on/off
     inner=words.map((w,p)=>{ const isVar=_expl.mask?_expl.mask[p]:true;
       return `<span class="expl-w${isVar?' var':''}"${isVar?` title="${esc(t('explVarWord'))}"`:''}>${esc(w)}</span>`; }).join(' ');
   } else inner=`<span class="expl-w var">${esc(str)}</span>`;
-  const canExpand = cv && !bad;   // only valid candidates derive addresses
+  const canExpand = !bad;   // everything the search actually tries derives addresses (all candidates when checksum is OFF)
   const badge = cv ? (bad?`<span class="expl-badge bad" title="${esc(t('explRejected'))}">✗</span>`
                         :`<span class="expl-badge ok" title="${esc(t('explValid'))}">✓</span>`) : '';
   const chev = canExpand ? `<span class="expl-chev">▸</span>` : '';
@@ -3229,10 +3251,15 @@ function openExplorer(){
   if(!set) return note('nothingSample');
   if(set.isInfinite()) return note('sampleUnbounded');
   const N=set.cardinality(); if(N==null||N<=0n) return note('unboundedShort');
-  const checkValid=!isPass;
-  _expl={ set, N, checkValid, mask:_explVarMask(set,N,checkValid), anchor:0n, count:0, cache:new Map(), cfg:_explCfg() };
+  const isWords=!isPass;
+  // Honor the main page's "require BIP39 checksum": OFF -> the search tries EVERY
+  // candidate, so nothing is rejected -> no strike-outs, no ✓/✗, no valid-seeking.
+  let cksumOn=true; try{ const cb=$('#reqChecksum'); cksumOn = cb ? cb.checked : true; }catch(_){}
+  const checkValid = isWords && cksumOn;
+  _expl={ set, N, isWords, checkValid, mode, mask:_explVarMask(set,N,isWords), anchor:0n, count:0, cache:new Map(), cfg:_explCfg() };
   $('#explSlider').value='0';
-  const showNav = checkValid ? '' : 'none';
+  const intro=$('#exploreIntro'); if(intro) intro.textContent = t(checkValid ? 'exploreIntro' : 'exploreIntroAll');
+  const showNav = checkValid ? '' : 'none';   // "valid" only means something when the checksum is the filter
   $('#explNext').style.display=showNav; $('#explPrev').style.display=showNav;
   _explRender();
 }
@@ -3360,7 +3387,7 @@ function renderDictList(){
   <div class="modal wide">
     <h3>🔭 <span data-i18n="explore">Explore the search space</span> <span class="pill" data-i18n="viaUnrank">via librxe unrank</span> <button class="x" id="exploreClose">✕</button></h3>
     <div class="body">
-      <div class="note" data-i18n="exploreIntro" style="margin-bottom:8px"></div>
+      <div class="note" id="exploreIntro" data-i18n="exploreIntro" style="margin-bottom:8px"></div>
       <input type="range" id="explSlider" min="0" max="1000000" value="0" step="1" class="expl-slider" aria-label="lightspeed">
       <div class="expl-controls">
         <div class="expl-pos" id="explPos"></div>
