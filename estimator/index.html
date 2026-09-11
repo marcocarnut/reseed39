@@ -136,6 +136,9 @@
   .modal.wide{max-width:820px;height:86vh}
   .modal.wide .body{overflow:hidden;display:flex;flex-direction:column;min-height:0;flex:1 1 auto}
   .expl-slider{width:100%;display:block;margin:0 0 8px;accent-color:var(--accent);cursor:pointer;flex:0 0 auto}
+  .expl-ppbar{flex:0 0 auto;border:1px solid var(--edge);border-radius:8px;padding:8px 10px;margin-bottom:10px;background:var(--panel2)}
+  .expl-pplabel{font-size:11.5px;color:var(--dim);margin-bottom:5px}
+  .expl-ppcur{font-family:var(--mono);color:var(--accent);word-break:break-all}
   .expl-controls{display:flex;gap:6px;margin-bottom:8px;flex:0 0 auto}
   .expl-validnav{display:flex;gap:6px;width:100%}
   .expl-validnav .ghost{flex:1 1 0;margin-top:0;padding:7px 4px;text-align:center;font-size:14px;line-height:1}
@@ -336,17 +339,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b169"></script>
-<script src="../wasm/rxecore_api.js?v=b169"></script>
+<script src="../wasm/rxecore.js?v=b170"></script>
+<script src="../wasm/rxecore_api.js?v=b170"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b169"></script>
-<script src="../estimator/model.js?v=b169"></script>
-<script src="../estimator/wordset.js?v=b169"></script>
-<script src="../estimator/bip39crypto.js?v=b169"></script>
-<script src="../estimator/electrum.js?v=b169"></script>
-<script src="../estimator/gpucrack.js?v=b169"></script>
-<script src="../estimator/i18n.js?v=b169"></script>
+<script src="../estimator/bip39.js?v=b170"></script>
+<script src="../estimator/model.js?v=b170"></script>
+<script src="../estimator/wordset.js?v=b170"></script>
+<script src="../estimator/bip39crypto.js?v=b170"></script>
+<script src="../estimator/electrum.js?v=b170"></script>
+<script src="../estimator/gpucrack.js?v=b170"></script>
+<script src="../estimator/i18n.js?v=b170"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -355,8 +358,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b169';
-const APP_VERSION = 'b169';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b170';
+const APP_VERSION = 'b170';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -832,7 +835,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b169' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b170' } });
     RXE.registerDict('bip39', englishWords);
     registered.set('bip39', englishWords.length);
     // Aliases so older patterns/links keep resolving: [:bip39-en:] / [:bip39en:] / [:en:] / [:english:].
@@ -3161,7 +3164,9 @@ function _explTree(idxKey, cand){
   if(_expl.cache.has(idxKey)) return _expl.cache.get(idxKey);
   const C=window.BIP39Crypto, cfg=_expl.cfg; let html;
   try{
-    const seed = _expl.isWords ? C.mnemonicToSeed(cand, cfg.passFixed) : C.mnemonicToSeed(cfg.mnFixed, cand);
+    // joint: candidate = mnemonic, passphrase = the axis-2 selection; passphrase mode: candidate = passphrase.
+    const pass = _expl.mode==='joint' ? (_expl.ppCur||'') : cfg.passFixed;
+    const seed = _expl.isWords ? C.mnemonicToSeed(cand, pass) : C.mnemonicToSeed(cfg.mnFixed, cand);
     const leaves=[]; let more=0; const CAP=12;
     for(const p of cfg.purposes){ for(let a=0;a<cfg.nacct;a++){ for(const ch of cfg.changes){ for(let i=0;i<cfg.gap;i++){
       if(leaves.length>=CAP){ more++; continue; }
@@ -3253,7 +3258,7 @@ function _explSeekBwd(from){ let end=(from<_expl.N?from:_expl.N-1n)+1n, scanned=
     const rows=_expl.set.unrankBatch?_expl.set.unrankBatch(start,cnt):null;
     for(let k=cnt-1;k>=0;k--){ const s=rows&&rows[k]!=null?rows[k]:_expl.set.unrank(start+BigInt(k)); if(s!=null&&VALIDATOR.isValid(s)) return start+BigInt(k); }
     end=start; scanned+=cnt; } return null; }
-function _explRandIdx(){ const N=_expl.N;
+function _explRandIdx(N){
   if(N<=9007199254740992n) return BigInt(Math.floor(Math.random()*Number(N)));
   const bits=N.toString(2).length; let r;
   do{ let s=''; while(s.length<bits) s+=Math.floor(Math.random()*1073741824).toString(2).padStart(30,'0'); r=BigInt('0b'+s.slice(0,bits)); }while(r>=N);
@@ -3270,9 +3275,38 @@ function _explNav(which){
   else if(which==='last') X = cv ? _explSeekBwd(hi) : hi;
   else if(which==='next') X = cv ? _explSeekFwd(top+1n) : (top<hi?top+1n:hi);
   else if(which==='prev') X = cv ? _explSeekBwd(top-1n) : (top>0n?top-1n:0n);
-  else if(which==='rand'){ const r=_explRandIdx(); X = cv ? (_explSeekFwd(r) ?? _explSeekBwd(r)) : r; }
+  else if(which==='rand'){ const r=_explRandIdx(_expl.N); X = cv ? (_explSeekFwd(r) ?? _explSeekBwd(r)) : r; }
   if(X==null){ try{ alert(t(which==='prev'?'explNoneBehind':'explNoneAhead').replace('%n', fmtBig(300000))); }catch(_){} return; }
   _explGoto(X);
+}
+// ---- passphrase axis (joint mode only): a SELECTOR that sets which passphrase the
+// expanded derivations use. No checksum on this axis, so no strikes / valid-seeking.
+function _explPpReadout(){
+  const el=$('#explPpCur'); if(!el) return; const s=_expl.ppCur||'';
+  const shown = s===''?'""' : s;
+  el.textContent = shown.length>28 ? shown.slice(0,13)+'…'+shown.slice(-13) : shown;
+  el.title = s;
+  const sl=$('#explPpSlider'); if(sl && document.activeElement!==sl){ sl.value=String(_expl.ppN>1n?Number(_expl.ppIdx*_EXPL_SLIDER_MAX/(_expl.ppN-1n)):0); }
+}
+function _explRefreshTrees(){   // passphrase changed -> re-derive any open trees for the new passphrase
+  _expl.cache.clear(); const view=$('#explView'); if(!view) return;
+  for(const row of view.querySelectorAll('.expl-row.expandable')){ const tree=row.querySelector('.expl-tree'); if(!tree) continue;
+    const idxKey=row.dataset.idx; let cand=null; try{ cand=_expl.set.unrank(BigInt(idxKey)); }catch(_){}
+    if(cand!=null) tree.outerHTML=_explTree(idxKey, cand); }
+}
+function _explPpGoto(idx){
+  if(!_expl||!_expl.ppSet) return; let hi=_expl.ppN>0n?_expl.ppN-1n:0n;
+  if(idx<0n) idx=0n; if(idx>hi) idx=hi;
+  _expl.ppIdx=idx; try{ _expl.ppCur=_expl.ppSet.unrank(idx)||''; }catch(_){ _expl.ppCur=''; }
+  _explPpReadout(); _explRefreshTrees();
+}
+function _explPpNav(which){
+  if(!_expl||!_expl.ppSet) return; const hi=_expl.ppN-1n; let X=_expl.ppIdx;
+  if(which==='first') X=0n; else if(which==='last') X=hi;
+  else if(which==='next') X=_expl.ppIdx<hi?_expl.ppIdx+1n:hi;
+  else if(which==='prev') X=_expl.ppIdx>0n?_expl.ppIdx-1n:0n;
+  else if(which==='rand') X=_explRandIdx(_expl.ppN);
+  _explPpGoto(X);
 }
 function openExplorer(){
   if(!lastR) return;
@@ -3291,7 +3325,16 @@ function openExplorer(){
   // the whole space rather than just the checksum-valid one).
   let cksumOn=true; try{ const cb=$('#reqChecksum'); cksumOn = cb ? cb.checked : true; }catch(_){}
   const checkValid = isWords && cksumOn;
-  _expl={ set, N, isWords, checkValid, mode, mask:_explVarMask(set,N,isWords), winStart:0n, winCount:0, cache:new Map(), cfg:_explCfg() };
+  _expl={ set, N, isWords, checkValid, mode, mask:_explVarMask(set,N,isWords), winStart:0n, winCount:0, cache:new Map(), cfg:_explCfg(),
+          ppSet:null, ppN:0n, ppIdx:0n, ppCur:'' };
+  // Passphrase axis: only in joint mode, and only when card(pp)>1 (a fixed passphrase
+  // needs no axis). It's a SELECTOR for the derivations, not a second list.
+  let ppOn=false;
+  if(mode==='joint'){ const ps=lastR._sets.passSet;
+    if(ps && !ps.isInfinite()){ const pN=ps.cardinality(); if(pN!=null && pN>1n){ _expl.ppSet=ps; _expl.ppN=pN; try{ _expl.ppCur=ps.unrank(0n)||''; }catch(_){} ppOn=true; } } }
+  const ppBar=$('#explPpBar'); if(ppBar) ppBar.hidden=!ppOn;
+  const mnLabel=$('#explMnLabel'); if(mnLabel) mnLabel.hidden=!ppOn;   // label the two axes only when both are shown
+  if(ppOn){ $('#explPpSlider').value='0'; _explPpReadout(); }
   $('#explSlider').value='0';
   const intro=$('#exploreIntro'); if(intro) intro.textContent = t('exploreIntro');
   _explGoto(0n);
@@ -3305,6 +3348,10 @@ function _wireExplorer(){
   if(sl) sl.oninput=()=>{ if(!_expl) return; const hi=_expl.N>1n?_expl.N-1n:0n; _explGoto(hi*BigInt(sl.value)/_EXPL_SLIDER_MAX); };
   [['explFirst','first'],['explPrev','prev'],['explRand','rand'],['explNext','next'],['explLast','last']]
     .forEach(([id,which])=>{ const b=$('#'+id); if(b) b.onclick=()=>_explNav(which); });
+  // passphrase axis (joint mode)
+  const psl=$('#explPpSlider'); if(psl) psl.oninput=()=>{ if(!_expl||!_expl.ppSet) return; const hi=_expl.ppN>1n?_expl.ppN-1n:0n; _explPpGoto(hi*BigInt(psl.value)/_EXPL_SLIDER_MAX); };
+  [['explPpFirst','first'],['explPpPrev','prev'],['explPpRand','rand'],['explPpNext','next'],['explPpLast','last']]
+    .forEach(([id,which])=>{ const b=$('#'+id); if(b) b.onclick=()=>_explPpNav(which); });
   view.addEventListener('scroll',()=>{ if(!_expl) return;
     if(view.scrollTop+view.clientHeight >= view.scrollHeight-240) _explAppend();
     else if(view.scrollTop < 80) _explPrepend(); });
@@ -3423,6 +3470,21 @@ function renderDictList(){
     <h3>🔭 <span data-i18n="explore">Explore the search space</span> <span class="pill" data-i18n="viaUnrank">via librxe unrank</span> <button class="x" id="exploreClose">✕</button></h3>
     <div class="body">
       <div class="note" id="exploreIntro" data-i18n="exploreIntro" style="margin-bottom:8px"></div>
+      <!-- passphrase axis (joint mode only): a SELECTOR, not a list -- sets which passphrase the expanded derivations use -->
+      <div class="expl-ppbar" id="explPpBar" hidden>
+        <div class="expl-pplabel"><span data-i18n="explPassAxis">Passphrase</span>: <span class="expl-ppcur" id="explPpCur"></span></div>
+        <input type="range" id="explPpSlider" min="0" max="1000000" value="0" step="1" class="expl-slider" aria-label="passphrase">
+        <div class="expl-controls">
+          <span class="expl-validnav">
+            <button class="ghost" id="explPpFirst" data-i18n-title="explNavFirst" title="first">|◁</button>
+            <button class="ghost" id="explPpPrev"  data-i18n-title="explNavPrev"  title="previous">◁</button>
+            <button class="ghost" id="explPpRand"  data-i18n-title="explNavRand"  title="random">🎲</button>
+            <button class="ghost" id="explPpNext"  data-i18n-title="explNavNext"  title="next">▷</button>
+            <button class="ghost" id="explPpLast"  data-i18n-title="explNavLast"  title="last">▷|</button>
+          </span>
+        </div>
+      </div>
+      <div class="expl-pplabel" id="explMnLabel" data-i18n="explMnemAxis" hidden>Mnemonic</div>
       <input type="range" id="explSlider" min="0" max="1000000" value="0" step="1" class="expl-slider" aria-label="lightspeed">
       <div class="expl-controls">
         <span class="expl-validnav">
