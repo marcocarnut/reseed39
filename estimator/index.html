@@ -133,27 +133,38 @@
   .sample code .ix{color:var(--dim)}
   .pill{display:inline-block;font-size:10.5px;padding:1px 7px;border-radius:20px;background:var(--panel2);border:1px solid var(--edge);color:var(--dim);margin-left:6px}
   /* --- search-space explorer (dry-run visualizer) --- */
-  .modal.wide{max-width:820px;height:82vh}
+  .modal.wide{max-width:820px;height:86vh}
   .modal.wide .body{overflow:hidden;display:flex;flex-direction:column;min-height:0;flex:1 1 auto}
-  .expl-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px;flex:0 0 auto}
-  .expl-slider{flex:1 1 220px;min-width:180px;accent-color:var(--accent);cursor:pointer}
-  .expl-pos{font-family:var(--mono);font-size:12px;color:var(--dim);white-space:nowrap}
+  .expl-slider{width:100%;display:block;margin:0 0 8px;accent-color:var(--accent);cursor:pointer;flex:0 0 auto}
+  .expl-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:space-between;margin-bottom:8px;flex:0 0 auto}
+  .expl-pos{font-family:var(--mono);font-size:12px;color:var(--dim)}
   .expl-pos b{color:var(--ink)}
-  .expl-jumpwrap{font-size:11.5px;color:var(--dim)}
-  .expl-jumpin{width:120px;font-family:var(--mono);font-size:12px;background:#0c1120;color:var(--ink);border:1px solid var(--edge);border-radius:6px;padding:3px 6px}
-  .expl-view{flex:1 1 auto;min-height:0;overflow:hidden;position:relative;border:1px solid var(--edge);border-radius:8px;background:#0c1120}
-  .expl-view:focus{outline:1px solid var(--accent)}
-  .expl-row{box-sizing:border-box;height:86px;padding:8px 12px;border-bottom:1px solid var(--edge);overflow:hidden}
+  .expl-validnav{display:flex;gap:8px}
+  .expl-view{flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;position:relative;border:1px solid var(--edge);border-radius:8px;background:#0c1120}
+  .expl-row{box-sizing:border-box;padding:8px 12px;border-bottom:1px solid var(--edge)}
+  .expl-row.expandable{cursor:pointer}
+  .expl-row.expandable:hover{background:#0e1424}
   .expl-head{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+  .expl-chev{color:var(--dim);font-size:10px;width:9px;display:inline-block;flex:0 0 auto}
   .expl-ix{font-family:var(--mono);font-size:11px;color:var(--dim)}
   .expl-badge{font-size:11px;font-weight:600}
   .expl-badge.ok{color:#4ec98a} .expl-badge.bad{color:#7d8aa8}
-  .expl-mn{font-family:var(--mono);font-size:12.5px;line-height:1.55;word-break:break-word}
+  .expl-mn{font-family:var(--mono);font-size:12.5px;line-height:1.7;word-break:break-word}
   .expl-w{color:#9fb0d6}
-  .expl-w.var{color:#04102a;background:var(--accent);border-radius:4px;padding:0 5px;font-weight:600}
+  .expl-w.var{color:#04102a;background:var(--accent);border-radius:4px;padding:1px 5px;font-weight:600}
   .expl-row.bad{opacity:.5}
   .expl-row.bad .expl-mn{text-decoration:line-through;text-decoration-color:#7d8aa8}
   .expl-row.bad .expl-w.var{background:#4a5680;color:#c7d1ec}
+  /* derivation tree (Phase 2) */
+  .expl-tree{margin-top:8px;padding-top:8px;border-top:1px dashed var(--edge)}
+  .expl-leaf{display:flex;gap:8px;align-items:baseline;padding:3px 6px;border-radius:5px;font-family:var(--mono);font-size:11.5px;flex-wrap:wrap}
+  .expl-path{color:var(--dim);white-space:nowrap;flex:0 0 auto}
+  .expl-addr{color:#9fb0d6;word-break:break-all;flex:1 1 180px;min-width:0}
+  .expl-leaf.hit{background:rgba(78,201,138,.16)}
+  .expl-leaf.hit .expl-addr{color:#4ec98a;font-weight:600}
+  .expl-leaf.hit .expl-path{color:#4ec98a}
+  .expl-more{color:var(--dim);font-size:11px;padding:5px 6px 0}
+  @media(max-width:560px){ .expl-mn{font-size:12px} .expl-leaf{font-size:11px} .expl-pos{font-size:11px} }
   .dictlist{margin-top:14px}
   .dictlist .d{display:flex;justify-content:space-between;background:var(--panel2);border:1px solid var(--edge);border-radius:7px;padding:7px 10px;margin-bottom:6px;font-family:var(--mono);font-size:12.5px}
   .muted{color:var(--dim)}
@@ -222,7 +233,10 @@
   <div class="pane form">
     <div style="display:flex;align-items:center;justify-content:space-between;margin:0 0 10px">
       <h2 data-i18n="searchShape" style="margin:0">Search shape</h2>
-      <button class="ghost" id="permBtn" data-i18n-title="permTip" title="Reorder known words" style="margin:0;padding:3px 10px;font-size:17px;line-height:1">⇄</button>
+      <span style="display:flex;gap:6px">
+        <button class="ghost" id="exploreTop" data-i18n-title="explore" title="Explore the search space" style="margin:0;padding:3px 10px;font-size:16px;line-height:1">🔭</button>
+        <button class="ghost" id="permBtn" data-i18n-title="permTip" title="Reorder known words" style="margin:0;padding:3px 10px;font-size:17px;line-height:1">⇄</button>
+      </span>
     </div>
 
     <div id="wordsBox">
@@ -308,17 +322,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b165"></script>
-<script src="../wasm/rxecore_api.js?v=b165"></script>
+<script src="../wasm/rxecore.js?v=b167"></script>
+<script src="../wasm/rxecore_api.js?v=b167"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b165"></script>
-<script src="../estimator/model.js?v=b165"></script>
-<script src="../estimator/wordset.js?v=b165"></script>
-<script src="../estimator/bip39crypto.js?v=b165"></script>
-<script src="../estimator/electrum.js?v=b165"></script>
-<script src="../estimator/gpucrack.js?v=b165"></script>
-<script src="../estimator/i18n.js?v=b165"></script>
+<script src="../estimator/bip39.js?v=b167"></script>
+<script src="../estimator/model.js?v=b167"></script>
+<script src="../estimator/wordset.js?v=b167"></script>
+<script src="../estimator/bip39crypto.js?v=b167"></script>
+<script src="../estimator/electrum.js?v=b167"></script>
+<script src="../estimator/gpucrack.js?v=b167"></script>
+<script src="../estimator/i18n.js?v=b167"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -327,8 +341,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b165';
-const APP_VERSION = 'b165';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b167';
+const APP_VERSION = 'b167';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -804,7 +818,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b165' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b167' } });
     RXE.registerDict('bip39', englishWords);
     registered.set('bip39', englishWords.length);
     // Aliases so older patterns/links keep resolving: [:bip39-en:] / [:bip39en:] / [:en:] / [:english:].
@@ -1202,6 +1216,7 @@ function wireUI(){
   $('#labelClose').onclick=$('#labelCancel').onclick=closeLabelDialog;
   $('#labelCopy').onclick=submitLabelShare;
   $('#sampleClose').onclick=$('#sampleCloseB').onclick=()=>$('#sampleOverlay').classList.remove('on');
+  { const et=$('#exploreTop'); if(et) et.onclick=openExplorer; }
   _wireExplorer();
   $('#shareBtn').onclick=openShareModal;
   window.addEventListener('online', renderOnlineBanner);
@@ -3039,7 +3054,7 @@ function render(r, input){
   html+=`<div class="card"><button class="ghost" id="showExplore">${t('exploreOpen')}</button> <button class="ghost" id="showSample">🎲 ${t('showDryRun')}</button></div>`;
   $('#results').innerHTML=html;
   const cb=$('#ctaBench'); if(cb) cb.onclick=openBenchModal;
-  const se=$('#showExplore'); if(se) se.onclick=openExplorer;
+  const se=$('#showExplore'); if(se) se.onclick=openExplorer;   // also available in the search-shape line (🔭)
   const ss=$('#showSample'); if(ss) ss.onclick=openSampleModal;
   const oc=$('#openCrack'); if(oc) oc.onclick=onOpenCrack;
 }
@@ -3089,115 +3104,154 @@ function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','
 // A VIEW over the exact enumerator the crack walks. rxe's unrank(i) gives O(1)
 // random access into the ORDERED set, so the whole (possibly billions-strong)
 // space is navigable without enumerating it: the slider maps a fraction -> an
-// index, the wheel steps the anchor, and only the ~visible rows are rendered
-// (index-based virtualization; no giant DOM spacer). Strike-through = rejected
-// by the BIP39 checksum (exactly what the sweep discards before hashing).
-let _expl = null;   // { set, N(BigInt), checkValid, mask(bool[]|null), anchor(BigInt), VIS, rowH }
-const _EXPL_SLIDER_MAX = 1000000n;
-function _explClampAnchor(bi){
-  const span = _expl.N - BigInt(_expl.VIS);
-  const hi = span > 0n ? span : 0n;
-  return bi < 0n ? 0n : (bi > hi ? hi : bi);
-}
-// Which token positions VARY across the set (so we can highlight them). Grammar-
-// agnostic: diff a few unranked samples; positions that ever differ are variable.
+// index, and a NATIVE-SCROLL window of cards renders from that anchor (grows on
+// scroll = infinite scroll, capped to protect the DOM). Strike-through = rejected
+// by the BIP39 checksum. Tap a valid card to expand its derivation tree (the
+// addresses it produces) -- lazily computed + cached. Native scroll (not a wheel
+// hijack) so variable-height expanded cards and phones both behave.
+let _expl = null;   // { set,N,checkValid,mask,anchor,count,cfg,cache }
+const _EXPL_SLIDER_MAX = 1000000n, _EXPL_BASE = 40, _EXPL_GROW = 60, _EXPL_MAX = 600;
+// Which token positions VARY across the set (grammar-agnostic: diff a few samples).
 function _explVarMask(set, N, checkValid){
-  if(!checkValid) return null;   // passphrase mode: single token, treat whole string as variable
+  if(!checkValid) return null;
   const idxs=[0n, 1n, N/2n, N-1n], rows=[];
   for(const i of idxs){ if(i<0n||i>=N) continue; const s=set.unrank(i); if(s==null) continue; rows.push(s.trim().split(/\s+/)); }
   if(rows.length<2) return null;
   const len=rows[0].length;
-  if(!rows.every(r=>r.length===len)) return null;   // ragged -> treat all as variable
+  if(!rows.every(r=>r.length===len)) return null;
   const mask=new Array(len).fill(false);
   for(let p=0;p<len;p++){ const w=rows[0][p]; if(rows.some(r=>r[p]!==w)) mask[p]=true; }
   return mask;
+}
+// Read the SAME derivation config the crack uses (purposes/accounts/change/gap +
+// the fixed passphrase and the concrete target address to highlight).
+function _explCfg(){
+  const C=window.BIP39Crypto;
+  const PM={bip44:44,bip49:49,bip84:84,bip86:86};   // local (the estimate's _pmap isn't global); electrum has no BIP address path here
+  let purposes=[]; try{ purposes=$$('#purposes input').filter(c=>c.checked).map(c=>PM[c.dataset.p]).filter(x=>x!==undefined); }catch(_){}
+  if(!purposes.length) purposes=[84];
+  const nacct=Math.max(1,Math.min(parseInt($('#accts').value,10)||1, 3));   // cap accounts shown so a tree stays readable
+  const gap=Math.max(1,parseInt($('#gap').value,10)||1);
+  const nchange=Math.max(1,parseInt($('#change').value,10)||1); const changes=nchange>=2?[0,1]:[0];
+  let passFixed=''; try{ const ps=lastR._sets.passSet; if(ps && !ps.isInfinite() && ps.cardinality()===1n) passFixed=ps.unrank(0n)||''; }catch(_){}
+  let targetAddr=null; try{ const a=$('#addr').value.trim(); if(a){ C.decodeAddress(a); targetAddr=a; } }catch(_){}
+  return { purposes, nacct, coin:0, changes, gap, passFixed, targetAddr };
+}
+// The derivation tree for one VALID mnemonic: seed -> per purpose/account/change/
+// index -> address; the leaf matching the target (address mode) is highlighted.
+function _explTree(idxKey, mn){
+  if(_expl.cache.has(idxKey)) return _expl.cache.get(idxKey);
+  const C=window.BIP39Crypto, cfg=_expl.cfg; let html;
+  try{
+    const seed=C.mnemonicToSeed(mn, cfg.passFixed);
+    const leaves=[]; let more=0; const CAP=12;
+    for(const p of cfg.purposes){ for(let a=0;a<cfg.nacct;a++){ for(const ch of cfg.changes){ for(let i=0;i<cfg.gap;i++){
+      if(leaves.length>=CAP){ more++; continue; }
+      let addr=''; try{ addr=C.encodeAddress(C.addressTarget(seed,p,a,cfg.coin,ch,i)); }catch(_){ addr='—'; }
+      leaves.push({ path:`m/${p}'/${cfg.coin}'/${a}'/${ch}/${i}`, addr, hit: cfg.targetAddr && addr===cfg.targetAddr });
+    }}}}
+    html='<div class="expl-tree">'+leaves.map(l=>`<div class="expl-leaf${l.hit?' hit':''}"><span class="expl-path">${esc(l.path)}</span><span class="expl-addr">${esc(l.addr)}${l.hit?' ✓':''}</span></div>`).join('')
+       + (more?`<div class="expl-more">+${more} ${esc(t('explMore'))}</div>`:'') + '</div>';
+  }catch(e){ html=`<div class="expl-tree"><div class="expl-more">${esc((e&&e.message)||'derive error')}</div></div>`; }
+  _expl.cache.set(idxKey, html);
+  return html;
 }
 function _explCard(idx, str){
   const cv=_expl.checkValid;
   const bad = cv && !VALIDATOR.isValid(str);
   let inner;
-  if(cv){
-    const words=str.trim().split(/\s+/);
+  if(cv){ const words=str.trim().split(/\s+/);
     inner=words.map((w,p)=>{ const isVar=_expl.mask?_expl.mask[p]:true;
       return `<span class="expl-w${isVar?' var':''}"${isVar?` title="${esc(t('explVarWord'))}"`:''}>${esc(w)}</span>`; }).join(' ');
-  } else { inner=`<span class="expl-w var">${esc(str)}</span>`; }
+  } else inner=`<span class="expl-w var">${esc(str)}</span>`;
+  const canExpand = cv && !bad;   // only valid candidates derive addresses
   const badge = cv ? (bad?`<span class="expl-badge bad" title="${esc(t('explRejected'))}">✗</span>`
                         :`<span class="expl-badge ok" title="${esc(t('explValid'))}">✓</span>`) : '';
-  return `<div class="expl-row${bad?' bad':''}"><div class="expl-head"><span class="expl-ix">#${fmtBig(idx)}</span>${badge}</div><div class="expl-mn">${inner}</div></div>`;
+  const chev = canExpand ? `<span class="expl-chev">▸</span>` : '';
+  return `<div class="expl-row${bad?' bad':''}${canExpand?' expandable':''}" data-idx="${idx.toString()}"${canExpand?` title="${esc(t('explTapExpand'))}"`:''}>`
+       + `<div class="expl-head">${chev}<span class="expl-ix">#${fmtBig(idx)}</span>${badge}</div>`
+       + `<div class="expl-mn">${inner}</div></div>`;
 }
-function _explRender(){
-  if(!_expl) return;
-  const view=$('#explView'); if(!view) return;
-  const start=_expl.anchor, cnt=_expl.VIS;
-  let rows=null;
-  try{ rows=_expl.set.unrankBatch?_expl.set.unrankBatch(start,cnt):null; }catch(_){ rows=null; }
+function _explCardsHtml(start, cnt){
+  const rows=_expl.set.unrankBatch?_expl.set.unrankBatch(start,cnt):null;
   const out=[];
   for(let k=0;k<cnt;k++){ const idx=start+BigInt(k); if(idx>=_expl.N) break;
-    let s = rows && rows[k]!=null ? rows[k] : _expl.set.unrank(idx);
-    if(s==null) break;
-    out.push(_explCard(idx, s));
-  }
-  view.innerHTML=out.join('');
-  // position readout: #index · pct% of keyspace / total
+    const s = rows && rows[k]!=null ? rows[k] : _expl.set.unrank(idx); if(s==null) break;
+    out.push(_explCard(idx, s)); }
+  return out.join('');
+}
+function _explUpdatePos(){
   const pct = _expl.N>0n ? Number(_expl.anchor*10000n/_expl.N)/100 : 0;
   $('#explPos').innerHTML=`<b>#${fmtBig(_expl.anchor)}</b> · ${pct.toFixed(pct<10?4:2)}% ${t('explOfKeyspace')} · /${fmtBig(_expl.N)}`;
-  // keep the slider in sync (without retriggering its handler beyond value set)
-  const span=_expl.N-BigInt(_expl.VIS);
-  const sv = span>0n ? Number(_expl.anchor*_EXPL_SLIDER_MAX/span) : 0;
-  const sl=$('#explSlider'); if(sl && document.activeElement!==sl) sl.value=String(sv);
+  const sl=$('#explSlider'); if(sl && document.activeElement!==sl){ const sv=_expl.N>1n?Number(_expl.anchor*_EXPL_SLIDER_MAX/(_expl.N-1n)):0; sl.value=String(sv); }
 }
-function _explSetAnchor(bi){ _expl.anchor=_explClampAnchor(bi); _explRender(); }
-function _explMeasure(){
+function _explRender(){   // fresh window from anchor (open / slider / valid-jump)
   const view=$('#explView'); if(!view||!_expl) return;
-  const rowH=86;   // must match .expl-row height in CSS
-  _expl.rowH=rowH;
-  _expl.VIS=Math.max(1, Math.floor(view.clientHeight/rowH)+1);
+  _expl.count=Math.min(_EXPL_BASE, Number(_expl.N-_expl.anchor>BigInt(_EXPL_BASE)?BigInt(_EXPL_BASE):_expl.N-_expl.anchor));
+  view.innerHTML=_explCardsHtml(_expl.anchor, _expl.count);
+  view.scrollTop=0; _explUpdatePos();
+}
+function _explGrow(){   // native-scroll infinite append
+  if(!_expl) return; const view=$('#explView');
+  if(_expl.count>=_EXPL_MAX) return;
+  const startNext=_expl.anchor+BigInt(_expl.count); if(startNext>=_expl.N) return;
+  const room=_expl.N-startNext, add=Math.min(_EXPL_GROW, _EXPL_MAX-_expl.count, Number(room>BigInt(_EXPL_GROW)?BigInt(_EXPL_GROW):room));
+  if(add<=0) return;
+  view.insertAdjacentHTML('beforeend', _explCardsHtml(startNext, add)); _expl.count+=add;
+}
+function _explSetAnchor(bi){ let hi=_expl.N-1n; if(hi<0n)hi=0n; _expl.anchor = bi<0n?0n:(bi>hi?hi:bi); _explRender(); }
+// Scan forward (dir=+1) / backward (dir=-1) from the anchor to the next checksum-valid index.
+function _explSeekValid(dir){
+  if(!_expl||!_expl.checkValid) return;
+  const CAP=300000, CH=4096; let scanned=0;
+  if(dir>0){ let cur=_expl.anchor+1n;
+    while(scanned<CAP && cur<_expl.N){ const cnt=Math.min(CH, Number(_expl.N-cur>BigInt(CH)?BigInt(CH):_expl.N-cur));
+      const rows=_expl.set.unrankBatch?_expl.set.unrankBatch(cur,cnt):null;
+      for(let k=0;k<cnt;k++){ const s=rows&&rows[k]!=null?rows[k]:_expl.set.unrank(cur+BigInt(k)); if(s!=null&&VALIDATOR.isValid(s)){ _explSetAnchor(cur+BigInt(k)); return; } }
+      cur+=BigInt(cnt); scanned+=cnt; }
+    alert(t('explNoneAhead').replace('%n', fmtBig(scanned)));
+  } else { let end=_expl.anchor;   // scan the window [start,end) below the anchor, in descending blocks
+    while(scanned<CAP && end>0n){ const cnt=Number(end>BigInt(CH)?BigInt(CH):end); const start=end-BigInt(cnt);
+      const rows=_expl.set.unrankBatch?_expl.set.unrankBatch(start,cnt):null;
+      for(let k=cnt-1;k>=0;k--){ const s=rows&&rows[k]!=null?rows[k]:_expl.set.unrank(start+BigInt(k)); if(s!=null&&VALIDATOR.isValid(s)){ _explSetAnchor(start+BigInt(k)); return; } }
+      end=start; scanned+=cnt; }
+    alert(t('explNoneBehind').replace('%n', fmtBig(scanned)));
+  }
 }
 function openExplorer(){
-  if(!lastR){ return; }
+  if(!lastR) return;
   const mode=lastR.mode;
-  // words/joint -> explore the MNEMONIC set (checksum applies); passphrase -> the passphrase set (no checksum).
-  const isPass=(mode!=='words'&&mode!=='joint');
+  const isPass=(mode!=='words'&&mode!=='joint');   // words/joint -> mnemonic set (checksum); passphrase -> passphrase set
   const set= isPass ? (lastR._sets.passSet||lastR._sets.wordsSet) : lastR._sets.wordsSet;
   const view=$('#explView');
   $('#exploreOverlay').classList.add('on');
-  if(!set){ view.innerHTML=`<div class="note" style="padding:14px">${esc(t('nothingSample'))}</div>`; _expl=null; return; }
-  if(set.isInfinite()){ view.innerHTML=`<div class="note" style="padding:14px">${esc(t('sampleUnbounded'))}</div>`; _expl=null; return; }
-  const N=set.cardinality();
-  if(N==null||N<=0n){ view.innerHTML=`<div class="note" style="padding:14px">${esc(t('unboundedShort'))}.</div>`; _expl=null; return; }
+  const note=(k)=>{ view.innerHTML=`<div class="note" style="padding:14px">${esc(t(k))}</div>`; _expl=null; };
+  if(!set) return note('nothingSample');
+  if(set.isInfinite()) return note('sampleUnbounded');
+  const N=set.cardinality(); if(N==null||N<=0n) return note('unboundedShort');
   const checkValid=!isPass;
-  _expl={ set, N, checkValid, mask:_explVarMask(set,N,checkValid), anchor:0n, VIS:12, rowH:86 };
-  $('#explJump').value=''; $('#explSlider').value='0';
-  $('#explNext').style.display = checkValid ? '' : 'none';   // "next valid" only meaningful with a checksum
-  _explMeasure(); _explRender();
+  _expl={ set, N, checkValid, mask:_explVarMask(set,N,checkValid), anchor:0n, count:0, cache:new Map(), cfg:_explCfg() };
+  $('#explSlider').value='0';
+  const showNav = checkValid ? '' : 'none';
+  $('#explNext').style.display=showNav; $('#explPrev').style.display=showNav;
+  _explRender();
 }
 function _wireExplorer(){
-  const view=$('#explView'), sl=$('#explSlider'), jump=$('#explJump'), next=$('#explNext');
+  const view=$('#explView'), sl=$('#explSlider'), next=$('#explNext'), prev=$('#explPrev');
   if(!view) return;
   const close=()=>$('#exploreOverlay').classList.remove('on');
-  const cx=$('#exploreClose'), cb=$('#exploreCloseB');
-  if(cx) cx.onclick=close; if(cb) cb.onclick=close;
-  if(sl) sl.oninput=()=>{ if(!_expl) return; const span=_expl.N-BigInt(_expl.VIS); const hi=span>0n?span:0n;
-    _explSetAnchor(hi*BigInt(sl.value)/_EXPL_SLIDER_MAX); };
-  if(view) view.addEventListener('wheel',(e)=>{ if(!_expl) return; e.preventDefault();
-    const rows=BigInt(Math.max(1, Math.round(Math.abs(e.deltaY)/28)));   // ~1 row per wheel notch, more for a fast flick
-    _explSetAnchor(_expl.anchor + (e.deltaY<0 ? -rows : rows)); }, {passive:false});
-  const doJump=()=>{ if(!_expl) return; const raw=(jump.value||'').replace(/[^0-9]/g,''); if(!raw) return;
-    try{ _explSetAnchor(BigInt(raw)); }catch(_){}
-  };
-  if(jump){ jump.addEventListener('keydown',e=>{ if(e.key==='Enter') doJump(); }); jump.addEventListener('change',doJump); }
-  if(next) next.onclick=()=>{ if(!_expl||!_expl.checkValid) return;
-    const CAP=200000, CH=4096; let cur=_expl.anchor+1n, scanned=0;
-    while(scanned<CAP && cur<_expl.N){
-      const cnt=Math.min(CH, Number(_expl.N-cur>BigInt(CH)?BigInt(CH):_expl.N-cur));
-      const rows=_expl.set.unrankBatch?_expl.set.unrankBatch(cur,cnt):null;
-      for(let k=0;k<cnt;k++){ const s = rows&&rows[k]!=null?rows[k]:_expl.set.unrank(cur+BigInt(k));
-        if(s!=null && VALIDATOR.isValid(s)){ _explSetAnchor(cur+BigInt(k)); return; } }
-      cur+=BigInt(cnt); scanned+=cnt;
-    }
-    alert(t('explNoneAhead').replace('%n', fmtBig(scanned)));
-  };
-  window.addEventListener('resize',()=>{ if($('#exploreOverlay').classList.contains('on')&&_expl){ _explMeasure(); _explRender(); } });
+  const cx=$('#exploreClose'), cb=$('#exploreCloseB'); if(cx) cx.onclick=close; if(cb) cb.onclick=close;
+  if(sl) sl.oninput=()=>{ if(!_expl) return; const hi=_expl.N>1n?_expl.N-1n:0n; _explSetAnchor(hi*BigInt(sl.value)/_EXPL_SLIDER_MAX); };
+  if(next) next.onclick=()=>_explSeekValid(1);
+  if(prev) prev.onclick=()=>_explSeekValid(-1);
+  view.addEventListener('scroll',()=>{ if(!_expl) return;
+    if(view.scrollTop+view.clientHeight >= view.scrollHeight-240) _explGrow(); });
+  // tap a valid card -> toggle its derivation tree in place (DOM surgery preserves scroll)
+  view.addEventListener('click',(e)=>{ if(!_expl) return; const row=e.target.closest('.expl-row.expandable'); if(!row) return;
+    const chev=row.querySelector('.expl-chev'), tree=row.querySelector('.expl-tree');
+    if(tree){ tree.remove(); if(chev) chev.textContent='▸'; }
+    else { const idxKey=row.dataset.idx; let mn=null; try{ mn=_expl.set.unrank(BigInt(idxKey)); }catch(_){}
+      if(mn!=null){ row.insertAdjacentHTML('beforeend', _explTree(idxKey, mn)); if(chev) chev.textContent='▾'; } } });
 }
 
 // ---------- dictionaries ----------
@@ -3307,13 +3361,15 @@ function renderDictList(){
     <h3>🔭 <span data-i18n="explore">Explore the search space</span> <span class="pill" data-i18n="viaUnrank">via librxe unrank</span> <button class="x" id="exploreClose">✕</button></h3>
     <div class="body">
       <div class="note" data-i18n="exploreIntro" style="margin-bottom:8px"></div>
+      <input type="range" id="explSlider" min="0" max="1000000" value="0" step="1" class="expl-slider" aria-label="lightspeed">
       <div class="expl-controls">
-        <input type="range" id="explSlider" min="0" max="1000000" value="0" step="1" class="expl-slider" aria-label="lightspeed">
         <div class="expl-pos" id="explPos"></div>
-        <span class="expl-jumpwrap"><label for="explJump" data-i18n="explJump">jump to #</label> <input type="text" id="explJump" inputmode="numeric" autocomplete="off" class="expl-jumpin"></span>
-        <button class="ghost" id="explNext" style="margin-top:0" data-i18n="explNextValid">next valid ▷</button>
+        <span class="expl-validnav">
+          <button class="ghost" id="explPrev" style="margin-top:0" data-i18n="explPrevValid">◁ prev valid</button>
+          <button class="ghost" id="explNext" style="margin-top:0" data-i18n="explNextValid">next valid ▷</button>
+        </span>
       </div>
-      <div class="expl-view" id="explView" tabindex="0"></div>
+      <div class="expl-view" id="explView"></div>
     </div>
     <div class="foot"><button class="ghost" id="exploreCloseB" data-i18n="close">Close</button></div>
   </div>
