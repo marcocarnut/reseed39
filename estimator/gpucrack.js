@@ -37,8 +37,11 @@ let _deskChunk = 1024;
 // The Arc tripped TDR only at whole-batch ~1200-1470ms/submit, so ~700ms keeps chunks
 // large (throughput) while the runtime adapt still shrinks them as the GPU heats, staying
 // clear of the watchdog. Live-tunable via setSeedBudget()/window.__SEED_BUDGET_MS.
-let _deskBudgetMs = (function(){ try{ const v=+(window.__SEED_BUDGET_MS); return (v>=100&&v<=1900)?v:700; }catch(e){ return 700; } })();
-function _setSeedBudget(ms){ ms=+ms; if(ms>=100 && ms<=1900){ _deskBudgetMs=ms; _deskProbed=false; try{ console.log('[gpucrack] seed budget -> '+ms+'ms/submit (will re-probe)'); }catch(_){} } }
+// Upper bound is intentionally generous (10s) so the TDR trip point can be PROBED by
+// pushing the budget past where a whole-batch dispatch trips the watchdog. Normal use
+// stays ~700-900ms; the runtime adapt shrinks from whatever start the budget implies.
+let _deskBudgetMs = (function(){ try{ const v=+(window.__SEED_BUDGET_MS); return (v>=100&&v<=10000)?v:700; }catch(e){ return 700; } })();
+function _setSeedBudget(ms){ ms=+ms; if(ms>=100 && ms<=10000){ _deskBudgetMs=ms; _deskProbed=false; try{ console.log('[gpucrack] seed budget -> '+ms+'ms/submit (will re-probe)'); }catch(_){} } }
 let _deskSubMs = 0;            // EMA of the MEASURED per-submit GPU time -- the runtime signal that steers _deskChunk
 let _deskAdaptLog = 0;
 let _deskProbing = false;     // true only during the one-shot cold probe (suppresses runtime adaptation)
@@ -866,7 +869,7 @@ window.GpuCrack = { initGpu, gpuSeeds, benchmark, crackXpub, crackAddress, MAXSA
   setSeedBudget:_setSeedBudget, getSeedBudget:()=>_deskBudgetMs, getDeskSubMs:()=>_deskSubMs,   // live-tunable target ms/submit + the measured per-submit EMA
   setGpuLostCb:_setGpuLostCb,                                 // app hook: real device loss (watchdog reset)
   setMaxLen:_setMaxLen,                                       // EXPERIMENTAL ?maxlen: skip candidates longer than N chars
-  getEffSeedChunk:_effChunk, isMobile:()=>_isMobile, setSeedDepth:_setSeedDepth,
+  getEffSeedChunk:_effChunk, isMobile:()=>_isMobile, setSeedDepth:_setSeedDepth, getSeedDepth:()=>_seedDepth,
   getGpuResets:()=>_gpuResets, resetGpuStats:_resetGpuStats,
   // base = minimum/starting cooldown; it doubles per consecutive failure up to
   // the cap, and resets to base after running clean past the stability window.
