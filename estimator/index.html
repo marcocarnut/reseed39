@@ -159,15 +159,13 @@
   .expl-leaf{display:flex;gap:8px;align-items:baseline;padding:3px 6px;border-radius:5px;font-family:var(--mono);font-size:11.5px;flex-wrap:wrap}
   .expl-path{color:var(--dim);white-space:nowrap;flex:0 0 auto}
   .expl-addr{color:#22d3ee;word-break:break-all;flex:1 1 180px;min-width:0;text-decoration:none}
-  a.expl-addr:hover{text-decoration:underline}
+  a.expl-addr{text-decoration:underline;text-underline-offset:2px}   /* an address in the bloom filter -> underlined link (seen on-chain) */
   .expl-hit{color:#4ec98a;font-weight:600;flex:0 0 auto}
-  .expl-bloom{flex:0 0 auto;font-size:10.5px}
-  .expl-bloom.used{color:#f5b301;font-weight:600}   /* possibly seen on-chain (bloom) */
-  .expl-bloom.miss{color:var(--dim)}
   .expl-leaf.hit{background:rgba(78,201,138,.16)}
   .expl-leaf.hit .expl-addr{color:#4ec98a;font-weight:600}
   .expl-leaf.hit .expl-path{color:#4ec98a}
   .expl-seekbox{display:flex;gap:6px;margin-bottom:8px;flex:0 0 auto}
+  .expl-seekbox[hidden]{display:none}   /* the display:flex above would otherwise defeat the hidden attribute */
   .expl-seekin{flex:1 1 auto;font-family:var(--mono);font-size:12px;background:#0c1120;color:var(--ink);border:1px solid var(--edge);border-radius:6px;padding:6px 8px}
   .expl-more{color:var(--dim);font-size:11px;padding:5px 6px 0}
   @media(max-width:560px){
@@ -343,17 +341,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b172"></script>
-<script src="../wasm/rxecore_api.js?v=b172"></script>
+<script src="../wasm/rxecore.js?v=b174"></script>
+<script src="../wasm/rxecore_api.js?v=b174"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b172"></script>
-<script src="../estimator/model.js?v=b172"></script>
-<script src="../estimator/wordset.js?v=b172"></script>
-<script src="../estimator/bip39crypto.js?v=b172"></script>
-<script src="../estimator/electrum.js?v=b172"></script>
-<script src="../estimator/gpucrack.js?v=b172"></script>
-<script src="../estimator/i18n.js?v=b172"></script>
+<script src="../estimator/bip39.js?v=b174"></script>
+<script src="../estimator/model.js?v=b174"></script>
+<script src="../estimator/wordset.js?v=b174"></script>
+<script src="../estimator/bip39crypto.js?v=b174"></script>
+<script src="../estimator/electrum.js?v=b174"></script>
+<script src="../estimator/gpucrack.js?v=b174"></script>
+<script src="../estimator/i18n.js?v=b174"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -362,8 +360,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b172';
-const APP_VERSION = 'b172';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b174';
+const APP_VERSION = 'b174';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -839,7 +837,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b172' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b174' } });
     RXE.registerDict('bip39', englishWords);
     registered.set('bip39', englishWords.length);
     // Aliases so older patterns/links keep resolving: [:bip39-en:] / [:bip39en:] / [:en:] / [:english:].
@@ -3174,14 +3172,15 @@ function _explTreeInner(idxKey, cand){   // the leaves HTML only (the .expl-tree
       let addr='', prog=''; try{ const tg=C.addressTarget(seed,p,a,cfg.coin,ch,i); addr=C.encodeAddress(tg); prog=C.toHex(tg.program); }catch(_){ addr='—'; }
       leaves.push({ path:`m/${p}'/${cfg.coin}'/${a}'/${ch}/${i}`, addr, prog, hit: cfg.targetAddr && addr===cfg.targetAddr });
     }}}}
-    html=leaves.map(l=>{
-      const link = (l.addr && l.addr!=='—')
-        ? `<a class="expl-addr" href="https://blockchair.com/bitcoin/address/${encodeURIComponent(l.addr)}" target="_blank" rel="noopener noreferrer">${esc(l.addr)}</a>`
-        : `<span class="expl-addr">${esc(l.addr)}</span>`;
-      // data-prog = the hash160/witness program the bloom filter matches on (annotated live in bloom builds)
-      return `<div class="expl-leaf${l.hit?' hit':''}"${l.prog?` data-prog="${l.prog}"`:''}><span class="expl-path">${esc(l.path)}</span>${link}`
-           + (l.hit?' <span class="expl-hit">✓</span>':'') + `<span class="expl-bloom"></span></div>`;
-    }).join('')
+    html=leaves.map(l=>
+      // Plain by default. data-prog = the program the bloom filter matches on; in bloom
+      // builds the async check turns ONLY the addresses found in the filter into an
+      // underlined Blockchair link (the underline itself is the "seen on-chain" signal).
+      `<div class="expl-leaf${l.hit?' hit':''}"${l.prog?` data-prog="${l.prog}"`:''}>`
+      + `<span class="expl-path">${esc(l.path)}</span>`
+      + `<span class="expl-addr" data-addr="${esc(l.addr)}">${esc(l.addr)}</span>`
+      + (l.hit?' <span class="expl-hit">✓</span>':'') + `</div>`
+    ).join('')
        + (more?`<div class="expl-more">+${more} ${esc(t('explMore'))}</div>`:'');
   }catch(e){ html=`<div class="expl-more">${esc((e&&e.message)||'derive error')}</div>`; }
   _expl.cache.set(idxKey, html);
@@ -3331,9 +3330,12 @@ function _explRefreshTrees(){   // passphrase changed -> re-derive all trees for
 // ---- bloom-filter annotation (bloom builds only): asks the live filter whether each
 // derived address has ever been used, ASYNC -- cards render instantly, badges paint in
 // as HIT/ACK come back over the WebSocket. Only derived programs go over the wire.
-function _explBloomPaint(badge,res){ if(!badge) return; badge.dataset.done='1';
-  if(res==='used'){ badge.className='expl-bloom used'; badge.textContent='● '+t('explBloomUsed'); badge.title=t('explBloomUsedTip'); }
-  else { badge.className='expl-bloom miss'; badge.textContent=t('explBloomUnused'); } }
+// A found address becomes an underlined Blockchair link (the underline = "seen on-chain");
+// a not-found address is left exactly as it was (plain text).
+function _explBloomUse(el){ if(!el || el.tagName==='A') return; const addr=el.dataset.addr||el.textContent; if(!addr||addr==='—') return;
+  const a=document.createElement('a'); a.className='expl-addr'; a.dataset.addr=addr; a.textContent=addr;
+  a.href='https://blockchair.com/bitcoin/address/'+encodeURIComponent(addr); a.target='_blank'; a.rel='noopener noreferrer'; a.title=t('explBloomUsedTip');
+  el.replaceWith(a); }
 function _explBloomInit(){
   if(!BLOOM||!_expl) return;
   _expl.bRes=new Map(); _expl.bEls=new Map(); _expl.bSent=new Set(); _expl.bQueue=[]; _expl.bUnacked=[]; _expl.bWs=null;
@@ -3343,20 +3345,21 @@ function _explBloomInit(){
     const ws=new WebSocket(url); _expl.bWs=ws;
     ws.onopen=()=>_explBloomFlush();
     ws.onmessage=(ev)=>{ if(!_expl) return; for(const ln of String(ev.data).split('\n')){ if(!ln) continue;
-      if(ln.startsWith('HIT ')){ const h=ln.slice(4).trim().toLowerCase(); _expl.bRes.set(h,'used'); const set=_expl.bEls.get(h); if(set) for(const b of set) _explBloomPaint(b,'used'); }
-      else if(ln.startsWith('ACK ')){ const f=_expl.bUnacked.shift(); if(f) for(const p of f){ if(_expl.bRes.get(p)==='used') continue; _expl.bRes.set(p,'miss'); const set=_expl.bEls.get(p); if(set) for(const b of set){ if(!b.dataset.done) _explBloomPaint(b,'miss'); } } } } };
+      if(ln.startsWith('HIT ')){ const h=ln.slice(4).trim().toLowerCase(); _expl.bRes.set(h,'used'); const set=_expl.bEls.get(h); if(set){ for(const el of set) _explBloomUse(el); _expl.bEls.delete(h); } }
+      else if(ln.startsWith('ACK ')){ const f=_expl.bUnacked.shift(); if(f) for(const p of f){ if(_expl.bRes.get(p)!=='used'){ _expl.bRes.set(p,'miss'); _expl.bEls.delete(p); } } }   // miss = leave the address plain
+    } };
     ws.onerror=()=>{}; ws.onclose=()=>{};
   }catch(_){ _expl.bWs=null; }
 }
 function _explBloomClose(){ if(_expl&&_expl.bWs){ try{ _expl.bWs.onclose=null; _expl.bWs.close(); }catch(_){} _expl.bWs=null; } }
 function _explBloomFlush(){ if(!_expl||!_expl.bWs||_expl.bWs.readyState!==1) return;
   while(_expl.bQueue.length){ const progs=_expl.bQueue.splice(0,512); try{ _expl.bWs.send(progs.join('\n')); _expl.bUnacked.push(progs); }catch(_){ break; } } }
-function _explBloomRegister(){   // called after each lazy fill; registers new leaves, cheap via the reg flag
+function _explBloomRegister(){   // called after each lazy fill; registers new leaves, cheap via the bchk flag
   if(!BLOOM||!_expl||!_expl.bWs) return; const view=$('#explView'); if(!view) return;
-  for(const badge of view.querySelectorAll('.expl-bloom')){ if(badge.dataset.reg) continue; badge.dataset.reg='1';
-    const leaf=badge.closest('.expl-leaf'), prog=leaf&&leaf.dataset.prog; if(!prog) continue;
-    const res=_expl.bRes.get(prog); if(res){ _explBloomPaint(badge,res); continue; }
-    let set=_expl.bEls.get(prog); if(!set){ set=new Set(); _expl.bEls.set(prog,set); } set.add(badge);
+  for(const leaf of view.querySelectorAll('.expl-leaf[data-prog]')){ if(leaf.dataset.bchk) continue; leaf.dataset.bchk='1';
+    const prog=(leaf.dataset.prog||'').toLowerCase(), el=leaf.querySelector('.expl-addr'); if(!prog||!el) continue;
+    const res=_expl.bRes.get(prog); if(res==='used'){ _explBloomUse(el); continue; } if(res==='miss') continue;
+    let set=_expl.bEls.get(prog); if(!set){ set=new Set(); _expl.bEls.set(prog,set); } set.add(el);
     if(!_expl.bSent.has(prog)){ _expl.bSent.add(prog); _expl.bQueue.push(prog); } }
   _explBloomFlush();
 }
