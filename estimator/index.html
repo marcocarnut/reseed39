@@ -158,10 +158,17 @@
   .expl-tree{margin-top:6px}
   .expl-leaf{display:flex;gap:8px;align-items:baseline;padding:3px 6px;border-radius:5px;font-family:var(--mono);font-size:11.5px;flex-wrap:wrap}
   .expl-path{color:var(--dim);white-space:nowrap;flex:0 0 auto}
-  .expl-addr{color:#22d3ee;word-break:break-all;flex:1 1 180px;min-width:0}
+  .expl-addr{color:#22d3ee;word-break:break-all;flex:1 1 180px;min-width:0;text-decoration:none}
+  a.expl-addr:hover{text-decoration:underline}
+  .expl-hit{color:#4ec98a;font-weight:600;flex:0 0 auto}
+  .expl-bloom{flex:0 0 auto;font-size:10.5px}
+  .expl-bloom.used{color:#f5b301;font-weight:600}   /* possibly seen on-chain (bloom) */
+  .expl-bloom.miss{color:var(--dim)}
   .expl-leaf.hit{background:rgba(78,201,138,.16)}
   .expl-leaf.hit .expl-addr{color:#4ec98a;font-weight:600}
   .expl-leaf.hit .expl-path{color:#4ec98a}
+  .expl-seekbox{display:flex;gap:6px;margin-bottom:8px;flex:0 0 auto}
+  .expl-seekin{flex:1 1 auto;font-family:var(--mono);font-size:12px;background:#0c1120;color:var(--ink);border:1px solid var(--edge);border-radius:6px;padding:6px 8px}
   .expl-more{color:var(--dim);font-size:11px;padding:5px 6px 0}
   @media(max-width:560px){
     /* phone: use the full width, bigger touch targets */
@@ -336,17 +343,17 @@
   </div>
 </div>
 
-<script src="../wasm/rxecore.js?v=b171"></script>
-<script src="../wasm/rxecore_api.js?v=b171"></script>
+<script src="../wasm/rxecore.js?v=b172"></script>
+<script src="../wasm/rxecore_api.js?v=b172"></script>
 <!-- ?v= cache-bust on our own scripts so a plain reload always gets the latest
      during dev (python http.server sends no cache headers). Bump on each change. -->
-<script src="../estimator/bip39.js?v=b171"></script>
-<script src="../estimator/model.js?v=b171"></script>
-<script src="../estimator/wordset.js?v=b171"></script>
-<script src="../estimator/bip39crypto.js?v=b171"></script>
-<script src="../estimator/electrum.js?v=b171"></script>
-<script src="../estimator/gpucrack.js?v=b171"></script>
-<script src="../estimator/i18n.js?v=b171"></script>
+<script src="../estimator/bip39.js?v=b172"></script>
+<script src="../estimator/model.js?v=b172"></script>
+<script src="../estimator/wordset.js?v=b172"></script>
+<script src="../estimator/bip39crypto.js?v=b172"></script>
+<script src="../estimator/electrum.js?v=b172"></script>
+<script src="../estimator/gpucrack.js?v=b172"></script>
+<script src="../estimator/i18n.js?v=b172"></script>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
@@ -355,8 +362,8 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 // the bundler sets window.__CRACKWORKER_URL to a Blob URL carrying the inlined
 // worker (multicore stays alive when the page is SERVED; a file:// page can't
 // start a worker and falls back to single-thread -- serve locally to keep it).
-const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b171';
-const APP_VERSION = 'b171';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
+const CRACKWORKER_URL = (typeof window!=='undefined' && window.__CRACKWORKER_URL) || 'crackworker.js?v=b172';
+const APP_VERSION = 'b172';   // bumped with the cache stamp; tags shared benchmark JSON so DB rows stay comparable across methodology changes
 let RXE, VALIDATOR, ENGLISH = [];   // ENGLISH: wordlist, passed to crack workers
 const registered = new Map();
 let liveSets = [];
@@ -832,7 +839,7 @@ function setLang(l){
     const txt = globalThis.__ENGLISH_TXT || await (await fetch('../data/english.txt')).text();   // bundle inlines the wordlist
     const englishWords = txt.trim().split(/\r?\n/);
     ENGLISH = englishWords;                       // shared with crack workers
-    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b171' } });
+    RXE = await RxeCoreAPI.loadRxeCore({ moduleArgs:{ locateFile:p=>'../wasm/'+p+'?v=b172' } });
     RXE.registerDict('bip39', englishWords);
     registered.set('bip39', englishWords.length);
     // Aliases so older patterns/links keep resolving: [:bip39-en:] / [:bip39en:] / [:en:] / [:english:].
@@ -3066,11 +3073,8 @@ function render(r, input){
   if(r.narrowingLevers.length)
     html+=`<div class="card"><h3>${t('levers')}</h3><ul class="levers">${r.narrowingLevers.map(l=>`<li>${esc(l)}</li>`).join('')}</ul></div>`;
 
-  html+=`<div class="card"><button class="ghost" id="showExplore">${t('exploreOpen')}</button> <button class="ghost" id="showSample">🎲 ${t('showDryRun')}</button></div>`;
-  $('#results').innerHTML=html;
+  $('#results').innerHTML=html;   // (the 🔭 explorer lives in the "Search shape" header line)
   const cb=$('#ctaBench'); if(cb) cb.onclick=openBenchModal;
-  const se=$('#showExplore'); if(se) se.onclick=openExplorer;   // also available in the search-shape line (🔭)
-  const ss=$('#showSample'); if(ss) ss.onclick=openSampleModal;
   const oc=$('#openCrack'); if(oc) oc.onclick=onOpenCrack;
 }
 function openCrackModal(){ $('#crackSummary').innerHTML = lastR ? strategyText(lastR) : ''; $('#crackOverlay').classList.add('on'); }
@@ -3167,10 +3171,17 @@ function _explTreeInner(idxKey, cand){   // the leaves HTML only (the .expl-tree
     const leaves=[]; let more=0; const CAP=12;
     for(const p of cfg.purposes){ for(let a=0;a<cfg.nacct;a++){ for(const ch of cfg.changes){ for(let i=0;i<cfg.gap;i++){
       if(leaves.length>=CAP){ more++; continue; }
-      let addr=''; try{ addr=C.encodeAddress(C.addressTarget(seed,p,a,cfg.coin,ch,i)); }catch(_){ addr='—'; }
-      leaves.push({ path:`m/${p}'/${cfg.coin}'/${a}'/${ch}/${i}`, addr, hit: cfg.targetAddr && addr===cfg.targetAddr });
+      let addr='', prog=''; try{ const tg=C.addressTarget(seed,p,a,cfg.coin,ch,i); addr=C.encodeAddress(tg); prog=C.toHex(tg.program); }catch(_){ addr='—'; }
+      leaves.push({ path:`m/${p}'/${cfg.coin}'/${a}'/${ch}/${i}`, addr, prog, hit: cfg.targetAddr && addr===cfg.targetAddr });
     }}}}
-    html=leaves.map(l=>`<div class="expl-leaf${l.hit?' hit':''}"><span class="expl-path">${esc(l.path)}</span><span class="expl-addr">${esc(l.addr)}${l.hit?' ✓':''}</span></div>`).join('')
+    html=leaves.map(l=>{
+      const link = (l.addr && l.addr!=='—')
+        ? `<a class="expl-addr" href="https://blockchair.com/bitcoin/address/${encodeURIComponent(l.addr)}" target="_blank" rel="noopener noreferrer">${esc(l.addr)}</a>`
+        : `<span class="expl-addr">${esc(l.addr)}</span>`;
+      // data-prog = the hash160/witness program the bloom filter matches on (annotated live in bloom builds)
+      return `<div class="expl-leaf${l.hit?' hit':''}"${l.prog?` data-prog="${l.prog}"`:''}><span class="expl-path">${esc(l.path)}</span>${link}`
+           + (l.hit?' <span class="expl-hit">✓</span>':'') + `<span class="expl-bloom"></span></div>`;
+    }).join('')
        + (more?`<div class="expl-more">+${more} ${esc(t('explMore'))}</div>`:'');
   }catch(e){ html=`<div class="expl-more">${esc((e&&e.message)||'derive error')}</div>`; }
   _expl.cache.set(idxKey, html);
@@ -3240,6 +3251,7 @@ async function _explFillTrees(){
       let cand=null; try{ cand=_expl.set.unrank(BigInt(idxKey)); }catch(_){}
       target.classList.remove('pending');
       target.innerHTML = cand!=null ? _explTreeInner(idxKey, cand) : '';
+      _explBloomRegister();                     // async filter check for the leaves just added
       await new Promise(r=>setTimeout(r,0));   // yield: paint + input between (heavy) seed derivations
     }
   } finally { _explFilling=false; }
@@ -3313,7 +3325,40 @@ function _explPpReadout(){
 function _explRefreshTrees(){   // passphrase changed -> re-derive all trees for the new passphrase (lazily)
   if(!_expl) return; _expl.cache.clear(); const view=$('#explView'); if(!view) return;
   for(const tree of view.querySelectorAll('.expl-tree')){ tree.innerHTML=''; tree.classList.add('pending'); }
+  if(BLOOM&&_expl.bWs){ _expl.bRes=new Map(); _expl.bEls=new Map(); _expl.bSent=new Set(); _expl.bQueue=[]; _expl.bUnacked=[]; }   // addresses changed -> re-query the filter
   _explFillTrees();
+}
+// ---- bloom-filter annotation (bloom builds only): asks the live filter whether each
+// derived address has ever been used, ASYNC -- cards render instantly, badges paint in
+// as HIT/ACK come back over the WebSocket. Only derived programs go over the wire.
+function _explBloomPaint(badge,res){ if(!badge) return; badge.dataset.done='1';
+  if(res==='used'){ badge.className='expl-bloom used'; badge.textContent='● '+t('explBloomUsed'); badge.title=t('explBloomUsedTip'); }
+  else { badge.className='expl-bloom miss'; badge.textContent=t('explBloomUnused'); } }
+function _explBloomInit(){
+  if(!BLOOM||!_expl) return;
+  _expl.bRes=new Map(); _expl.bEls=new Map(); _expl.bSent=new Set(); _expl.bQueue=[]; _expl.bUnacked=[]; _expl.bWs=null;
+  try{
+    const _devHost=(location.hostname==='127.0.0.1'||location.hostname==='localhost')?window.__BLOOM_WS:null;
+    const url=_devHost||((location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/');
+    const ws=new WebSocket(url); _expl.bWs=ws;
+    ws.onopen=()=>_explBloomFlush();
+    ws.onmessage=(ev)=>{ if(!_expl) return; for(const ln of String(ev.data).split('\n')){ if(!ln) continue;
+      if(ln.startsWith('HIT ')){ const h=ln.slice(4).trim().toLowerCase(); _expl.bRes.set(h,'used'); const set=_expl.bEls.get(h); if(set) for(const b of set) _explBloomPaint(b,'used'); }
+      else if(ln.startsWith('ACK ')){ const f=_expl.bUnacked.shift(); if(f) for(const p of f){ if(_expl.bRes.get(p)==='used') continue; _expl.bRes.set(p,'miss'); const set=_expl.bEls.get(p); if(set) for(const b of set){ if(!b.dataset.done) _explBloomPaint(b,'miss'); } } } } };
+    ws.onerror=()=>{}; ws.onclose=()=>{};
+  }catch(_){ _expl.bWs=null; }
+}
+function _explBloomClose(){ if(_expl&&_expl.bWs){ try{ _expl.bWs.onclose=null; _expl.bWs.close(); }catch(_){} _expl.bWs=null; } }
+function _explBloomFlush(){ if(!_expl||!_expl.bWs||_expl.bWs.readyState!==1) return;
+  while(_expl.bQueue.length){ const progs=_expl.bQueue.splice(0,512); try{ _expl.bWs.send(progs.join('\n')); _expl.bUnacked.push(progs); }catch(_){ break; } } }
+function _explBloomRegister(){   // called after each lazy fill; registers new leaves, cheap via the reg flag
+  if(!BLOOM||!_expl||!_expl.bWs) return; const view=$('#explView'); if(!view) return;
+  for(const badge of view.querySelectorAll('.expl-bloom')){ if(badge.dataset.reg) continue; badge.dataset.reg='1';
+    const leaf=badge.closest('.expl-leaf'), prog=leaf&&leaf.dataset.prog; if(!prog) continue;
+    const res=_expl.bRes.get(prog); if(res){ _explBloomPaint(badge,res); continue; }
+    let set=_expl.bEls.get(prog); if(!set){ set=new Set(); _expl.bEls.set(prog,set); } set.add(badge);
+    if(!_expl.bSent.has(prog)){ _expl.bSent.add(prog); _expl.bQueue.push(prog); } }
+  _explBloomFlush();
 }
 function _explPpGoto(idx){
   if(!_expl||!_expl.ppSet) return; let hi=_expl.ppN>0n?_expl.ppN-1n:0n;
@@ -3357,18 +3402,26 @@ function openExplorer(){
   const mnLabel=$('#explMnLabel'); if(mnLabel) mnLabel.hidden=!ppOn;   // label the two axes only when both are shown
   if(ppOn){ $('#explPpSlider').value='0'; _explPpReadout(); }
   $('#explSlider').value='0';
+  const sb=$('#explSeekBox'); if(sb) sb.hidden=true;
   const intro=$('#exploreIntro'); if(intro) intro.textContent = t('exploreIntro');
+  _explBloomInit();   // open the filter WS (bloom builds only) before the first fill registers leaves
   _explGoto(0n);
   try{ updatePrognosisToast(); }catch(_){}   // hide the "Go to Prognosis" toast while the dialog is open
 }
 function _wireExplorer(){
   const view=$('#explView'), sl=$('#explSlider');
   if(!view) return;
-  const close=()=>{ $('#exploreOverlay').classList.remove('on'); try{ updatePrognosisToast(); }catch(_){} };   // restore the toast on close
+  const close=()=>{ _explBloomClose(); $('#exploreOverlay').classList.remove('on'); try{ updatePrognosisToast(); }catch(_){} };   // restore the toast on close
   const cx=$('#exploreClose'), cb=$('#exploreCloseB'); if(cx) cx.onclick=close; if(cb) cb.onclick=close;
   if(sl) sl.oninput=()=>{ if(!_expl) return; const hi=_expl.N>1n?_expl.N-1n:0n; _explGoto(hi*BigInt(sl.value)/_EXPL_SLIDER_MAX); };
   [['explFirst','first'],['explPrev','prev'],['explRand','rand'],['explNext','next'],['explLast','last']]
     .forEach(([id,which])=>{ const b=$('#'+id); if(b) b.onclick=()=>_explNav(which); });
+  // seek to an exact index (a quick inline box -- handy when you KNOW the index, e.g. demoing a known "common case")
+  const seekBtn=$('#explSeek'), seekBox=$('#explSeekBox'), seekIn=$('#explSeekInput'), seekGo=$('#explSeekGo');
+  const doSeek=()=>{ if(!_expl||!seekIn) return; const raw=(seekIn.value||'').replace(/[^0-9]/g,''); if(raw){ try{ _explGoto(BigInt(raw)); }catch(_){} } if(seekBox) seekBox.hidden=true; };
+  if(seekBtn) seekBtn.onclick=()=>{ if(!seekBox) return; seekBox.hidden=!seekBox.hidden; if(!seekBox.hidden&&seekIn){ seekIn.value=''; seekIn.focus(); } };
+  if(seekGo) seekGo.onclick=doSeek;
+  if(seekIn) seekIn.addEventListener('keydown',e=>{ if(e.key==='Enter') doSeek(); else if(e.key==='Escape'&&seekBox){ seekBox.hidden=true; } });
   // passphrase axis (joint mode)
   const psl=$('#explPpSlider'); if(psl) psl.oninput=()=>{ if(!_expl||!_expl.ppSet) return; const hi=_expl.ppN>1n?_expl.ppN-1n:0n; _explPpGoto(hi*BigInt(psl.value)/_EXPL_SLIDER_MAX); };
   [['explPpFirst','first'],['explPpPrev','prev'],['explPpRand','rand'],['explPpNext','next'],['explPpLast','last']]
@@ -3514,7 +3567,12 @@ function renderDictList(){
           <button class="ghost" id="explRand"  data-i18n-title="explNavRand"  title="random">🎲</button>
           <button class="ghost" id="explNext"  data-i18n-title="explNavNext"  title="next">▷</button>
           <button class="ghost" id="explLast"  data-i18n-title="explNavLast"  title="last">▷|</button>
+          <button class="ghost" id="explSeek"  data-i18n-title="explSeek"     title="go to index">🎯</button>
         </span>
+      </div>
+      <div class="expl-seekbox" id="explSeekBox" hidden>
+        <input type="text" id="explSeekInput" class="expl-seekin" inputmode="numeric" autocomplete="off" data-i18n-ph="explSeekPh" placeholder="index #">
+        <button class="ghost" id="explSeekGo" style="margin-top:0">→</button>
       </div>
       <div class="expl-view" id="explView"></div>
     </div>
